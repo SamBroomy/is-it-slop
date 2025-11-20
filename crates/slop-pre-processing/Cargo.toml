@@ -15,7 +15,9 @@ ndarray = { workspace = true }
 indicatif = { workspace = true }
 sprs = { workspace = true }
 rayon = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+bincode = { workspace = true, optional = true }
 dashmap = { workspace = true }
 ahash = { workspace = true }
 mimalloc = { workspace = true }
@@ -29,5 +31,7 @@ numpy = { workspace = true, optional = true }
 pyo3-log = { workspace = true, optional = true }
 
 [features]
-default = ["python"]
-python = ["pyo3", "numpy", "pyo3-log"]
+default = ["bincode"]
+python = ["pyo3", "numpy", "pyo3-log", "serde", "bincode"]
+serde = ["dep:serde", "dep:serde_json"]
+bincode = ["dep:bincode"]

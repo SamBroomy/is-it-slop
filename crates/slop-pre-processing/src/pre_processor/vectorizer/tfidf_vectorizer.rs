@@ -1,11 +1,13 @@
 use ahash::HashMap;
-use serde::{Deserialize, Serialize};
+
 use sprs::CsMat;
 use tracing::debug;
 
 use super::{count_vectorizer::CountVectorizer, params::VectorizerParams};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, )]
 pub struct TfidfVectorizer {
     count_vectorizer: CountVectorizer,
     idf: Vec<f64>,

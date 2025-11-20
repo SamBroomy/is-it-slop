@@ -1,13 +1,14 @@
 use ahash::HashMap;
 use numpy::ToPyArray;
 use pyo3::{prelude::*, types::PyTuple};
-use serde::{Deserialize, Serialize};
 
 use crate::pre_processor::{TfidfVectorizer, VectorizerParams};
 
 /// A wrapper struct for VectorizerParams to expose it to Python.
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone)]
 #[pyclass]
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RustVectorizerParams {
     #[pyo3(get)]
     ngram_range: (usize, usize),
@@ -56,8 +57,10 @@ impl RustVectorizerParams {
 }
 
 /// A wrapper function around TfidfVectorizer to expose it to Python.
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone)]
 #[pyclass]
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RustTfidfVectorizer {
     #[serde(flatten)]
     inner: TfidfVectorizer,
@@ -134,6 +137,79 @@ impl RustTfidfVectorizer {
     /// Return a detailed string representation of the RustTfidfVectorizer.
     fn __str__(&self) -> String {
         format!("{:#?}", self)
+    }
+
+    /// Serialize the vectorizer to bytes using bincode format.
+    /// Returns a bytes object that can be saved to disk or passed to `from_bytes`.
+    /// Return the inner vectorizer serialized as bytes so it is compatible with Rust side.
+    #[cfg(feature = "bincode")]
+    fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
+        py.detach(|| {
+            bincode::encode_to_vec(self.inner.clone(), bincode::config::standard()).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to serialize vectorizer: {}",
+                    e
+                ))
+            })
+        })
+    }
+
+    /// Serialize the vectorizer to JSON string.
+    /// Returns a JSON string that can be saved to disk or passed to `from_json`.
+    /// Return the inner vectorizer serialized as JSON so it is compatible with Rust side.
+    #[cfg(feature = "serde")]
+    fn to_json(&self, py: Python<'_>) -> PyResult<String> {
+        py.detach(|| {
+            serde_json::to_string(&self.inner).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to serialize vectorizer to JSON: {}",
+                    e
+                ))
+            })
+        })
+    }
+
+    /// Deserialize the vectorizer from bytes (bincode format).
+    ///
+    /// Args:
+    ///     bytes: A bytes object containing the serialized vectorizer
+    ///
+    /// Returns:
+    ///     A new RustTfidfVectorizer instance
+    #[staticmethod]
+    #[cfg(feature = "bincode")]
+    fn from_bytes(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Self> {
+        py.detach(|| {
+            let (vectorizer, _): (TfidfVectorizer, usize) =
+                bincode::decode_from_slice(&bytes, bincode::config::standard()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to deserialize vectorizer: {}",
+                        e
+                    ))
+                })?;
+            Ok(Self { inner: vectorizer })
+        })
+    }
+
+    /// Deserialize the vectorizer from JSON string.
+    ///
+    /// Args:
+    ///     json: A JSON string containing the serialized vectorizer
+    ///
+    /// Returns:
+    ///     A new RustTfidfVectorizer instance
+    #[staticmethod]
+    #[cfg(feature = "serde")]
+    fn from_json(py: Python<'_>, json: String) -> PyResult<Self> {
+        py.detach(|| {
+            let vectorizer: TfidfVectorizer = serde_json::from_str(&json).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to deserialize vectorizer from JSON: {}",
+                    e
+                ))
+            })?;
+            Ok(Self { inner: vectorizer })
+        })
     }
 }
 

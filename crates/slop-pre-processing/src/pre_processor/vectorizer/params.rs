@@ -1,8 +1,8 @@
 use std::ops::RangeInclusive;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug)]
 pub struct VectorizerParams {
     ngram_range: Vec<usize>,
     min_df: usize,

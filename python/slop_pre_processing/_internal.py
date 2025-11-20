@@ -6,10 +6,12 @@ using TF-IDF.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 from scipy.sparse import csr_matrix
+from sklearn.base import BaseEstimator, TransformerMixin
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -39,23 +41,52 @@ class VectorizerParams:
         return self._inner
 
 
-class TfidfVectorizer:
-    """TF-IDF text vectorizer.
+class TfidfVectorizer(BaseEstimator, TransformerMixin):
+    """TF-IDF text vectorizer compatible with scikit-learn.
 
     This class provides methods to fit a TF-IDF vectorizer to a corpus of text
     documents and to transform new documents into TF-IDF feature vectors.
+
+    The vectorizer uses Rust implementation for fast tokenization and vectorization.
+
+    Parameters
+    ----------
+    ngram_range : tuple[int, int], default=(3, 5)
+        The range of n-gram sizes to extract. Note: these are token n-grams
+        (sequences of consecutive tokens), not character or word n-grams.
+
+    min_df : int, default=10
+        Minimum document frequency for a token to be included in the vocabulary.
+        Tokens that appear in fewer than `min_df` documents will be ignored.
+
+    Examples
+    --------
+    >>> from slop_pre_processing import TfidfVectorizer
+    >>> vectorizer = TfidfVectorizer(ngram_range=(3, 5), min_df=10)
+    >>> X_train = vectorizer.fit_transform(train_texts)
+    >>> X_test = vectorizer.transform(test_texts)
     """
 
-    def __init__(self, vectorizer: RustTfidfVectorizer, *, fitted: bool) -> None:
-        """Internal constructor. Use `fit` class method to create an instance."""
-        self._vectorizer: RustTfidfVectorizer = vectorizer
-        self._fitted: bool = fitted
+    def __init__(self, ngram_range: tuple[int, int] = (3, 5), min_df: int = 10) -> None:
+        """Initialize the TF-IDF vectorizer with parameters.
+
+        Args:
+            ngram_range: The range of n-gram sizes to extract (token n-grams).
+            min_df: Minimum document frequency threshold.
+        """
+        self.ngram_range = ngram_range
+        self.min_df = min_df
+        self._vectorizer: RustTfidfVectorizer | None = None
+        self._fitted: bool = False
 
     @staticmethod
-    def _validate_texts(texts: list[str] | NDArray[np.str_]) -> None:
+    def _validate_texts(texts: list[str] | NDArray[np.str_]) -> list[str]:
         """Validate the input texts for fitting or transforming.
 
         Validated here so we dont pass invalid data to the Rust side.
+
+        Returns:
+            The texts as a list of strings.
         """
         if isinstance(texts, np.ndarray):
             if texts.dtype.kind not in {"U", "S"}:
@@ -64,47 +95,52 @@ class TfidfVectorizer:
             if texts.ndim != 1:
                 msg = "Input NumPy array must be 1-dimensional."
                 raise ValueError(msg)
+            return texts.tolist()
 
-        elif not isinstance(texts, list):
+        if not isinstance(texts, list):
             msg = "Input must be a list of strings or a 1D NumPy array of strings."
             raise TypeError(msg)
 
-        elif not all(isinstance(t, str) for t in texts):
+        if not all(isinstance(t, str) for t in texts):
             msg = "All elements in the input list must be strings."
             raise TypeError(msg)
 
-    @classmethod
-    def fit(cls, texts: list[str] | NDArray[np.str_], params: VectorizerParams) -> Self:
+        return texts
+
+    def fit(self, X: list[str] | NDArray[np.str_], y: Any = None) -> Self:
         """Fit the TF-IDF vectorizer to the provided texts.
 
         Args:
-            texts: A list or 1D NumPy array of text documents to fit the vectorizer.
-            params: An instance of `VectorizerParams` specifying the vectorizer configuration.
+            X: A list or 1D NumPy array of text documents to fit the vectorizer.
+            y: Ignored. Present for sklearn API compatibility.
 
         Returns:
-            An instance of `TfidfVectorizer` fitted to the provided texts.
-
+            self: The fitted vectorizer instance.
         """
-        cls._validate_texts(texts)
+        texts = self._validate_texts(X)
+        params = VectorizerParams(self.ngram_range, self.min_df)
         # Implicitly calls fit on the Rust side when creating the RustTfidfVectorizer
-        vectorizer = RustTfidfVectorizer(texts, params.as_rust())
-        return cls(vectorizer, fitted=True)
+        self._vectorizer = RustTfidfVectorizer(texts, params.as_rust())
+        self._fitted = True
+        return self
 
-    def transform(self, texts: list[str] | NDArray[np.str_]) -> csr_matrix:
+    def transform(self, X: list[str] | NDArray[np.str_]) -> csr_matrix:
         """Transform new texts into TF-IDF feature vectors.
 
         Args:
-            texts: A list or 1D NumPy array of text documents to transform.
+            X: A list or 1D NumPy array of text documents to transform.
 
         Returns:
             A SciPy CSR sparse matrix containing the TF-IDF feature vectors.
 
+        Raises:
+            RuntimeError: If the vectorizer has not been fitted yet.
         """
-        if not self._fitted:
-            msg = "The vectorizer must be fitted before calling transform."
+        if not self._fitted or self._vectorizer is None:
+            msg = "The vectorizer must be fitted before calling transform. Call fit() first."
             raise RuntimeError(msg)
 
-        self._validate_texts(texts)
+        texts = self._validate_texts(X)
 
         shape: tuple[int, int]
         data: NDArray[np.float64]
@@ -115,22 +151,173 @@ class TfidfVectorizer:
         # Build the scipy sparse matrix
         return csr_matrix((data, indices, indptr), shape=shape)
 
+    def fit_transform(self, X: list[str] | NDArray[np.str_], y: Any = None) -> csr_matrix:
+        """Fit the vectorizer and transform the input texts in one step.
+
+        Args:
+            X: A list or 1D NumPy array of text documents.
+            y: Ignored. Present for sklearn API compatibility.
+
+        Returns:
+            A SciPy CSR sparse matrix containing the TF-IDF feature vectors.
+
+        """
+        return self.fit(X, y).transform(X)
+
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
+        """Get parameters for this estimator.
+
+        Args:
+            deep: Ignored (no nested estimators).
+
+        Returns:
+            Dictionary of parameter names to values.
+
+        """
+        return {"ngram_range": self.ngram_range, "min_df": self.min_df}
+
+    def set_params(self, **params: Any) -> Self:
+        """Set the parameters of this estimator.
+
+        Args:
+            **params: Estimator parameters.
+
+        Returns:
+            self: The estimator instance.
+
+        Raises:
+            ValueError: If an invalid parameter is provided.
+
+        """
+        valid_params = {"ngram_range", "min_df"}
+        for key, value in params.items():
+            if key not in valid_params:
+                msg = f"Invalid parameter '{key}'. Valid parameters are: {valid_params}"
+                raise ValueError(msg)
+            setattr(self, key, value)
+        return self
+
+    @property
     def num_features(self) -> int:
         """Return the number of features (vocabulary size) of the fitted vectorizer."""
-        if not self._fitted:
+        if not self._fitted or self._vectorizer is None:
             msg = "The vectorizer must be fitted before accessing num_features."
             raise RuntimeError(msg)
         return self._vectorizer.num_features
 
+    @property
     def vocabulary(self) -> dict[str, int]:
-        """Return the vocabulary of the fitted vectorizer as a list of terms."""
-        if not self._fitted:
+        """Return the vocabulary of the fitted vectorizer as a mapping of terms to indices."""
+        if not self._fitted or self._vectorizer is None:
             msg = "The vectorizer must be fitted before accessing vocabulary."
             raise RuntimeError(msg)
         return self._vectorizer.vocabulary
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Get state for pickling.
+
+        Returns:
+            Dictionary containing the vectorizer state.
+
+        Raises:
+            RuntimeError: If the vectorizer has not been fitted yet.
+
+        """
+        if not self._fitted or self._vectorizer is None:
+            msg = "Cannot pickle an unfitted vectorizer."
+            raise RuntimeError(msg)
+
+        return {
+            "ngram_range": self.ngram_range,
+            "min_df": self.min_df,
+            "vectorizer_bytes": bytes(self._vectorizer.to_bytes()),
+            "fitted": self._fitted,
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Set state from unpickling.
+
+        Args:
+            state: Dictionary containing the vectorizer state.
+
+        """
+        self.ngram_range = state["ngram_range"]
+        self.min_df = state["min_df"]
+        self._fitted = state["fitted"]
+        self._vectorizer = RustTfidfVectorizer.from_bytes(list(state["vectorizer_bytes"]))
+
+    def save(self, path: str | Path, serialization_format: str = "bincode") -> None:
+        """Save the fitted vectorizer to disk.
+
+        Args:
+            path: File path to save the vectorizer.
+            serialization_format: Serialization format, either 'bincode' (binary, compact) or 'json' (human-readable).
+
+        Raises:
+            RuntimeError: If the vectorizer has not been fitted yet.
+            ValueError: If an invalid format is specified.
+
+        """
+        if not self._fitted or self._vectorizer is None:
+            msg = "Cannot save an unfitted vectorizer."
+            raise RuntimeError(msg)
+
+        path = Path(path)
+
+        if serialization_format == "bincode":
+            data = bytes(self._vectorizer.to_bytes())
+            path.write_bytes(data)
+        elif serialization_format == "json":
+            json_str = self._vectorizer.to_json()
+            path.write_text(json_str, encoding="utf-8")
+        else:
+            msg = f"Invalid format '{serialization_format}'. Must be 'bincode' or 'json'."
+            raise ValueError(msg)
+
+    @classmethod
+    def load(cls, path: str | Path, serialization_format: str = "bincode") -> Self:
+        """Load a fitted vectorizer from disk.
+
+        Args:
+            path: File path to load the vectorizer from.
+            serialization_format: Serialization format, either 'bincode' (binary, compact) or 'json' (human-readable).
+
+        Returns:
+            A loaded TfidfVectorizer instance.
+
+        Raises:
+            ValueError: If an invalid format is specified.
+            FileNotFoundError: If the file does not exist.
+        """
+        path = Path(path)
+
+        if not path.exists():
+            msg = f"File not found: {path}"
+            raise FileNotFoundError(msg)
+
+        if serialization_format == "bincode":
+            data = path.read_bytes()
+            rust_vectorizer = RustTfidfVectorizer.from_bytes(list(data))
+        elif serialization_format == "json":
+            json_str = path.read_text(encoding="utf-8")
+            rust_vectorizer = RustTfidfVectorizer.from_json(json_str)
+        else:
+            msg = f"Invalid format '{serialization_format}'. Must be 'bincode' or 'json'."
+            raise ValueError(msg)
+
+        # Create instance with dummy params (will be overridden by loaded state)
+        instance = cls(ngram_range=(1, 1), min_df=1)
+        instance._vectorizer = rust_vectorizer
+        instance._fitted = True
+        # Extract params from the loaded vectorizer if possible
+        # For now, we don't have a way to extract params from Rust, so keep defaults
+        return instance
+
     def __repr__(self) -> str:
-        return f"TfidfVectorizer({'fitted' if self._fitted else 'unfitted'}, vectorizer={self._vectorizer.__repr__()})"
+        fitted_str = "fitted" if self._fitted else "unfitted"
+        return f"TfidfVectorizer(ngram_range={self.ngram_range}, min_df={self.min_df}, {fitted_str})"
 
     def __str__(self) -> str:
-        return self._vectorizer.__str__()
+        if self._vectorizer is not None:
+            return self._vectorizer.__str__()
+        return self.__repr__()
