@@ -1,0 +1,72 @@
+line-length = 120
+show-fixes = true
+src = ["src", "tests"]
+
+[lint]
+preview = true
+select = ["ALL"]
+ignore = [
+    # --- modules ---
+    "CPY", # # Flake8-copyright
+
+    # --- specific rules ---
+    "ASYNC240", # Async functions should not use pathlib.Path methods
+    "N999",     # Invalid module name
+    "COM812",   # Commas should be used to separate items in a list
+    "D100",     # Missing docstring in public module
+    "D101",     # Missing docstring in public class
+    "D102",     # Missing docstring in public method
+    "D103",     # Missing docstring in public function
+    "D104",     # Missing docstring in public package
+    "D105",     # Missing docstring in magic method
+    "D107",     # Missing docstring in __init__
+    "D203",     # 1 blank line required before class docstring
+    "D213",     # Multi-line docstring closing quotes should be on a separate line
+    "D401",     # First line should be in imperative mood
+    "DOC201",   # Return is not documented in the docstring
+    "DOC501",   # Raised exception missing from docstring
+    "ERA001",   # Found commented-out code
+    "S404",     # Use of subprocess module is possibly insecure
+    "TRY003",   # Try/except block does not specify the exception type
+
+    "T201", # Use of print detected
+]
+isort.split-on-trailing-comma = false
+
+[lint.per-file-ignores]
+"**/{tests,docs,tools}/*.py" = [
+    # --- Modules ---
+    "D",   # pydocstyle
+    "DOC", # pydoclint
+
+    # --- Specific rules ---
+    "ANN003",  # Missing kwargs type annotation
+    "ARG002",  # Unused method argument
+    "ARG004",  # Unused staticmethod argument
+    "BLE001",  # Blind except used
+    "E501",    # Line too long
+    "PLR2004", # magic value comparison
+    "PLR6301", # no self used in class method
+    "PT011",   # pytest raises to broad
+    "S101",    # check assert used
+]
+"**/test_*.py" = [
+    "ANN401",  # Any-type annotation used
+    "ARG002",  # Unused method argument
+    "PLR6301", # no self used in class method
+]
+
+
+[format]
+docstring-code-format = true
+preview = true
+skip-magic-trailing-comma = true
+
+[lint.pylint]
+max-args = 10
+
+[lint.mccabe]
+max-complexity = 12
+
+[lint.pycodestyle]
+max-line-length = 150
