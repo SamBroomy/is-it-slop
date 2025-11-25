@@ -2,6 +2,13 @@
 name = "slop-pre-processing"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 
 [lib]
@@ -18,6 +25,7 @@ rayon = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
+smallvec = { workspace = true }
 dashmap = { workspace = true }
 ahash = { workspace = true }
 mimalloc = { workspace = true }
@@ -35,3 +43,7 @@ default = ["bincode"]
 python = ["pyo3", "numpy", "pyo3-log", "serde", "bincode"]
 serde = ["dep:serde", "dep:serde_json"]
 bincode = ["dep:bincode"]
+
+
+[lints]
+workspace = true

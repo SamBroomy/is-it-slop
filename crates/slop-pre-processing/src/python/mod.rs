@@ -56,6 +56,27 @@ impl RustVectorizerParams {
     }
 }
 
+impl From<&VectorizerParams> for RustVectorizerParams {
+    fn from(params: &VectorizerParams) -> Self {
+        Self {
+            ngram_range: (
+                // Min or first
+                *params
+                    .ngram_range()
+                    .iter()
+                    .min()
+                    .expect("Ngram range should never be an empty vec"),
+                *params
+                    .ngram_range()
+                    .iter()
+                    .max()
+                    .expect("Ngram range should never be an empty vec"),
+            ),
+            min_df: params.min_df(),
+        }
+    }
+}
+
 /// A wrapper function around TfidfVectorizer to expose it to Python.
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -125,12 +146,17 @@ impl RustTfidfVectorizer {
         self.inner.vocabulary()
     }
 
+    /// Getter for the vectorizer parameters.
+    #[getter]
+    pub fn params(&self) -> RustVectorizerParams {
+        self.inner.params().into()
+    }
+
     /// Return a string representation of the RustTfidfVectorizer.
     fn __repr__(&self) -> String {
         format!(
-            "RustTfidfVectorizer(num_features={}, vocabulary_size={})",
+            "RustTfidfVectorizer(vocabulary_size={})",
             self.num_features(),
-            self.vocabulary().len()
         )
     }
 
@@ -145,7 +171,7 @@ impl RustTfidfVectorizer {
     #[cfg(feature = "bincode")]
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         py.detach(|| {
-            bincode::encode_to_vec(self.inner.clone(), bincode::config::standard()).map_err(|e| {
+            self.inner.to_bytes().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to serialize vectorizer: {}",
                     e
@@ -160,7 +186,7 @@ impl RustTfidfVectorizer {
     #[cfg(feature = "serde")]
     fn to_json(&self, py: Python<'_>) -> PyResult<String> {
         py.detach(|| {
-            serde_json::to_string(&self.inner).map_err(|e| {
+            self.inner.to_json().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to serialize vectorizer to JSON: {}",
                     e
@@ -178,16 +204,15 @@ impl RustTfidfVectorizer {
     ///     A new RustTfidfVectorizer instance
     #[staticmethod]
     #[cfg(feature = "bincode")]
-    fn from_bytes(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Self> {
+    fn from_bytes(py: Python<'_>, bytes: &[u8]) -> PyResult<Self> {
         py.detach(|| {
-            let (vectorizer, _): (TfidfVectorizer, usize) =
-                bincode::decode_from_slice(&bytes, bincode::config::standard()).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to deserialize vectorizer: {}",
-                        e
-                    ))
-                })?;
-            Ok(Self { inner: vectorizer })
+            let inner = TfidfVectorizer::from_bytes(bytes).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to deserialize vectorizer from bytes: {}",
+                    e
+                ))
+            })?;
+            Ok(Self { inner })
         })
     }
 
@@ -202,7 +227,7 @@ impl RustTfidfVectorizer {
     #[cfg(feature = "serde")]
     fn from_json(py: Python<'_>, json: String) -> PyResult<Self> {
         py.detach(|| {
-            let vectorizer: TfidfVectorizer = serde_json::from_str(&json).map_err(|e| {
+            let vectorizer = TfidfVectorizer::from_json(&json).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to deserialize vectorizer from JSON: {}",
                     e

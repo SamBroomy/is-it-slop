@@ -1,39 +1,115 @@
-use ahash::AHashMap as HashMap;
+use ahash::{HashMap, HashMapExt};
 use dashmap::DashMap;
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
+use smallvec::SmallVec;
 
-// TODO: Optimize n-gram counting
-pub fn count_ngrams(tokens: &[u32], ngram_range: &[usize]) -> HashMap<Vec<u32>, usize> {
-    let mut ngram_counter = HashMap::new();
+use crate::NGRAM_CONST_KEY;
+
+/// Type alias for n-gram keys using `SmallVec` for stack allocation of small n-grams
+pub type NgramKey = SmallVec<[u32; NGRAM_CONST_KEY]>;
+
+/// Count n-grams in a sequence of tokens.
+///
+/// This optimized version uses `SmallVec` to avoid heap allocations for typical n-gram sizes (≤8 tokens).
+/// The function pre-allocates `HashMap` capacity and uses the efficient `and_modify` pattern.
+///
+/// # Arguments
+/// * `tokens` - Sequence of token IDs
+/// * `ngram_range` - Range of n-gram sizes to extract
+///
+/// # Returns
+/// `HashMap` mapping n-gram (as `SmallVec`) to count
+pub fn count_ngrams(tokens: &[u32], ngram_range: &[usize]) -> HashMap<NgramKey, usize> {
+    // Pre-compute capacity to reduce HashMap resizing
+    let max_possible_ngrams: usize = ngram_range
+        .iter()
+        .map(|&n| tokens.len().saturating_sub(n.saturating_sub(1)))
+        .sum();
+
+    // Assume ~33% unique n-grams (typical for text data)
+    // This reduces rehashing overhead significantly
+    let estimated_capacity = (max_possible_ngrams / 3).max(16);
+    let mut ngram_counter = HashMap::with_capacity(estimated_capacity);
 
     for &n in ngram_range {
+        // Early exit if not enough tokens for this n-gram size
+        if n == 0 || n > tokens.len() {
+            continue;
+        }
+
         for window in tokens.windows(n) {
-            *ngram_counter.entry(window.to_vec()).or_insert(0) += 1;
+            // SmallVec::from_slice uses stack allocation for n ≤ 8
+            let key = SmallVec::from_slice(window);
+
+            // and_modify pattern is more efficient than or_insert + increment
+            ngram_counter
+                .entry(key)
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
         }
     }
     ngram_counter
 }
 
+/// Build vocabulary from tokenized texts using `SmallVec` keys.
+///
+/// This replaces the old string-based vocabulary with `SmallVec` keys,
+/// eliminating expensive token ID → string conversions.
+///
+/// # Arguments
+/// * `tokenized_texts` - Slice of tokenized documents
+/// * `ngram_range` - Range of n-gram sizes to extract
+///
+/// # Returns
+/// `DashMap` mapping n-gram (as `SmallVec`) to document frequency
 pub fn build_vocabulary(
     tokenized_texts: &[Vec<u32>],
     ngram_range: &[usize],
-) -> DashMap<String, usize, ahash::RandomState> {
+) -> DashMap<NgramKey, usize, ahash::RandomState> {
     let vocab_df = DashMap::with_hasher(ahash::RandomState::default());
 
+    // Parallel iteration over documents with progress bar
     tokenized_texts.par_iter().progress().for_each(|tokens| {
         let ngrams = count_ngrams(tokens, ngram_range);
-        for tokens in ngrams.into_keys() {
-            let token = tokens
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<String>>()
-                .join(" ");
+
+        // For each unique n-gram in this document, increment its document frequency
+        for ngram_key in ngrams.into_keys() {
             vocab_df
-                .entry(token)
-                .and_modify(|e| *e += 1)
-                .or_insert(1usize);
+                .entry(ngram_key)
+                .and_modify(|df| *df += 1)
+                .or_insert(1);
         }
     });
+
+    vocab_df
+}
+
+// TODO: profile this function against the current implementation of `build_vocabulary`
+// Removes dashmap dependency if we use this over the other one
+pub fn build_vocabulary_merge(
+    tokenized_texts: &[Vec<u32>],
+    ngram_range: &[usize],
+) -> HashMap<NgramKey, usize> {
+    // Phase 1: Parallel - each thread builds its own HashMap
+    let partial_results: Vec<HashMap<_, _>> = tokenized_texts
+        .par_iter()
+        .map(|tokens| count_ngrams(tokens, ngram_range))
+        .collect();
+
+    let estimated_size = partial_results
+        .iter()
+        .map(std::collections::HashMap::len)
+        .sum::<usize>()
+        .max(16);
+
+    // Phase 2: Sequential merge
+    let mut vocab_df =
+        HashMap::with_capacity_and_hasher(estimated_size, ahash::RandomState::default());
+    for partial in partial_results {
+        for (key, count) in partial {
+            *vocab_df.entry(key).or_insert(0) += count;
+        }
+    }
     vocab_df
 }

@@ -1,5 +1,4 @@
 use ahash::HashMap;
-
 use sprs::CsMat;
 use tracing::debug;
 
@@ -7,7 +6,7 @@ use super::{count_vectorizer::CountVectorizer, params::VectorizerParams};
 
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Debug, )]
+#[derive(Clone, Debug)]
 pub struct TfidfVectorizer {
     count_vectorizer: CountVectorizer,
     idf: Vec<f64>,
@@ -35,7 +34,6 @@ impl TfidfVectorizer {
                 df[col_idx] += 1;
             }
         }
-        // Compute IDF values
         let idf = df
             .iter()
             .map(|&doc_freq| ((n_docs + 1.0) / (doc_freq as f64 + 1.0)).ln() + 1.0)
@@ -53,17 +51,15 @@ impl TfidfVectorizer {
             num_texts = texts.len(),
             "Transforming texts using TfidfVectorizer"
         );
-        let tf_matrix = self.count_vectorizer.transform(texts);
+        let mut tf_matrix = self.count_vectorizer.transform(texts);
 
-        let mut tf_matrix = tf_matrix.to_owned();
-
-        // Apply TF-IDF transformation
+        // Apply TF-IDF transformation in f64
         for mut row_vec in tf_matrix.outer_iterator_mut() {
-            // Apply IDF
+            // Apply IDF (already in f64)
             for (col_idx, val) in row_vec.iter_mut() {
                 *val *= self.idf[col_idx];
             }
-            // Normalize row vector (L2 norm)
+            // Normalize row vector (L2 norm) - calculate in f64 to avoid precision loss
             let norm = row_vec.iter().map(|(_, &v)| v * v).sum::<f64>().sqrt();
             // Normalize
             if norm > 0.0 {
@@ -72,6 +68,7 @@ impl TfidfVectorizer {
                 }
             }
         }
+
         tf_matrix
     }
 
@@ -84,11 +81,42 @@ impl TfidfVectorizer {
         (vectorizer, transformed)
     }
 
+    #[must_use]
     pub fn num_features(&self) -> usize {
         self.count_vectorizer.num_features()
     }
 
+    #[must_use]
     pub fn vocabulary(&self) -> HashMap<String, usize> {
         self.count_vectorizer.vocabulary()
+    }
+
+    #[must_use]
+    pub fn params(&self) -> &VectorizerParams {
+        self.count_vectorizer.params()
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl TfidfVectorizer {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+        bincode::encode_to_vec(self, bincode::config::standard())
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
+        let (vectorizer, _): (Self, usize) =
+            bincode::decode_from_slice(bytes, bincode::config::standard())?;
+        Ok(vectorizer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl TfidfVectorizer {
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn from_json(json_str: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json_str)
     }
 }
