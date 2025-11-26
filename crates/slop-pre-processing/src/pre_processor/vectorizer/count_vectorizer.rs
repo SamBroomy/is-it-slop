@@ -7,7 +7,7 @@ use super::{
     params::VectorizerParams,
     tokenizer,
 };
-use crate::pre_processor::vectorizer::{ tokenizer::reverse_tokenize};
+use crate::pre_processor::vectorizer::tokenizer::reverse_tokenize;
 
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
