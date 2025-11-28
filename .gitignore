@@ -20,3 +20,7 @@
 !/python/**/*.py
 !/python/**/py.typed
 !/notebooks/__init__.py
+!/model_artifacts/**/classification_threshold.txt
+!/model_artifacts/**/slop-classifier.onnx
+!/model_artifacts/**/tfidf_vectorizer.bin
+!/model_artifacts/**/tfidf_vectorizer.json

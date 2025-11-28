@@ -31,15 +31,3 @@ pub static TOKENIZER_BYTES: &[u8] = include_bytes!(concat!(
 pub static PRE_PROCESSOR: LazyLock<TfidfVectorizer> = LazyLock::new(|| {
     TfidfVectorizer::from_bytes(TOKENIZER_BYTES).expect("Unable to load tokenizer from memory")
 });
-
-pub static THRESHOLD_STRING: &str = include_str!(concat!(
-    "../../../../model_artifacts/",
-    env!("CARGO_PKG_VERSION"),
-    "/classification_threshold.txt"
-));
-pub static CLASSIFICATION_THRESHOLD: LazyLock<f64> = LazyLock::new(|| {
-    THRESHOLD_STRING
-        .trim()
-        .parse()
-        .expect("Unable to parse classification threshold")
-});

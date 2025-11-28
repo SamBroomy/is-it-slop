@@ -6,12 +6,13 @@ build-bindings:
     uv run --directory python maturin develop --release
 
 dataset-curation:
-    uv run jupyter nbconvert --to script notebooks/curate_datasets.ipynb
-    uv run python notebooks/curate_datasets.py
+    uv run jupyter nbconvert --to script notebooks/dataset_curation.ipynb
+    uv run python notebooks/dataset_curation.py
 
 training-pipeline:
     uv run jupyter nbconvert --to script notebooks/train.ipynb
     uv run python notebooks/train.py
+    cargo build --release
 
 # Run CLI with different output formats and options
 run-cli:

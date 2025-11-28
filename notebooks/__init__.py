@@ -1,16 +1,17 @@
 from pathlib import Path
 
 import polars as pl
+from slop_pre_processing import __version__
 
 RETRAIN_VECTORIZER = False
 
-ROOT_DIR = Path(__file__).parent.parent
+ROOT_DIR = Path(__file__).parent.parent.resolve()
 
-PLOT_DIR = Path(__file__).parent / "plots"
+PLOT_DIR = ROOT_DIR / "plots"
 PLOT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-DATA_DIR = ROOT_DIR / "data"
+DATA_DIR = ROOT_DIR / "data" / __version__
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DATA_PATH = DATA_DIR / "curated_dataset.parquet"
@@ -22,7 +23,7 @@ df_train = pl.scan_parquet(TRAIN_PATH)
 df_test = pl.scan_parquet(TEST_PATH)
 
 
-MODEL_DIR = ROOT_DIR / "model_artifacts"
+MODEL_DIR = ROOT_DIR / "model_artifacts" / __version__
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 

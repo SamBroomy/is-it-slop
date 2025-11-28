@@ -1,11 +1,13 @@
 use std::{fs, io::Write};
 
 fn main() {
-    const THRESHOLD_PATH: &str = "../../model_artifacts/classification_threshold.txt";
+    const THRESHOLD_PATH: &str = concat!(
+        "../../model_artifacts/",
+        env!("CARGO_PKG_VERSION"),
+        "/classification_threshold.txt"
+    );
     const OUT_PATH: &str = "src/model/threshold.rs";
     const DEFAULT_THRESHOLD: f64 = 0.5;
-    // let mut threshold_const = "pub const CLASSIFICATION_THRESHOLD: f64 = 0.5;\n".to_string();
-
     let val = fs::read_to_string(THRESHOLD_PATH).map_or_else(|_| {
         println!("cargo:warning=Threshold file not found at {THRESHOLD_PATH}, using default 0.5");
         DEFAULT_THRESHOLD
