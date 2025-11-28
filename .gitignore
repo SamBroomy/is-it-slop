@@ -19,4 +19,4 @@
 !notebooks/**/*.ipynb
 !/python/**/*.py
 !/python/**/py.typed
-!*.py
+!/notebooks/__init__.py

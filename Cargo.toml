@@ -56,7 +56,6 @@ pyo3-log = { version = "0.13.2" }
 numpy = "0.27"
 ort = "2.0.0-rc.10"
 
-
 slop-pre-processing = { path = "crates/slop-pre-processing" }
 
 

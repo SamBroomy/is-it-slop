@@ -2,8 +2,15 @@ use std::sync::{LazyLock, Mutex};
 
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use slop_pre_processing::pre_processor::TfidfVectorizer;
+mod threshold;
+pub use threshold::CLASSIFICATION_THRESHOLD;
 
-static MODEL_BYTES: &[u8] = include_bytes!("../../../../model_artifacts/slop-classifier.onnx");
+// pub static MODEL_BYTES: &[u8] = include_bytes!("../../../../model_artifacts/slop-classifier.onnx");
+pub static MODEL_BYTES: &[u8] = include_bytes!(concat!(
+    "../../../../model_artifacts/",
+    env!("CARGO_PKG_VERSION"),
+    "/slop-classifier.onnx"
+));
 pub static MODEL: LazyLock<Mutex<Session>> = LazyLock::new(|| {
     Mutex::new(
         Session::builder()
@@ -16,8 +23,23 @@ pub static MODEL: LazyLock<Mutex<Session>> = LazyLock::new(|| {
             .expect("Unable to load model from memory"),
     )
 });
-
-static TOKENIZER_BYTES: &[u8] = include_bytes!("../../../../model_artifacts/tfidf_vectorizer.bin");
+pub static TOKENIZER_BYTES: &[u8] = include_bytes!(concat!(
+    "../../../../model_artifacts/",
+    env!("CARGO_PKG_VERSION"),
+    "/tfidf_vectorizer.bin"
+));
 pub static PRE_PROCESSOR: LazyLock<TfidfVectorizer> = LazyLock::new(|| {
     TfidfVectorizer::from_bytes(TOKENIZER_BYTES).expect("Unable to load tokenizer from memory")
+});
+
+pub static THRESHOLD_STRING: &str = include_str!(concat!(
+    "../../../../model_artifacts/",
+    env!("CARGO_PKG_VERSION"),
+    "/classification_threshold.txt"
+));
+pub static CLASSIFICATION_THRESHOLD: LazyLock<f64> = LazyLock::new(|| {
+    THRESHOLD_STRING
+        .trim()
+        .parse()
+        .expect("Unable to parse classification threshold")
 });

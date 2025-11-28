@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use slop_inference::CLASSIFICATION_THRESHOLD;
 
 #[derive(Parser)]
 #[command(name = "slop-cli")]
@@ -76,7 +77,7 @@ enum InputSource {
 struct PredictionResult {
     class: i64,
     class_label: String,
-    probabilities: Vec<f32>,
+    probabilities: [f32; 2],
     label_names: Vec<String>,
 }
 
@@ -148,24 +149,28 @@ fn process_single(text: &str, cli: &Cli, verbosity: Verbosity) -> Result<Predict
     let start = matches!(verbosity, Verbosity::Verbose).then(Instant::now);
 
     // Call inference pipeline
-    let (labels, probs) = slop_inference::predict(text)?;
+    let prob = slop_inference::predict(text)?[0];
 
     if let Some(start_time) = start {
         eprintln!("Inference time: {:?}", start_time.elapsed());
     }
 
-    // Convert to structured result
-    let class = labels[0];
+    let class = i64::from(prob >= CLASSIFICATION_THRESHOLD as f32);
+
     let class_label = cli
         .labels
         .get(class as usize)
         .cloned()
         .unwrap_or_else(|| class.to_string());
 
+    // Reconstruct full probability vector [P(human), P(AI)] from AI probability
+    let ai_prob = prob;
+    let probabilities = [1.0 - ai_prob, ai_prob];
+
     let prediction_result = PredictionResult {
         class,
         class_label,
-        probabilities: probs[0].clone(),
+        probabilities,
         label_names: cli.labels.clone(),
     };
 

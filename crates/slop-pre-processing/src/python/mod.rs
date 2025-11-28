@@ -13,25 +13,32 @@ struct RustVectorizerParams {
     #[pyo3(get)]
     ngram_range: (usize, usize),
     #[pyo3(get)]
-    min_df: usize,
+    min_df: f64,
+    #[pyo3(get)]
+    max_df: f64,
+    #[pyo3(get)]
+    sublinear_tf: bool,
 }
 
 #[pymethods]
 impl RustVectorizerParams {
     /// Creates a new RustVectorizerParams instance.
     #[new]
-    fn new(ngram_range: (usize, usize), min_df: usize) -> Self {
+    #[pyo3(signature = (ngram_range, min_df, max_df, sublinear_tf))]
+    fn new(ngram_range: (usize, usize), min_df: f64, max_df: f64, sublinear_tf: bool) -> Self {
         Self {
             ngram_range,
             min_df,
+            max_df,
+            sublinear_tf,
         }
     }
 
     /// Returns a string representation of the RustVectorizerParams.
     fn __repr__(&self) -> String {
         format!(
-            "RustVectorizerParams(ngram_range=({}, {}), min_df={})",
-            self.ngram_range.0, self.ngram_range.1, self.min_df
+            "RustVectorizerParams(ngram_range=({}, {}), min_df={}, max_df={}, sublinear_tf={})",
+            self.ngram_range.0, self.ngram_range.1, self.min_df, self.max_df, self.sublinear_tf
         )
     }
 
@@ -45,34 +52,31 @@ impl Default for RustVectorizerParams {
     fn default() -> Self {
         Self {
             ngram_range: (3, 5),
-            min_df: 10,
+            min_df: 10.0,
+            max_df: 0.9,
+            sublinear_tf: true,
         }
     }
 }
 
 impl RustVectorizerParams {
     fn to_inner(&self) -> VectorizerParams {
-        VectorizerParams::new(self.ngram_range.0..=self.ngram_range.1, self.min_df)
+        VectorizerParams::new(
+            self.ngram_range.0..=self.ngram_range.1,
+            self.min_df,
+            self.max_df,
+            self.sublinear_tf,
+        )
     }
 }
 
 impl From<&VectorizerParams> for RustVectorizerParams {
     fn from(params: &VectorizerParams) -> Self {
         Self {
-            ngram_range: (
-                // Min or first
-                *params
-                    .ngram_range()
-                    .iter()
-                    .min()
-                    .expect("Ngram range should never be an empty vec"),
-                *params
-                    .ngram_range()
-                    .iter()
-                    .max()
-                    .expect("Ngram range should never be an empty vec"),
-            ),
+            ngram_range: params.ngram_range(),
             min_df: params.min_df(),
+            max_df: params.max_df(),
+            sublinear_tf: params.sublinear_tf(),
         }
     }
 }

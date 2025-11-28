@@ -55,10 +55,20 @@ impl TfidfVectorizer {
 
         // Apply TF-IDF transformation in f64
         for mut row_vec in tf_matrix.outer_iterator_mut() {
+            // Apply sublinear TF scaling if enabled: tf -> 1 + log(tf)
+            if self.count_vectorizer.params().sublinear_tf() {
+                for (_, val) in row_vec.iter_mut() {
+                    if *val > 0.0 {
+                        *val = 1.0 + val.ln();
+                    }
+                }
+            }
+
             // Apply IDF (already in f64)
             for (col_idx, val) in row_vec.iter_mut() {
                 *val *= self.idf[col_idx];
             }
+
             // Normalize row vector (L2 norm) - calculate in f64 to avoid precision loss
             let norm = row_vec.iter().map(|(_, &v)| v * v).sum::<f64>().sqrt();
             // Normalize

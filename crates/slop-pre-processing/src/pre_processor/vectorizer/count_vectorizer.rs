@@ -16,6 +16,7 @@ pub struct CountVectorizer {
     params: VectorizerParams,
     /// Vocabulary mapping n-gram (as `SmallVec`) to feature index
     /// Using `SmallVec` eliminates string conversion overhead
+    #[cfg_attr(feature = "serde", serde(with = "serde_vocab"))]
     vocab: HashMap<NgramKey, usize>,
     // /// Cached decoded vocabulary for fast access
     // /// Only computed when vocabulary() is called
@@ -46,7 +47,7 @@ impl CountVectorizer {
 
         // Use pre-computed n-grams if available, otherwise compute them
         let vocab_df = precomputed_ngrams.map_or_else(
-            || ngrams::build_vocabulary(tokenized_texts, params.ngram_range()),
+            || ngrams::build_vocabulary(tokenized_texts, params.ngram_counts()),
             |ngram_maps| {
                 // Fast path: reuse pre-computed n-grams
                 debug!("Using pre-computed n-grams for vocabulary building");
@@ -65,17 +66,55 @@ impl CountVectorizer {
         );
 
         let vocab_size = vocab_df.len();
+        let num_docs = tokenized_texts.len();
 
-        debug!(min_df = params.min_df(), "Applying min_df filtering");
+        // Calculate min_df threshold: terms appearing in fewer than this many docs are filtered
+        // - If min_df < 1.0: treat as proportion of documents
+        // - If min_df >= 1.0: treat as absolute document count
+        let min_df_threshold = if params.min_df() < 1.0 {
+            (params.min_df() * num_docs as f64).ceil() as usize
+        } else {
+            params.min_df() as usize
+        };
+
+        // Calculate max_df threshold: terms appearing in more than this many docs are filtered
+        // - If max_df <= 1.0: treat as proportion of documents
+        // - If max_df > 1.0: treat as absolute document count
+        let max_df_threshold = if params.max_df() <= 1.0 {
+            (params.max_df() * num_docs as f64).ceil() as usize
+        } else {
+            params.max_df() as usize
+        };
+
+        debug!(
+            min_df = params.min_df(),
+            min_df_threshold = min_df_threshold,
+            min_df_interpretation = if params.min_df() < 1.0 {
+                "proportion"
+            } else {
+                "absolute"
+            },
+            max_df = params.max_df(),
+            max_df_threshold = max_df_threshold,
+            max_df_interpretation = if params.max_df() <= 1.0 {
+                "proportion"
+            } else {
+                "absolute"
+            },
+            num_docs = num_docs,
+            "Applying min_df and max_df filtering"
+        );
+
         let filtered_vocab = vocab_df
             .into_iter()
-            .filter(|(_, df)| *df >= params.min_df())
+            .filter(|(_, df)| *df >= min_df_threshold && *df <= max_df_threshold)
             .map(|(token, _)| token)
             .collect::<Vec<_>>();
+
         debug!(
             original_size = vocab_size,
             filtered_size = filtered_vocab.len(),
-            "Vocabulary filtered by min_df"
+            "Vocabulary filtered by min_df and max_df"
         );
 
         let mut sorted_tokens = filtered_vocab;
@@ -149,7 +188,7 @@ impl CountVectorizer {
             // Slow path: compute n-grams now
             // Note: This allocates but is only used when not in fit_transform
             for tokens in tokenized_texts {
-                let ngrams = ngrams::count_ngrams(tokens, self.params.ngram_range());
+                let ngrams = ngrams::count_ngrams(tokens, self.params.ngram_counts());
                 let mut row_entries = ngrams
                     .iter()
                     .filter_map(|(ngram_key, &count)| {
@@ -196,7 +235,7 @@ impl CountVectorizer {
         debug!("Computing n-grams for all documents");
         let ngram_maps: Vec<_> = tokenized_texts
             .iter()
-            .map(|tokens| ngrams::count_ngrams(tokens, params.ngram_range()))
+            .map(|tokens| ngrams::count_ngrams(tokens, params.ngram_counts()))
             .collect();
 
         // Step 3: Fit from pre-computed n-grams
@@ -255,5 +294,36 @@ impl CountVectorizer {
 
     pub fn params(&self) -> &VectorizerParams {
         &self.params
+    }
+}
+
+#[cfg(feature = "serde")]
+mod serde_vocab {
+    use ahash::HashMapExt;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{HashMap, NgramKey};
+
+    pub fn serialize<S>(vocab: &HashMap<NgramKey, usize>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Serialize as array of [key, value] pairs for JSON compatibility
+        let pairs: Vec<(Vec<u32>, usize)> = vocab.iter().map(|(k, v)| (k.to_vec(), *v)).collect();
+        pairs.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<NgramKey, usize>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use smallvec::SmallVec;
+
+        let pairs: Vec<(Vec<u32>, usize)> = Vec::deserialize(deserializer)?;
+        let mut map = HashMap::with_capacity(pairs.len());
+        for (k, v) in pairs {
+            map.insert(SmallVec::from_vec(k), v);
+        }
+        Ok(map)
     }
 }
