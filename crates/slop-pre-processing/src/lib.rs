@@ -1,8 +1,7 @@
 #[cfg(feature = "python")]
 mod python;
 
-/// SET THIS TO MATCH the max `ngram_range` once we know what parameters we'll use for max efficiency
-const NGRAM_CONST_KEY: usize = 8;
+/// IMPORTANT! SET THIS TO MATCH the max `ngram_range` once we know what parameters we'll use for lowest most efficient memory usage
+const NGRAM_CONST_KEY: usize = 4;
 
-mod data_loader;
 pub mod pre_processor;

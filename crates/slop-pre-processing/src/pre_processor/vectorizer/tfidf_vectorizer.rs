@@ -20,10 +20,20 @@ impl TfidfVectorizer {
         debug!(num_texts = texts.len(), "Fitting TfidfVectorizer");
         let (count_vectorizer, tf_matrix) =
             CountVectorizer::fit_transform(texts, count_vectorizer_params);
-        debug!("Calculating IDF values");
 
-        // Calculate IDF: log((n_docs + 1) / (df + 1)) + 1
-        let n_docs = texts.len() as f64;
+        Self::fit_from_tf_matrix(count_vectorizer, &tf_matrix, texts.len())
+    }
+
+    /// Internal method to fit from a pre-computed TF matrix.
+    /// Used by `fit_transform` to avoid double computation.
+    fn fit_from_tf_matrix(
+        count_vectorizer: CountVectorizer,
+        tf_matrix: &CsMat<f64>,
+        n_docs: usize,
+    ) -> Self {
+        debug!("Calculating IDF values from TF matrix");
+
+        let n_docs = n_docs as f64;
         let num_features = count_vectorizer.num_features();
 
         // Count document frequency for each term
@@ -51,28 +61,42 @@ impl TfidfVectorizer {
             num_texts = texts.len(),
             "Transforming texts using TfidfVectorizer"
         );
-        let mut tf_matrix = self.count_vectorizer.transform(texts);
+        let tf_matrix = self.count_vectorizer.transform(texts);
+        self.apply_tfidf_transform(tf_matrix)
+    }
 
-        // Apply TF-IDF transformation in f64
+    /// Apply TF-IDF transformation to a pre-computed TF matrix.
+    /// This mutates the matrix in-place and returns it.
+    ///
+    /// Optimized to do only 2 passes over each row:
+    /// 1. Apply TF-IDF weights and accumulate norm
+    /// 2. Normalize by L2 norm
+    fn apply_tfidf_transform(&self, mut tf_matrix: CsMat<f64>) -> CsMat<f64> {
+        debug!("Applying TF-IDF transformation");
+
+        let use_sublinear_tf = self.count_vectorizer.params().sublinear_tf();
+
+        // Process each document (row)
         for mut row_vec in tf_matrix.outer_iterator_mut() {
-            // Apply sublinear TF scaling if enabled: tf -> 1 + log(tf)
-            if self.count_vectorizer.params().sublinear_tf() {
-                for (_, val) in row_vec.iter_mut() {
-                    if *val > 0.0 {
-                        *val = 1.0 + val.ln();
-                    }
-                }
-            }
+            // Pass 1: Apply sublinear TF (if enabled), IDF weights, and accumulate norm
+            let mut norm_squared = 0.0;
 
-            // Apply IDF (already in f64)
             for (col_idx, val) in row_vec.iter_mut() {
+                // Apply sublinear TF scaling: tf -> 1 + log(tf)
+                if use_sublinear_tf && *val > 0.0 {
+                    *val = 1.0 + val.ln();
+                }
+
+                // Apply IDF weight
                 *val *= self.idf[col_idx];
+
+                // Accumulate squared norm
+                norm_squared += *val * *val;
             }
 
-            // Normalize row vector (L2 norm) - calculate in f64 to avoid precision loss
-            let norm = row_vec.iter().map(|(_, &v)| v * v).sum::<f64>().sqrt();
-            // Normalize
-            if norm > 0.0 {
+            // Pass 2: Normalize by L2 norm
+            if norm_squared > 0.0 {
+                let norm = norm_squared.sqrt();
                 for (_, val) in row_vec.iter_mut() {
                     *val /= norm;
                 }
@@ -82,13 +106,27 @@ impl TfidfVectorizer {
         tf_matrix
     }
 
-    fn fit_transform<T: AsRef<str> + Sync>(
+    pub fn fit_transform<T: AsRef<str> + Sync>(
         texts: &[T],
         count_vectorizer_params: VectorizerParams,
     ) -> (Self, CsMat<f64>) {
-        let vectorizer = Self::fit(texts, count_vectorizer_params);
-        let transformed = vectorizer.transform(texts);
-        (vectorizer, transformed)
+        debug!(
+            num_texts = texts.len(),
+            "Fitting and transforming texts using TfidfVectorizer"
+        );
+
+        // Step 1: Fit CountVectorizer and get TF matrix (tokenizes and computes n-grams once)
+        let (count_vectorizer, tf_matrix) =
+            CountVectorizer::fit_transform(texts, count_vectorizer_params);
+
+        // Step 2: Fit TfidfVectorizer from the TF matrix (computes IDF)
+        let vectorizer = Self::fit_from_tf_matrix(count_vectorizer, &tf_matrix, texts.len());
+
+        // Step 3: Apply TF-IDF transformation to the same TF matrix (no re-tokenization!)
+        let tfidf_matrix = vectorizer.apply_tfidf_transform(tf_matrix);
+
+        debug!("fit_transform complete with single tokenization pass");
+        (vectorizer, tfidf_matrix)
     }
 
     #[must_use]

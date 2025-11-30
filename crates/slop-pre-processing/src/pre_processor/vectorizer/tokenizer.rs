@@ -1,5 +1,7 @@
+#[cfg(feature = "progress-bars")]
 use std::borrow::Cow;
 
+#[cfg(feature = "progress-bars")]
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle};
 use rayon::prelude::*;
 use tiktoken_rs::o200k_base_singleton;
@@ -11,6 +13,7 @@ const MIN_TEXTS_FOR_PARALLEL: usize = 100;
 /// Minimum total character count to consider parallelization
 const MIN_CHARS_FOR_PARALLEL: usize = 10_000;
 
+#[cfg(feature = "progress-bars")]
 fn progress_bar_setup(len: usize, message: impl Into<Cow<'static, str>>) -> ProgressBar {
     let pb = ProgressBar::new(len as u64);
     pb.set_style(
@@ -23,6 +26,7 @@ fn progress_bar_setup(len: usize, message: impl Into<Cow<'static, str>>) -> Prog
     pb
 }
 
+#[cfg(feature = "progress-bars")]
 fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     debug!(num_texts = texts.len(), "Using parallel tokenization");
     let bpe = o200k_base_singleton();
@@ -36,6 +40,17 @@ fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     result
 }
 
+#[cfg(not(feature = "progress-bars"))]
+fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
+    debug!(num_texts = texts.len(), "Using parallel tokenization");
+    let bpe = o200k_base_singleton();
+    texts
+        .par_iter()
+        .map(|text| bpe.encode_ordinary(text.as_ref()))
+        .collect()
+}
+
+#[cfg(feature = "progress-bars")]
 fn tokenize_texts<T: AsRef<str>>(texts: &[T]) -> Vec<Vec<u32>> {
     debug!(num_texts = texts.len(), "Using sequential tokenization");
     let bpe = o200k_base_singleton();
@@ -48,6 +63,16 @@ fn tokenize_texts<T: AsRef<str>>(texts: &[T]) -> Vec<Vec<u32>> {
         .collect();
     pb.finish_with_message("Tokenization complete");
     result
+}
+
+#[cfg(not(feature = "progress-bars"))]
+fn tokenize_texts<T: AsRef<str>>(texts: &[T]) -> Vec<Vec<u32>> {
+    debug!(num_texts = texts.len(), "Using sequential tokenization");
+    let bpe = o200k_base_singleton();
+    texts
+        .iter()
+        .map(|text| bpe.encode_ordinary(text.as_ref()))
+        .collect()
 }
 
 /// Determine if parallel processing should be used based on workload characteristics.

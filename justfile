@@ -12,7 +12,9 @@ dataset-curation:
 training-pipeline:
     uv run jupyter nbconvert --to script notebooks/train.ipynb
     uv run python notebooks/train.py
-    cargo build --release
+
+build-cli-release:
+    cargo build --release --bin slop-cli
 
 # Run CLI with different output formats and options
 run-cli:

@@ -19,7 +19,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 tiktoken-rs = { workspace = true }
 ndarray = { workspace = true }
-indicatif = { workspace = true }
+indicatif = { workspace = true, optional = true }
 sprs = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -40,9 +40,10 @@ pyo3-log = { workspace = true, optional = true }
 
 [features]
 default = ["bincode"]
-python = ["pyo3", "numpy", "pyo3-log", "serde", "bincode"]
+python = ["pyo3", "numpy", "pyo3-log", "serde", "bincode", "progress-bars"]
 serde = ["dep:serde", "dep:serde_json"]
 bincode = ["dep:bincode"]
+progress-bars = ["dep:indicatif"]
 
 
 [lints]

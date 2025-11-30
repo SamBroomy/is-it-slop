@@ -77,7 +77,7 @@ impl VectorizerParams {
 impl Default for VectorizerParams {
     fn default() -> Self {
         Self {
-            ngram_range: vec![3, 5],
+            ngram_range: vec![2, 4],
             min_df: 10.0,
             max_df: 1.0,
             sublinear_tf: false,

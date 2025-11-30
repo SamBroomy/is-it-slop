@@ -11,9 +11,9 @@ pub fn predict(session: &Mutex<Session>, input: &str) -> ort::Result<Vec<f32>> {
     let input_vector = PRE_PROCESSOR.transform(&[input]);
 
     // Convert to f32 for ONNX (Precision might be f64 in the future)
-    let input = input_vector.map(|x| *x as f32);
+    let input = input_vector; //.map(|x| *x as f32);
 
-    let dense = input.to_owned().to_dense();
+    let dense = input.to_dense();
     let shape = dense.shape().to_vec();
     let data = dense.into_raw_vec_and_offset().0.into_boxed_slice();
 
@@ -25,10 +25,35 @@ pub fn predict(session: &Mutex<Session>, input: &str) -> ort::Result<Vec<f32>> {
         run_inference(&mut session, input)
     }
 }
+
+pub fn predict_batch(session: &Mutex<Session>, inputs: &[&str]) -> ort::Result<Vec<Vec<f32>>> {
+    let input_vector = PRE_PROCESSOR.transform(inputs);
+
+    // Convert to f32 for ONNX (Precision might be f64 in the future)
+    let input = input_vector; //.map(|x| *x as f32);
+
+    let dense = input.to_owned().to_dense();
+    let shape = dense.shape().to_vec();
+    let data = dense.into_raw_vec_and_offset().0.into_boxed_slice();
+
+    let input = Tensor::from_array((shape, data))?;
+    //let input = TensorRef::from_array_view(&dense)?;
+
+    {
+        let mut session = session.lock().unwrap();
+        run_inference(&mut session, input).map(|probs| {
+            probs
+                .chunks(inputs.len())
+                .map(|chunk| chunk.to_vec())
+                .collect()
+        })
+    }
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn run_inference(
     session: &mut Session,
-    input: Value<ort::value::TensorValueType<f32>>,
+    input: Value<ort::value::TensorValueType<f64>>,
 ) -> ort::Result<Vec<f32>> {
     let input_name = session.inputs[0].name.clone();
     let outputs: ort::session::SessionOutputs<'_> =

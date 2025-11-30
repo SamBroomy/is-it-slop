@@ -5,33 +5,96 @@ pub use model::CLASSIFICATION_THRESHOLD;
 
 use crate::model::MODEL;
 
-/// Run inference on a given text input
-/// Returns (labels, `ai_probabilities`) where `ai_probabilities` contains P(AI) for each sample
-pub fn predict(text: &str) -> ort::Result<Vec<f32>> {
-    let session = &MODEL;
-    pipeline::predict(session, text)
+/// Get [P(Human), P(AI)] probabilities for a single text
+pub fn predict_probabilities(text: impl AsRef<str>) -> ort::Result<[f32; 2]> {
+    let ai_prob = pipeline::predict(&MODEL, text.as_ref())?[0];
+    Ok([1.0 - ai_prob, ai_prob])
 }
 
-/// Test function with hardcoded text for testing purposes
-/// Returns (labels, `ai_probabilities`) where `ai_probabilities` contains P(AI) for each sample
-pub fn infer() -> ort::Result<Vec<f32>> {
-    let input = "Advice about receiving advice\n\nDoing something one way and then realizing there was a great amount of other options is a very annoying (and unfortunately, very common) case. It's even more annoying when you don't realize what the other solution was because then you can never grow as a person. People should ask more than one person for advice when seeking it because not everything will work for everyone and it's always better to hear from different sources.\n\nNot everything will work for everyone, as everybody has their own way of dealing with certain things. Say there's a student in algebra honors and they are studying for a test that is stressing them out very much. Now, this student has trouble paying attention in class, and as a result of that, they often don't have the best of notes. If the student's parent is giving them advice and the parent says to the student that they should check their notes, the student will most likely have to seek help elsewhere because that advice is not very good for them in particular.\n\nIt's always better to hear from different sources. There are lots of times when you need to seek multiple solutions. In science labs, multiple trials are required to find out if the initial hypothesis was correct. When writing about current events, one must gather information from different sources or they could be risking the possibility of being biased. It's no different when people are seeking advice from someone. If somebody receives advice from one person and they aren't happy with outcome of the advice they took, chances are they didn't hear from enough people and a different solution was just waiting for them to try it out.\n\nAt the end of the day, receiving advice from multiple people is the best thing to do because not everything will work for everyone and it is always better to hear from more than one source.";
-    predict(input)
+/// Get probabilities for multiple texts
+pub fn predict_probabilities_batch(texts: &[&str]) -> ort::Result<Vec<[f32; 2]>> {
+    texts
+        .iter()
+        .map(|&text| predict_probabilities(text))
+        .collect()
+}
+
+/// Get class (0=Human, 1=AI) using built-in CLASSIFICATION_THRESHOLD
+pub fn predict_class(text: impl AsRef<str>) -> ort::Result<i64> {
+    let ai_prob = pipeline::predict(&MODEL, text.as_ref())?[0];
+    Ok(i64::from(ai_prob >= CLASSIFICATION_THRESHOLD as f32))
+}
+
+/// Get class with custom threshold
+pub fn predict_class_with_threshold(text: &str, threshold: f32) -> ort::Result<i64> {
+    let ai_prob = pipeline::predict(&MODEL, text)?[0];
+    Ok(i64::from(ai_prob >= threshold))
+}
+
+/// Batch class predictions with built-in threshold
+pub fn predict_class_batch(texts: &[&str]) -> ort::Result<Vec<i64>> {
+    texts.iter().map(|&text| predict_class(text)).collect()
+}
+
+/// Batch class predictions with custom threshold
+pub fn predict_class_batch_with_threshold(texts: &[&str], threshold: f32) -> ort::Result<Vec<i64>> {
+    texts
+        .iter()
+        .map(|&text| predict_class_with_threshold(text, threshold))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_infer() {
-        let probs = infer().unwrap();
-        let labels: Vec<i64> = probs
-            .iter()
-            .map(|&p| i64::from(p >= CLASSIFICATION_THRESHOLD as f32))
-            .collect();
+    const TEST_TEXT: &str = "This is a sample text for testing the inference pipeline.";
 
-        println!("Labels: {labels:?}");
-        println!("Probabilities: {probs:?}");
+    #[test]
+    fn test_predict_probabilities() {
+        let probs = predict_probabilities(TEST_TEXT).unwrap();
+        assert_eq!(probs.len(), 2);
+        // Probabilities should sum to 1.0 (within floating point tolerance)
+        assert!((probs[0] + probs[1] - 1.0).abs() < 1e-5);
+        // Each probability should be between 0 and 1
+        assert!(probs[0] >= 0.0 && probs[0] <= 1.0);
+        assert!(probs[1] >= 0.0 && probs[1] <= 1.0);
+    }
+
+    #[test]
+    fn test_predict_class() {
+        let class = predict_class(TEST_TEXT).unwrap();
+        // Class should be 0 or 1
+        assert!(class == 0 || class == 1);
+    }
+
+    #[test]
+    fn test_predict_class_with_threshold() {
+        // Test with very low threshold (everything should be AI)
+        let class_low = predict_class_with_threshold(TEST_TEXT, 0.0).unwrap();
+        assert_eq!(class_low, 1);
+
+        // Test with very high threshold (everything should be human)
+        let class_high = predict_class_with_threshold(TEST_TEXT, 1.0).unwrap();
+        assert_eq!(class_high, 0);
+    }
+
+    #[test]
+    fn test_batch_predictions() {
+        let texts = vec!["Text 1", "Text 2", "Text 3"];
+
+        // Test probability batch
+        let probs = predict_probabilities_batch(&texts).unwrap();
+        assert_eq!(probs.len(), 3);
+        for prob_pair in &probs {
+            assert!((prob_pair[0] + prob_pair[1] - 1.0).abs() < 1e-5);
+        }
+
+        // Test class batch
+        let classes = predict_class_batch(&texts).unwrap();
+        assert_eq!(classes.len(), 3);
+        for &class in &classes {
+            assert!(class == 0 || class == 1);
+        }
     }
 }

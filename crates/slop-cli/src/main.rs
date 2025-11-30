@@ -37,7 +37,7 @@ struct Cli {
     verbose: bool,
 
     /// Classification threshold
-    #[arg(short = 't', long, default_value = "0.5")]
+    #[arg(short = 't', long, default_value_t = CLASSIFICATION_THRESHOLD as f32)]
     threshold: f32,
 
     /// Custom class labels (comma-separated: label0,label1)
@@ -111,51 +111,54 @@ fn main() -> Result<()> {
 
 /// Determine input source from CLI args
 fn determine_input_source(cli: &Cli) -> Result<InputSource> {
-    cli.text.as_ref().map_or_else(
-        || {
-            cli.file.as_ref().map_or_else(
-                || {
-                    cli.batch.as_ref().map_or_else(
-                        || {
-                            cli.batch_json.as_ref().map_or_else(
-                                || {
-                                    // Read from stdin
-                                    todo!("Implement stdin reading");
-                                },
-                                |path| {
-                                    todo!(
-                                        "Implement JSON batch reading: parse JSON array from {:?}",
-                                        path
-                                    );
-                                },
-                            )
-                        },
-                        |path| {
-                            todo!("Implement batch file reading: read lines from {:?}", path);
-                        },
-                    )
-                },
-                |path| {
-                    todo!("Implement file reading: read text from {:?}", path);
-                },
-            )
-        },
-        |text| Ok(InputSource::Single(text.clone())),
-    )
+    use anyhow::Context;
+    use std::io::Read;
+
+    // Priority: text arg > file > batch > batch_json > stdin
+    if let Some(text) = &cli.text {
+        return Ok(InputSource::Single(text.clone()));
+    }
+
+    if let Some(path) = &cli.file {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
+        return Ok(InputSource::Single(text));
+    }
+
+    if let Some(path) = &cli.batch {
+        let contents = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read batch file: {}", path.display()))?;
+        let texts: Vec<String> = contents.lines().map(String::from).collect();
+        return Ok(InputSource::Batch(texts));
+    }
+
+    if let Some(path) = &cli.batch_json {
+        let contents = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read JSON batch file: {}", path.display()))?;
+        let texts: Vec<String> = serde_json::from_str(&contents)
+            .with_context(|| "Failed to parse JSON array")?;
+        return Ok(InputSource::Batch(texts));
+    }
+
+    // Read from stdin
+    let mut buffer = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buffer)
+        .context("Failed to read from stdin")?;
+    Ok(InputSource::Single(buffer))
 }
 
 /// Process a single text
 fn process_single(text: &str, cli: &Cli, verbosity: Verbosity) -> Result<PredictionResult> {
     let start = matches!(verbosity, Verbosity::Verbose).then(Instant::now);
 
-    // Call inference pipeline
-    let prob = slop_inference::predict(text)?[0];
+    // Use new library API
+    let probabilities = slop_inference::predict_probabilities(text)?;
+    let class = slop_inference::predict_class_with_threshold(text, cli.threshold)?;
 
     if let Some(start_time) = start {
         eprintln!("Inference time: {:?}", start_time.elapsed());
     }
-
-    let class = i64::from(prob >= CLASSIFICATION_THRESHOLD as f32);
 
     let class_label = cli
         .labels
@@ -163,27 +166,38 @@ fn process_single(text: &str, cli: &Cli, verbosity: Verbosity) -> Result<Predict
         .cloned()
         .unwrap_or_else(|| class.to_string());
 
-    // Reconstruct full probability vector [P(human), P(AI)] from AI probability
-    let ai_prob = prob;
-    let probabilities = [1.0 - ai_prob, ai_prob];
-
-    let prediction_result = PredictionResult {
+    Ok(PredictionResult {
         class,
         class_label,
         probabilities,
         label_names: cli.labels.clone(),
-    };
-
-    Ok(prediction_result)
+    })
 }
 
 /// Process multiple texts
 fn process_batch(
-    _texts: &[String],
-    _cli: &Cli,
-    _verbosity: Verbosity,
+    texts: &[String],
+    cli: &Cli,
+    verbosity: Verbosity,
 ) -> Result<Vec<PredictionResult>> {
-    todo!("Implement batch processing - can call process_single in a loop for now");
+    let show_progress = matches!(verbosity, Verbosity::Normal | Verbosity::Verbose)
+        && texts.len() > 10
+        && !matches!(cli.format, OutputFormat::Json);
+
+    let mut results = Vec::with_capacity(texts.len());
+
+    for (i, text) in texts.iter().enumerate() {
+        if show_progress && i % 10 == 0 {
+            eprintln!("Processing {}/{}", i + 1, texts.len());
+        }
+        results.push(process_single(text, cli, verbosity)?);
+    }
+
+    if show_progress {
+        eprintln!("Completed processing {} texts", texts.len());
+    }
+
+    Ok(results)
 }
 
 /// Output single result based on format
@@ -219,8 +233,30 @@ fn output_result(result: &PredictionResult, cli: &Cli) -> Result<()> {
 
 /// Output batch results
 fn output_batch_results(results: &[PredictionResult], cli: &Cli) -> Result<()> {
-    for result in results {
-        output_result(result, cli)?;
+    match cli.format {
+        OutputFormat::Json => {
+            // Output as JSON array for batch mode
+            let json_array: Vec<_> = results
+                .iter()
+                .map(|result| {
+                    serde_json::json!({
+                        "class": result.class,
+                        "class_label": result.class_label,
+                        "probabilities": result.label_names.iter()
+                            .zip(&result.probabilities)
+                            .map(|(label, prob)| (label.clone(), prob))
+                            .collect::<HashMap<_, _>>(),
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string(&json_array)?);
+        }
+        _ => {
+            // For other formats, output each result on its own line
+            for result in results {
+                output_result(result, cli)?;
+            }
+        }
     }
     Ok(())
 }

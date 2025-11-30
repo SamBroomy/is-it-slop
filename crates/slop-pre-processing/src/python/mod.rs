@@ -3,11 +3,11 @@ use numpy::ToPyArray;
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::pre_processor::{TfidfVectorizer, VectorizerParams};
-
-/// A wrapper struct for VectorizerParams to expose it to Python.
+#[allow(clippy::unsafe_derive_deserialize)]
+/// A wrapper struct for `VectorizerParams` to expose it to Python.
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[pyclass]
 struct RustVectorizerParams {
     #[pyo3(get)]
@@ -22,7 +22,7 @@ struct RustVectorizerParams {
 
 #[pymethods]
 impl RustVectorizerParams {
-    /// Creates a new RustVectorizerParams instance.
+    /// Creates a new `RustVectorizerParams` instance.
     #[new]
     #[pyo3(signature = (ngram_range, min_df, max_df, sublinear_tf))]
     fn new(ngram_range: (usize, usize), min_df: f64, max_df: f64, sublinear_tf: bool) -> Self {
@@ -34,7 +34,7 @@ impl RustVectorizerParams {
         }
     }
 
-    /// Returns a string representation of the RustVectorizerParams.
+    /// Returns a string representation of the `RustVectorizerParams`.
     fn __repr__(&self) -> String {
         format!(
             "RustVectorizerParams(ngram_range=({}, {}), min_df={}, max_df={}, sublinear_tf={})",
@@ -42,9 +42,9 @@ impl RustVectorizerParams {
         )
     }
 
-    /// Returns a detailed string representation of the RustVectorizerParams.
+    /// Returns a detailed string representation of the `RustVectorizerParams`.
     fn __str__(&self) -> String {
-        format!("{:#?}", self)
+        format!("{self:#?}")
     }
 }
 
@@ -60,7 +60,7 @@ impl Default for RustVectorizerParams {
 }
 
 impl RustVectorizerParams {
-    fn to_inner(&self) -> VectorizerParams {
+    fn to_inner(self) -> VectorizerParams {
         VectorizerParams::new(
             self.ngram_range.0..=self.ngram_range.1,
             self.min_df,
@@ -80,8 +80,8 @@ impl From<&VectorizerParams> for RustVectorizerParams {
         }
     }
 }
-
-/// A wrapper function around TfidfVectorizer to expose it to Python.
+#[allow(clippy::unsafe_derive_deserialize)]
+/// A wrapper function around `TfidfVectorizer` to expose it to Python.
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
@@ -93,10 +93,10 @@ struct RustTfidfVectorizer {
 
 #[pymethods]
 impl RustTfidfVectorizer {
-    /// Fits the TfidfVectorizer to the provided texts with the given parameters.
-    /// Returns a new instance of RustTfidfVectorizer.
+    /// Fits the `TfidfVectorizer` to the provided texts with the given parameters.
+    /// Returns a new instance of `RustTfidfVectorizer`.
     #[new]
-    fn fit(py: Python<'_>, texts: Vec<String>, params: RustVectorizerParams) -> Self {
+    pub fn fit(py: Python<'_>, texts: Vec<String>, params: RustVectorizerParams) -> Self {
         py.detach(move || {
             let vectorizer = TfidfVectorizer::fit(texts.as_slice(), params.to_inner());
             Self { inner: vectorizer }
@@ -109,7 +109,11 @@ impl RustTfidfVectorizer {
     /// - data: np.ndarray of f64 | values of the non-zero entries
     /// - indices: np.ndarray of usize | column indices of the non-zero entries
     /// - indptr: np.ndarray of usize | index pointers to the start of each row
-    fn transform<'py>(&self, py: Python<'py>, texts: Vec<String>) -> PyResult<Bound<'py, PyTuple>> {
+    pub fn transform<'py>(
+        &self,
+        py: Python<'py>,
+        texts: Vec<String>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
         let tfidf_matrix: sprs::CsMatBase<f64, usize, Vec<usize>, Vec<usize>, Vec<f64>> =
             py.detach(|| self.inner.transform(texts.as_slice()));
         let data = tfidf_matrix.data().to_pyarray(py);
@@ -125,16 +129,26 @@ impl RustTfidfVectorizer {
     }
 
     /// Fits the vectorizer and transforms the input texts in one step.
-    /// Returns a tuple of (vectorizer, tfidf_matrix_components).
-    /// The tfidf_matrix_components is the same as returned by `transform`.
+    /// Returns a tuple of (vectorizer, `tfidf_matrix_components`).
+    /// The `tfidf_matrix_components` is the same as returned by `transform`.
     #[staticmethod]
-    pub fn fit_transform<'py>(
-        py: Python<'py>,
+    pub fn fit_transform(
+        py: Python<'_>,
         texts: Vec<String>,
         params: RustVectorizerParams,
-    ) -> PyResult<(Self, Bound<'py, PyTuple>)> {
-        let vectorizer = Self::fit(py, texts.clone(), params);
-        let transform_result = vectorizer.transform(py, texts)?;
+    ) -> PyResult<(Self, Bound<'_, PyTuple>)> {
+        let (vectorizer, transform_result) =
+            TfidfVectorizer::fit_transform(texts.as_slice(), params.to_inner());
+        let vectorizer = Self { inner: vectorizer };
+        let data = transform_result.data().to_pyarray(py);
+        let indices = transform_result.indices().to_pyarray(py);
+        let indptr = transform_result
+            .indptr()
+            .to_owned()
+            .into_raw_storage()
+            .to_pyarray(py);
+        let shape = (transform_result.rows(), transform_result.cols());
+        let transform_result = (shape, data, indices, indptr).into_pyobject(py)?;
         Ok((vectorizer, transform_result))
     }
 
@@ -156,7 +170,7 @@ impl RustTfidfVectorizer {
         self.inner.params().into()
     }
 
-    /// Return a string representation of the RustTfidfVectorizer.
+    /// Return a string representation of the `RustTfidfVectorizer`.
     fn __repr__(&self) -> String {
         format!(
             "RustTfidfVectorizer(vocabulary_size={})",
@@ -164,9 +178,9 @@ impl RustTfidfVectorizer {
         )
     }
 
-    /// Return a detailed string representation of the RustTfidfVectorizer.
+    /// Return a detailed string representation of the `RustTfidfVectorizer`.
     fn __str__(&self) -> String {
-        format!("{:#?}", self)
+        format!("{self:#?}")
     }
 
     /// Serialize the vectorizer to bytes using bincode format.
@@ -177,8 +191,7 @@ impl RustTfidfVectorizer {
         py.detach(|| {
             self.inner.to_bytes().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to serialize vectorizer: {}",
-                    e
+                    "Failed to serialize vectorizer: {e}"
                 ))
             })
         })
@@ -192,8 +205,7 @@ impl RustTfidfVectorizer {
         py.detach(|| {
             self.inner.to_json().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to serialize vectorizer to JSON: {}",
-                    e
+                    "Failed to serialize vectorizer to JSON: {e}"
                 ))
             })
         })
@@ -205,15 +217,14 @@ impl RustTfidfVectorizer {
     ///     bytes: A bytes object containing the serialized vectorizer
     ///
     /// Returns:
-    ///     A new RustTfidfVectorizer instance
+    ///     A new `RustTfidfVectorizer` instance
     #[staticmethod]
     #[cfg(feature = "bincode")]
     fn from_bytes(py: Python<'_>, bytes: &[u8]) -> PyResult<Self> {
         py.detach(|| {
             let inner = TfidfVectorizer::from_bytes(bytes).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to deserialize vectorizer from bytes: {}",
-                    e
+                    "Failed to deserialize vectorizer from bytes: {e}"
                 ))
             })?;
             Ok(Self { inner })
@@ -226,15 +237,14 @@ impl RustTfidfVectorizer {
     ///     json: A JSON string containing the serialized vectorizer
     ///
     /// Returns:
-    ///     A new RustTfidfVectorizer instance
+    ///     A new `RustTfidfVectorizer` instance
     #[staticmethod]
     #[cfg(feature = "serde")]
-    fn from_json(py: Python<'_>, json: String) -> PyResult<Self> {
+    fn from_json(py: Python<'_>, json: &str) -> PyResult<Self> {
         py.detach(|| {
-            let vectorizer = TfidfVectorizer::from_json(&json).map_err(|e| {
+            let vectorizer = TfidfVectorizer::from_json(json).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to deserialize vectorizer from JSON: {}",
-                    e
+                    "Failed to deserialize vectorizer from JSON: {e}"
                 ))
             })?;
             Ok(Self { inner: vectorizer })

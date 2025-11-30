@@ -1,6 +1,6 @@
 use ahash::HashMap;
 use sprs::CsMat;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::{
     ngrams::{self, NgramKey},
@@ -44,6 +44,13 @@ impl CountVectorizer {
         precomputed_ngrams: Option<&[std::collections::HashMap<NgramKey, usize, H>]>,
     ) -> Self {
         debug!("Building vocabulary from tokenized texts");
+        if params.ngram_range().1 > crate::NGRAM_CONST_KEY {
+            warn!(
+                max_ngram_size = params.ngram_range().1,
+                ngram_const_key = crate::NGRAM_CONST_KEY,
+                "Requested n-gram size exceeds NGRAM_CONST_KEY; this may lead to suboptimal performance as the n-gram keys will not fit in the optimized SmallVec size"
+            );
+        }
 
         // Use pre-computed n-grams if available, otherwise compute them
         let vocab_df = precomputed_ngrams.map_or_else(
@@ -158,8 +165,12 @@ impl CountVectorizer {
     ) -> CsMat<f64> {
         // Build CSR format directly
         let mut indptr = Vec::with_capacity(num_texts + 1);
-        let mut indices = Vec::new();
-        let mut data = Vec::new();
+
+        // Estimate capacity: assume ~5% of features per document on average
+        // This is a conservative estimate for text data with typical sparsity
+        let estimated_nnz = (num_texts * self.num_features() / 20).max(num_texts * 10);
+        let mut indices = Vec::with_capacity(estimated_nnz);
+        let mut data = Vec::with_capacity(estimated_nnz);
 
         indptr.push(0);
 
@@ -168,16 +179,17 @@ impl CountVectorizer {
         if let Some(ngram_maps) = precomputed_ngrams {
             // Fast path: use pre-computed n-grams
             for ngrams in ngram_maps {
-                let mut row_entries = ngrams
-                    .iter()
-                    .filter_map(|(ngram_key, &count)| {
-                        self.vocab
-                            .get(ngram_key)
-                            .map(|&col_idx| (col_idx, count as f64))
-                    })
-                    .collect::<Vec<_>>();
+                // Use SmallVec to avoid heap allocation for typical document sizes
+                // Most documents have <256 unique n-grams in vocab
+                let mut row_entries = smallvec::SmallVec::<[(usize, f64); 256]>::new();
 
-                row_entries.sort_by_key(|(col_idx, _)| *col_idx);
+                for (ngram_key, &count) in ngrams {
+                    if let Some(&col_idx) = self.vocab.get(ngram_key) {
+                        row_entries.push((col_idx, count as f64));
+                    }
+                }
+
+                row_entries.sort_unstable_by_key(|(col_idx, _)| *col_idx);
                 for (col_idx, count) in row_entries {
                     indices.push(col_idx);
                     data.push(count);
@@ -189,16 +201,17 @@ impl CountVectorizer {
             // Note: This allocates but is only used when not in fit_transform
             for tokens in tokenized_texts {
                 let ngrams = ngrams::count_ngrams(tokens, self.params.ngram_counts());
-                let mut row_entries = ngrams
-                    .iter()
-                    .filter_map(|(ngram_key, &count)| {
-                        self.vocab
-                            .get(ngram_key)
-                            .map(|&col_idx| (col_idx, count as f64))
-                    })
-                    .collect::<Vec<_>>();
 
-                row_entries.sort_by_key(|(col_idx, _)| *col_idx);
+                // Use SmallVec to avoid heap allocation for typical document sizes
+                let mut row_entries = smallvec::SmallVec::<[(usize, f64); 256]>::new();
+
+                for (ngram_key, &count) in &ngrams {
+                    if let Some(&col_idx) = self.vocab.get(ngram_key) {
+                        row_entries.push((col_idx, count as f64));
+                    }
+                }
+
+                row_entries.sort_unstable_by_key(|(col_idx, _)| *col_idx);
                 for (col_idx, count) in row_entries {
                     indices.push(col_idx);
                     data.push(count);
@@ -309,7 +322,10 @@ mod serde_vocab {
         S: Serializer,
     {
         // Serialize as array of [key, value] pairs for JSON compatibility
-        let pairs: Vec<(Vec<u32>, usize)> = vocab.iter().map(|(k, v)| (k.to_vec(), *v)).collect();
+        // Sort by value (feature index) to ensure deterministic serialization
+        let mut pairs: Vec<(Vec<u32>, usize)> =
+            vocab.iter().map(|(k, v)| (k.to_vec(), *v)).collect();
+        pairs.sort_by_key(|(_, idx)| *idx);
         pairs.serialize(serializer)
     }
 
