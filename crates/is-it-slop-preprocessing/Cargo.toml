@@ -27,7 +27,7 @@ bincode = { workspace = true, optional = true }
 smallvec = { workspace = true }
 dashmap = { workspace = true }
 ahash = { workspace = true }
-mimalloc = { workspace = true }
+mimalloc = { workspace = true, optional = true }
 tracing = { workspace = true }
 pyo3 = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
@@ -35,10 +35,19 @@ pyo3-log = { workspace = true, optional = true }
 
 [features]
 default = ["bincode"]
-python = ["pyo3", "numpy", "pyo3-log", "serde", "bincode", "progress-bars"]
+python = [
+    "pyo3",
+    "numpy",
+    "pyo3-log",
+    "mimalloc",
+    "serde",
+    "bincode",
+    "progress-bars",
+]
 serde = ["dep:serde", "dep:serde_json"]
 bincode = ["dep:bincode"]
 progress-bars = ["dep:indicatif"]
+mimalloc = ["dep:mimalloc"]
 
 
 [lints]

@@ -1,3 +1,7 @@
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use ahash::HashMap;
 use numpy::ToPyArray;
 use pyo3::{prelude::*, types::PyTuple};

@@ -565,6 +565,7 @@ dependencies = [
  "anyhow",
  "clap",
  "is-it-slop-preprocessing",
+ "mimalloc",
  "ndarray 0.16.1",
  "ort",
  "pyo3",
