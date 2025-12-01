@@ -1,0 +1,21 @@
+[project]
+name = "is-it-slop"
+version = "0.1.0"
+description = "Detecting AI generated text using statistical ML models and TF-IDF vectorization"
+readme = "README.md"
+authors = [
+    { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["maturin>=1.10,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+bindings = "pyo3"
+features = ["python"]
+python-source = "src"
+manifest-path = "../../crates/slop-inference/Cargo.toml"
+module-name = "is_it_slop._is_it_slop_rust_bindings"

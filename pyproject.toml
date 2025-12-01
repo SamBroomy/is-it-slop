@@ -1,6 +1,6 @@
 
 [project]
-name = "is-it-slop"
+name = "is-it-slop-package"
 version = "0.1.0"
 requires-python = ">=3.11"
 classifiers = [
@@ -10,6 +10,7 @@ classifiers = [
 ]
 dependencies = [
     "slop-pre-processing",
+    "is-it-slop",
     "polars>=1.35",
     "scikit-learn>=1.7",
     "loguru>=0.7.3",
@@ -39,7 +40,8 @@ dev = [
 package = false
 
 [tool.uv.workspace]
-members = ["python"]
+members = ["python/slop-pre-processing", "python/is-it-slop"]
 
 [tool.uv.sources]
 slop-pre-processing = { workspace = true }
+is-it-slop = { workspace = true }

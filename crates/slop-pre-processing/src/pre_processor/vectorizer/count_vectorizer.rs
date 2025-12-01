@@ -2,12 +2,13 @@ use ahash::HashMap;
 use sprs::CsMat;
 use tracing::{debug, warn};
 
-use super::{
-    ngrams::{self, NgramKey},
-    params::VectorizerParams,
-    tokenizer,
+use crate::pre_processor::{
+    VectorizerParams,
+    vectorizer::{
+        ngrams::{self, NgramKey},
+        tokenizer::{self, reverse_tokenize},
+    },
 };
-use crate::pre_processor::vectorizer::tokenizer::reverse_tokenize;
 
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -28,7 +29,7 @@ impl CountVectorizer {
     pub fn fit<T: AsRef<str> + Sync>(texts: &[T], params: VectorizerParams) -> Self {
         debug!(num_texts = texts.len(), "Fitting CountVectorizer");
         let tokenized_texts = tokenizer::tokenize(texts);
-        Self::fit_from_tokenized::<ahash::RandomState>(&tokenized_texts, params, None)
+        Self::fit_from_tokenized(&tokenized_texts, params, None)
     }
 
     /// Internal method to fit from pre-tokenized texts.
@@ -38,10 +39,10 @@ impl CountVectorizer {
     /// * `tokenized_texts` - Pre-tokenized documents
     /// * `params` - Vectorizer parameters
     /// * `precomputed_ngrams` - Optional pre-computed n-grams to avoid recomputation
-    fn fit_from_tokenized<H: std::hash::BuildHasher>(
+    fn fit_from_tokenized(
         tokenized_texts: &[Vec<u32>],
         params: VectorizerParams,
-        precomputed_ngrams: Option<&[std::collections::HashMap<NgramKey, usize, H>]>,
+        precomputed_ngrams: Option<&[HashMap<NgramKey, usize>]>,
     ) -> Self {
         debug!("Building vocabulary from tokenized texts");
         if params.ngram_range().1 > crate::NGRAM_CONST_KEY {
@@ -79,7 +80,7 @@ impl CountVectorizer {
         // - If min_df < 1.0: treat as proportion of documents
         // - If min_df >= 1.0: treat as absolute document count
         let min_df_threshold = if params.min_df() < 1.0 {
-            (params.min_df() * num_docs as f64).ceil() as usize
+            (params.min_df() * num_docs as f32).ceil() as usize
         } else {
             params.min_df() as usize
         };
@@ -88,7 +89,7 @@ impl CountVectorizer {
         // - If max_df <= 1.0: treat as proportion of documents
         // - If max_df > 1.0: treat as absolute document count
         let max_df_threshold = if params.max_df() <= 1.0 {
-            (params.max_df() * num_docs as f64).ceil() as usize
+            (params.max_df() * num_docs as f32).ceil() as usize
         } else {
             params.max_df() as usize
         };
@@ -141,7 +142,7 @@ impl CountVectorizer {
         }
     }
 
-    pub fn transform<T: AsRef<str> + Sync>(&self, texts: &[T]) -> CsMat<f64> {
+    pub fn transform<T: AsRef<str> + Sync>(&self, texts: &[T]) -> CsMat<f32> {
         debug!(
             num_texts = texts.len(),
             "Transforming texts using CountVectorizer"
@@ -162,7 +163,7 @@ impl CountVectorizer {
         tokenized_texts: &[Vec<u32>],
         num_texts: usize,
         precomputed_ngrams: Option<&[std::collections::HashMap<NgramKey, usize, H>]>,
-    ) -> CsMat<f64> {
+    ) -> CsMat<f32> {
         // Build CSR format directly
         let mut indptr = Vec::with_capacity(num_texts + 1);
 
@@ -181,11 +182,11 @@ impl CountVectorizer {
             for ngrams in ngram_maps {
                 // Use SmallVec to avoid heap allocation for typical document sizes
                 // Most documents have <256 unique n-grams in vocab
-                let mut row_entries = smallvec::SmallVec::<[(usize, f64); 256]>::new();
+                let mut row_entries = smallvec::SmallVec::<[(usize, f32); 256]>::new();
 
                 for (ngram_key, &count) in ngrams {
                     if let Some(&col_idx) = self.vocab.get(ngram_key) {
-                        row_entries.push((col_idx, count as f64));
+                        row_entries.push((col_idx, count as f32));
                     }
                 }
 
@@ -203,11 +204,11 @@ impl CountVectorizer {
                 let ngrams = ngrams::count_ngrams(tokens, self.params.ngram_counts());
 
                 // Use SmallVec to avoid heap allocation for typical document sizes
-                let mut row_entries = smallvec::SmallVec::<[(usize, f64); 256]>::new();
+                let mut row_entries = smallvec::SmallVec::<[(usize, f32); 256]>::new();
 
                 for (ngram_key, &count) in &ngrams {
                     if let Some(&col_idx) = self.vocab.get(ngram_key) {
-                        row_entries.push((col_idx, count as f64));
+                        row_entries.push((col_idx, count as f32));
                     }
                 }
 
@@ -235,7 +236,7 @@ impl CountVectorizer {
     pub fn fit_transform<T: AsRef<str> + Sync>(
         texts: &[T],
         params: VectorizerParams,
-    ) -> (Self, CsMat<f64>) {
+    ) -> (Self, CsMat<f32>) {
         debug!(
             num_texts = texts.len(),
             "Optimized fit_transform: tokenizing and computing n-grams once"
@@ -253,15 +254,11 @@ impl CountVectorizer {
 
         // Step 3: Fit from pre-computed n-grams
         debug!("Fitting vectorizer from cached n-grams");
-        let vectorizer = Self::fit_from_tokenized::<ahash::RandomState>(
-            &tokenized_texts,
-            params,
-            Some(&ngram_maps[..]),
-        );
+        let vectorizer = Self::fit_from_tokenized(&tokenized_texts, params, Some(&ngram_maps[..]));
 
         // Step 4: Transform using the same pre-computed n-grams
         debug!("Transforming using cached n-grams");
-        let transformed = vectorizer.transform_from_tokenized::<ahash::RandomState>(
+        let transformed = vectorizer.transform_from_tokenized(
             &tokenized_texts,
             texts.len(),
             Some(&ngram_maps[..]),

@@ -10,6 +10,9 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[lib]
+name = "slop_inference"
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 # ort = { workspace = true }
@@ -18,8 +21,17 @@ categories.workspace = true
 ndarray = "0.16"
 ort = "=2.0.0-rc.10"
 sprs = "0.11"
+anyhow = { workspace = true }
 slop-pre-processing = { workspace = true }
+serde = { workspace = true }
+pyo3 = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }
+pyo3-log = { workspace = true, optional = true }
 
+
+[features]
+# default = ["python"]
+python = ["pyo3", "numpy", "pyo3-log"]
 
 [lints]
 workspace = true

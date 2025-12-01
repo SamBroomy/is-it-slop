@@ -1399,8 +1399,13 @@ dependencies = [
 name = "slop-inference"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ndarray 0.16.1",
+ "numpy",
  "ort",
+ "pyo3",
+ "pyo3-log",
+ "serde",
  "slop-pre-processing",
  "sprs",
 ]

@@ -1,9 +1,11 @@
+import sys
 from pathlib import Path
 
 import polars as pl
 from slop_pre_processing import __version__
 
-RETRAIN_VECTORIZER = False
+# Get from command line argument or set to True to force retraining
+RETRAIN_VECTORIZER = "--force-retrain-vectorizer" in sys.argv or False
 
 ROOT_DIR = Path(__file__).parent.parent.resolve()
 

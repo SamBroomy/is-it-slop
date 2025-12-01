@@ -37,7 +37,7 @@ struct Cli {
     verbose: bool,
 
     /// Classification threshold
-    #[arg(short = 't', long, default_value_t = CLASSIFICATION_THRESHOLD as f32)]
+    #[arg(short = 't', long, default_value_t = CLASSIFICATION_THRESHOLD)]
     threshold: f32,
 
     /// Custom class labels (comma-separated: label0,label1)
@@ -75,7 +75,7 @@ enum InputSource {
 
 /// Structured prediction result
 struct PredictionResult {
-    class: i64,
+    class: slop_inference::Classification,
     class_label: String,
     probabilities: [f32; 2],
     label_names: Vec<String>,
@@ -111,8 +111,9 @@ fn main() -> Result<()> {
 
 /// Determine input source from CLI args
 fn determine_input_source(cli: &Cli) -> Result<InputSource> {
-    use anyhow::Context;
     use std::io::Read;
+
+    use anyhow::Context;
 
     // Priority: text arg > file > batch > batch_json > stdin
     if let Some(text) = &cli.text {
@@ -135,8 +136,8 @@ fn determine_input_source(cli: &Cli) -> Result<InputSource> {
     if let Some(path) = &cli.batch_json {
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read JSON batch file: {}", path.display()))?;
-        let texts: Vec<String> = serde_json::from_str(&contents)
-            .with_context(|| "Failed to parse JSON array")?;
+        let texts: Vec<String> =
+            serde_json::from_str(&contents).with_context(|| "Failed to parse JSON array")?;
         return Ok(InputSource::Batch(texts));
     }
 
@@ -152,9 +153,10 @@ fn determine_input_source(cli: &Cli) -> Result<InputSource> {
 fn process_single(text: &str, cli: &Cli, verbosity: Verbosity) -> Result<PredictionResult> {
     let start = matches!(verbosity, Verbosity::Verbose).then(Instant::now);
 
-    // Use new library API
-    let probabilities = slop_inference::predict_probabilities(text)?;
-    let class = slop_inference::predict_class_with_threshold(text, cli.threshold)?;
+    // Use new Predictor API
+    let predictor = slop_inference::Predictor::new().with_threshold(cli.threshold);
+    let prediction = predictor.predict(text)?;
+    let class = prediction.classification(cli.threshold);
 
     if let Some(start_time) = start {
         eprintln!("Inference time: {:?}", start_time.elapsed());
@@ -169,7 +171,7 @@ fn process_single(text: &str, cli: &Cli, verbosity: Verbosity) -> Result<Predict
     Ok(PredictionResult {
         class,
         class_label,
-        probabilities,
+        probabilities: [prediction.human_probability(), prediction.ai_probability()],
         label_names: cli.labels.clone(),
     })
 }
@@ -223,7 +225,8 @@ fn output_result(result: &PredictionResult, cli: &Cli) -> Result<()> {
             println!("{}", serde_json::to_string(&json_output)?);
         }
         OutputFormat::Human => {
-            let confidence = result.probabilities[result.class as usize] * 100.0;
+            let class_idx = i64::from(result.class) as usize;
+            let confidence = result.probabilities[class_idx] * 100.0;
             println!("Result: {}", result.class_label);
             println!("Confidence: {confidence:.1}%");
         }

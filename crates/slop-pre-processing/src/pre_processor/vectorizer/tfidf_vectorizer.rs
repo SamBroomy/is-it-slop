@@ -9,7 +9,7 @@ use super::{count_vectorizer::CountVectorizer, params::VectorizerParams};
 #[derive(Clone, Debug)]
 pub struct TfidfVectorizer {
     count_vectorizer: CountVectorizer,
-    idf: Vec<f64>,
+    idf: Vec<f32>,
 }
 
 impl TfidfVectorizer {
@@ -28,12 +28,12 @@ impl TfidfVectorizer {
     /// Used by `fit_transform` to avoid double computation.
     fn fit_from_tf_matrix(
         count_vectorizer: CountVectorizer,
-        tf_matrix: &CsMat<f64>,
+        tf_matrix: &CsMat<f32>,
         n_docs: usize,
     ) -> Self {
         debug!("Calculating IDF values from TF matrix");
 
-        let n_docs = n_docs as f64;
+        let n_docs = n_docs as f32;
         let num_features = count_vectorizer.num_features();
 
         // Count document frequency for each term
@@ -46,7 +46,7 @@ impl TfidfVectorizer {
         }
         let idf = df
             .iter()
-            .map(|&doc_freq| ((n_docs + 1.0) / (doc_freq as f64 + 1.0)).ln() + 1.0)
+            .map(|&doc_freq| ((n_docs + 1.0) / (doc_freq as f32 + 1.0)).ln() + 1.0)
             .collect();
         debug!("IDF calculation complete");
 
@@ -56,7 +56,7 @@ impl TfidfVectorizer {
         }
     }
 
-    pub fn transform<T: AsRef<str> + Sync>(&self, texts: &[T]) -> CsMat<f64> {
+    pub fn transform<T: AsRef<str> + Sync>(&self, texts: &[T]) -> CsMat<f32> {
         debug!(
             num_texts = texts.len(),
             "Transforming texts using TfidfVectorizer"
@@ -71,7 +71,7 @@ impl TfidfVectorizer {
     /// Optimized to do only 2 passes over each row:
     /// 1. Apply TF-IDF weights and accumulate norm
     /// 2. Normalize by L2 norm
-    fn apply_tfidf_transform(&self, mut tf_matrix: CsMat<f64>) -> CsMat<f64> {
+    fn apply_tfidf_transform(&self, mut tf_matrix: CsMat<f32>) -> CsMat<f32> {
         debug!("Applying TF-IDF transformation");
 
         let use_sublinear_tf = self.count_vectorizer.params().sublinear_tf();
@@ -109,7 +109,7 @@ impl TfidfVectorizer {
     pub fn fit_transform<T: AsRef<str> + Sync>(
         texts: &[T],
         count_vectorizer_params: VectorizerParams,
-    ) -> (Self, CsMat<f64>) {
+    ) -> (Self, CsMat<f32>) {
         debug!(
             num_texts = texts.len(),
             "Fitting and transforming texts using TfidfVectorizer"

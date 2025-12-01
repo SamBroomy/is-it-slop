@@ -13,9 +13,9 @@ struct RustVectorizerParams {
     #[pyo3(get)]
     ngram_range: (usize, usize),
     #[pyo3(get)]
-    min_df: f64,
+    min_df: f32,
     #[pyo3(get)]
-    max_df: f64,
+    max_df: f32,
     #[pyo3(get)]
     sublinear_tf: bool,
 }
@@ -25,7 +25,7 @@ impl RustVectorizerParams {
     /// Creates a new `RustVectorizerParams` instance.
     #[new]
     #[pyo3(signature = (ngram_range, min_df, max_df, sublinear_tf))]
-    fn new(ngram_range: (usize, usize), min_df: f64, max_df: f64, sublinear_tf: bool) -> Self {
+    fn new(ngram_range: (usize, usize), min_df: f32, max_df: f32, sublinear_tf: bool) -> Self {
         Self {
             ngram_range,
             min_df,
@@ -106,15 +106,16 @@ impl RustTfidfVectorizer {
     /// Transforms the input texts and returns the TF-IDF matrix components.
     /// The returned tuple contains:
     /// - shape: (usize, usize) | (number of rows, number of columns)
-    /// - data: np.ndarray of f64 | values of the non-zero entries
+    /// - data: np.ndarray of f32 | values of the non-zero entries
     /// - indices: np.ndarray of usize | column indices of the non-zero entries
     /// - indptr: np.ndarray of usize | index pointers to the start of each row
+    #[allow(clippy::needless_pass_by_value)]
     pub fn transform<'py>(
         &self,
         py: Python<'py>,
         texts: Vec<String>,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        let tfidf_matrix: sprs::CsMatBase<f64, usize, Vec<usize>, Vec<usize>, Vec<f64>> =
+        let tfidf_matrix: sprs::CsMatBase<f32, usize, Vec<usize>, Vec<usize>, Vec<f32>> =
             py.detach(|| self.inner.transform(texts.as_slice()));
         let data = tfidf_matrix.data().to_pyarray(py);
         let indices = tfidf_matrix.indices().to_pyarray(py);
@@ -131,6 +132,7 @@ impl RustTfidfVectorizer {
     /// Fits the vectorizer and transforms the input texts in one step.
     /// Returns a tuple of (vectorizer, `tfidf_matrix_components`).
     /// The `tfidf_matrix_components` is the same as returned by `transform`.
+    #[allow(clippy::needless_pass_by_value)]
     #[staticmethod]
     pub fn fit_transform(
         py: Python<'_>,
@@ -253,7 +255,7 @@ impl RustTfidfVectorizer {
 }
 
 #[pymodule]
-#[pyo3(name = "_rust_bindings")]
+#[pyo3(name = "_slop_pre_processing_rust_bindings")]
 fn slop_pre_processing(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize Python logging for Rust components
     pyo3_log::init();

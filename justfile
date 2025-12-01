@@ -1,9 +1,9 @@
 # Slop Detection CLI Examples
 
-model-pipeline: build-bindings dataset-curation training-pipeline
+model-pipeline: build-pre-processing-bindings dataset-curation training-pipeline build-bindings build-cli-release
 
-build-bindings:
-    uv run --directory python maturin develop --release
+build-pre-processing-bindings:
+    uv run --directory python/slop-pre-processing maturin develop --release
 
 dataset-curation:
     uv run jupyter nbconvert --to script notebooks/dataset_curation.ipynb
@@ -11,7 +11,10 @@ dataset-curation:
 
 training-pipeline:
     uv run jupyter nbconvert --to script notebooks/train.ipynb
-    uv run python notebooks/train.py
+    uv run python notebooks/train.py --force-retrain-vectorizer
+
+build-bindings:
+    uv run --directory python/is-it-slop maturin develop --release
 
 build-cli-release:
     cargo build --release --bin slop-cli

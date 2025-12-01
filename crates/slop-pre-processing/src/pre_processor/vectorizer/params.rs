@@ -8,11 +8,11 @@ pub struct VectorizerParams {
     /// Minimum document frequency for filtering vocabulary.
     /// - If `min_df` is in (0.0, 1.0), it's a proportion of documents
     /// - If `min_df` >= 1.0, it's an absolute document count
-    min_df: f64,
+    min_df: f32,
     /// Maximum document frequency for filtering vocabulary.
     /// - If `max_df` is in (0.0, 1.0], it's a proportion of documents
     /// - If `max_df` > 1.0, it's an absolute document count
-    max_df: f64,
+    max_df: f32,
     /// Apply sublinear tf scaling: replace term frequency `tf` with `1 + log(tf)`.
     /// This reduces the impact of terms that occur many times in a document.
     sublinear_tf: bool,
@@ -21,8 +21,8 @@ pub struct VectorizerParams {
 impl VectorizerParams {
     pub fn new(
         ngram_range: impl Into<RangeInclusive<usize>>,
-        min_df: f64,
-        max_df: f64,
+        min_df: f32,
+        max_df: f32,
         sublinear_tf: bool,
     ) -> Self {
         let n_sizes = ngram_range.into().collect::<Vec<_>>();
@@ -60,12 +60,12 @@ impl VectorizerParams {
     }
 
     #[must_use]
-    pub fn min_df(&self) -> f64 {
+    pub fn min_df(&self) -> f32 {
         self.min_df
     }
 
     #[must_use]
-    pub fn max_df(&self) -> f64 {
+    pub fn max_df(&self) -> f32 {
         self.max_df
     }
 
@@ -85,8 +85,8 @@ impl Default for VectorizerParams {
     }
 }
 
-impl From<((usize, usize), f64, f64, bool)> for VectorizerParams {
-    fn from(value: ((usize, usize), f64, f64, bool)) -> Self {
+impl From<((usize, usize), f32, f32, bool)> for VectorizerParams {
+    fn from(value: ((usize, usize), f32, f32, bool)) -> Self {
         Self::new(value.0.0..=value.0.1, value.1, value.2, value.3)
     }
 }
