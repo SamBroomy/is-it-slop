@@ -20,7 +20,6 @@ ndarray = { workspace = true }
 ort = { workspace = true }
 sprs = { workspace = true }
 anyhow = { workspace = true }
-is-it-slop-preprocessing = { workspace = true }
 serde = { workspace = true }
 
 # CLI-only dependencies (optional)
@@ -31,12 +30,13 @@ clap = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
 pyo3-log = { workspace = true, optional = true }
 
+is-it-slop-preprocessing = { workspace = true }
+
 [[bin]]
 name = "is-it-slop"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
 cli = ["dep:clap", "dep:serde_json"]
 python = ["dep:pyo3", "dep:pyo3-log"]
 

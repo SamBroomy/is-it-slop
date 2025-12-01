@@ -1,0 +1,4 @@
+[alias]
+# Run the CLI with features enabled automatically
+run-cli = "run --features cli --bin is-it-slop"
+build-cli-release = "build --release --features cli --bin is-it-slop"

@@ -26,6 +26,7 @@ pub struct CountVectorizer {
 }
 
 impl CountVectorizer {
+    #[allow(dead_code)]
     pub fn fit<T: AsRef<str> + Sync>(texts: &[T], params: VectorizerParams) -> Self {
         debug!(num_texts = texts.len(), "Fitting CountVectorizer");
         let tokenized_texts = tokenizer::tokenize(texts);

@@ -1,6 +1,9 @@
 #[cfg(feature = "python")]
 mod python;
 
+#[cfg(feature = "cli")]
+pub mod cli;
+
 mod model;
 mod pipeline;
 

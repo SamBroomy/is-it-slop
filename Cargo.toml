@@ -13,7 +13,7 @@ homepage = "https://github.com/SamBroomy/is-it-slop"
 readme = "README.md"
 description = "A Rust library and CLI tool to detect AI-generated slop text using machine learning."
 categories = ["command-line-utilities", "data-processing", "machine-learning"]
-keywords = ["Slop detector", "ML"]
+keywords = ["AI-text-detector", "ML"]
 
 
 [workspace.dependencies]
@@ -46,7 +46,7 @@ numpy = "0.27"
 ort = "2.0.0-rc.10"
 clap = { version = "4.5.53", features = ["derive"] }
 
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing" }
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.1.0" }
 
 
 [workspace.lints.clippy]

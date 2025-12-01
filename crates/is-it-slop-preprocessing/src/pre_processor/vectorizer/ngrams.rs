@@ -150,29 +150,29 @@ pub fn build_vocabulary(
 
 // TODO: profile this function against the current implementation of `build_vocabulary`
 // Removes dashmap dependency if we use this over the other one
-pub fn build_vocabulary_merge(
-    tokenized_texts: &[Vec<u32>],
-    ngram_range: &[usize],
-) -> HashMap<NgramKey, usize> {
-    // Phase 1: Parallel - each thread extracts unique n-grams (no counting needed)
-    let partial_results: Vec<HashSet<_>> = tokenized_texts
-        .par_iter()
-        .map(|tokens| unique_ngrams(tokens, ngram_range))
-        .collect();
+// pub fn build_vocabulary_merge(
+//     tokenized_texts: &[Vec<u32>],
+//     ngram_range: &[usize],
+// ) -> HashMap<NgramKey, usize> {
+//     // Phase 1: Parallel - each thread extracts unique n-grams (no counting needed)
+//     let partial_results: Vec<HashSet<_>> = tokenized_texts
+//         .par_iter()
+//         .map(|tokens| unique_ngrams(tokens, ngram_range))
+//         .collect();
 
-    let estimated_size = partial_results
-        .iter()
-        .map(std::collections::HashSet::len)
-        .sum::<usize>()
-        .max(16);
+//     let estimated_size = partial_results
+//         .iter()
+//         .map(std::collections::HashSet::len)
+//         .sum::<usize>()
+//         .max(16);
 
-    // Phase 2: Sequential merge - count document frequency
-    let mut vocab_df =
-        HashMap::with_capacity_and_hasher(estimated_size, ahash::RandomState::default());
-    for partial in partial_results {
-        for key in partial {
-            *vocab_df.entry(key).or_insert(0) += 1;
-        }
-    }
-    vocab_df
-}
+//     // Phase 2: Sequential merge - count document frequency
+//     let mut vocab_df =
+//         HashMap::with_capacity_and_hasher(estimated_size, ahash::RandomState::default());
+//     for partial in partial_results {
+//         for key in partial {
+//             *vocab_df.entry(key).or_insert(0) += 1;
+//         }
+//     }
+//     vocab_df
+// }
