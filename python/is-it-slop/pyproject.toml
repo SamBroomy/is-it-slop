@@ -17,5 +17,5 @@ build-backend = "maturin"
 bindings = "pyo3"
 features = ["python"]
 python-source = "src"
-manifest-path = "../../crates/slop-inference/Cargo.toml"
+manifest-path = "../../crates/is-it-slop/Cargo.toml"
 module-name = "is_it_slop._is_it_slop_rust_bindings"

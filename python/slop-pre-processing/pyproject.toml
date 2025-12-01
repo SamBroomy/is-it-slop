@@ -17,5 +17,5 @@ build-backend = "maturin"
 bindings = "pyo3"
 features = ["python"]
 python-source = "src"
-manifest-path = "../../crates/slop-pre-processing/Cargo.toml"
+manifest-path = "../../crates/is-it-slop-preprocessing/Cargo.toml"
 module-name = "slop_pre_processing._slop_pre_processing_rust_bindings"

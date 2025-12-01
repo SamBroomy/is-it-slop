@@ -1,5 +1,5 @@
 [package]
-name = "slop-pre-processing"
+name = "is-it-slop-preprocessing"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -12,13 +12,12 @@ categories.workspace = true
 
 
 [lib]
-name = "slop_pre_processing"
+name = "is_it_slop_preprocessing"
 crate-type = ["cdylib", "rlib"]
 
 
 [dependencies]
 tiktoken-rs = { workspace = true }
-ndarray = { workspace = true }
 indicatif = { workspace = true, optional = true }
 sprs = { workspace = true }
 rayon = { workspace = true }
@@ -29,11 +28,7 @@ smallvec = { workspace = true }
 dashmap = { workspace = true }
 ahash = { workspace = true }
 mimalloc = { workspace = true }
-russell_lab = { workspace = true }
-russell_sparse = { workspace = true }
-anyhow = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 pyo3 = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 pyo3-log = { workspace = true, optional = true }

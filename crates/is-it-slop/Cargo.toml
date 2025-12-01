@@ -1,0 +1,44 @@
+[package]
+name = "is-it-slop"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include = ["src/**", "build.rs", "model_artifacts/**"]
+
+[lib]
+name = "is_it_slop"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+ndarray = { workspace = true }
+ort = { workspace = true }
+sprs = { workspace = true }
+anyhow = { workspace = true }
+is-it-slop-preprocessing = { workspace = true }
+serde = { workspace = true }
+
+# CLI-only dependencies (optional)
+serde_json = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+
+# Python bindings dependencies (optional)
+pyo3 = { workspace = true, optional = true }
+pyo3-log = { workspace = true, optional = true }
+
+[[bin]]
+name = "is-it-slop"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:serde_json"]
+python = ["dep:pyo3", "dep:pyo3-log"]
+
+[lints]
+workspace = true

@@ -18,7 +18,7 @@ use crate::model::MODEL;
 /// # Examples
 ///
 /// ```no_run
-/// use slop_inference::Predictor;
+/// use is_it_slop::Predictor;
 ///
 /// // Use default threshold
 /// let predictor = Predictor::new();

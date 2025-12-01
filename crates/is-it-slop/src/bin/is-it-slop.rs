@@ -2,10 +2,10 @@ use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use slop_inference::CLASSIFICATION_THRESHOLD;
+use is_it_slop::CLASSIFICATION_THRESHOLD;
 
 #[derive(Parser)]
-#[command(name = "slop-cli")]
+#[command(name = "is-it-slop")]
 #[command(about = "Detect AI-generated text", long_about = None)]
 struct Cli {
     /// Text to analyze (if not provided, reads from stdin)
@@ -75,7 +75,7 @@ enum InputSource {
 
 /// Structured prediction result
 struct PredictionResult {
-    class: slop_inference::Classification,
+    class: is_it_slop::Classification,
     class_label: String,
     probabilities: [f32; 2],
     label_names: Vec<String>,
@@ -108,6 +108,12 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+// #[cfg(not(feature = "cli"))]
+// fn main() {
+//     eprintln!("CLI feature not enabled. Run with `--features cli` to enable the CLI.");
+//     std::process::exit(1);
+// }
 
 /// Determine input source from CLI args
 fn determine_input_source(cli: &Cli) -> Result<InputSource> {
@@ -154,7 +160,7 @@ fn process_single(text: &str, cli: &Cli, verbosity: Verbosity) -> Result<Predict
     let start = matches!(verbosity, Verbosity::Verbose).then(Instant::now);
 
     // Use new Predictor API
-    let predictor = slop_inference::Predictor::new().with_threshold(cli.threshold);
+    let predictor = is_it_slop::Predictor::new().with_threshold(cli.threshold);
     let prediction = predictor.predict(text)?;
     let class = prediction.classification(cli.threshold);
 

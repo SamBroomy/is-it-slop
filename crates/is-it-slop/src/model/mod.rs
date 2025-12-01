@@ -1,7 +1,7 @@
 use std::sync::{LazyLock, Mutex};
 
 use ort::session::{Session, builder::GraphOptimizationLevel};
-use slop_pre_processing::pre_processor::TfidfVectorizer;
+use is_it_slop_preprocessing::pre_processor::TfidfVectorizer;
 mod threshold;
 pub use threshold::CLASSIFICATION_THRESHOLD;
 
