@@ -9,7 +9,14 @@ repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**", "build.rs", "model_artifacts/**"]
+include = [
+    "src/**",
+    "build.rs",
+    "model_artifacts/0.1.0/classification_threshold.txt",
+    "model_artifacts/0.1.0/slop-classifier.onnx",
+    "model_artifacts/0.1.0/tfidf_vectorizer.bin",
+
+]
 
 [lib]
 name = "is_it_slop"

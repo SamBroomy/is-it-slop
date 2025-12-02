@@ -12,7 +12,7 @@ repository = "https://github.com/SamBroomy/is-it-slop"
 homepage = "https://github.com/SamBroomy/is-it-slop"
 readme = "README.md"
 description = "A Rust library and CLI tool to detect AI-generated slop text using machine learning."
-categories = ["command-line-utilities", "data-processing", "machine-learning"]
+categories = ["command-line-utilities", "science"]
 keywords = ["AI-text-detector", "ML"]
 
 

@@ -84,7 +84,12 @@ Inference (Rust CLI):
 
 ## Training
 
+See [`notebooks/dataset_curation.ipynb`](notebooks/dataset_curation.ipynb) for which datasets were used.
 See [`notebooks/train.ipynb`](notebooks/train.ipynb) for training pipeline.
+
+Great care was taken to use multiple diverse datasets to avoid overfitting to any single source of human or AI-generated text. Great care was also taken to avoid the underlying model just learning artifacts of specific datasets.
+
+For more information about look in the `notebooks/` directory.
 
 ## License
 

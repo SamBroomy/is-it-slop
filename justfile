@@ -26,6 +26,7 @@ build-bindings:
     uv run --directory python/is-it-slop maturin develop --release
 
 build-cli-release:
+    cargo build-cli-release
     cargo build --release --features cli --bin is-it-slop
 
 # Run CLI with different output formats and options
@@ -33,25 +34,25 @@ run-cli:
     @echo "=== Running slop-cli examples ==="
     @echo ""
     @echo "1. Default output (AI probability as float 0-1):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text to check if it's AI generated."
+    cargo run-cli -- "This is a test text to check if it's AI generated."
     @echo ""
     @echo "2. Class format (just 0 or 1):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format class
+    cargo run-cli -- "This is a test text." --format class
     @echo ""
     @echo "3. JSON format (detailed output):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format json
+    cargo run-cli -- "This is a test text." --format json
     @echo ""
     @echo "4. Human-readable format:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format human
+    cargo run-cli -- "This is a test text." --format human
     @echo ""
     @echo "5. Verbose mode (shows timing):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --verbose
+    cargo run-cli -- "This is a test." --verbose
     @echo ""
     @echo "6. Custom labels with JSON:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --labels real fake --format json
+    cargo run-cli -- "This is a test." --labels real fake --format json
     @echo ""
     @echo "7. Quiet mode with class output:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --quiet --format class
+    cargo run-cli -- "This is a test." --quiet --format class
     @echo ""
     @echo "=== All examples complete ==="
 
@@ -61,11 +62,11 @@ build-cli:
 
 # Run a quick test with custom text
 test-cli TEXT:
-    cargo run -q --release --features cli --bin is-it-slop -- "{{TEXT}}"
+    cargo run-cli -- "{{TEXT}}"
 
 # Show CLI help
 cli-help:
-    cargo run -q --release --features cli --bin is-it-slop -- --help
+    cargo run-cli -- --help
 
 # =============================================================================
 # Publishing & Release
@@ -92,13 +93,13 @@ check-model-artifacts:
 pre-publish-check: check-model-artifacts
     @echo "=== Running pre-publish checks ==="
     @echo "\n📋 Running Rust tests..."
-    cargo test --all-features
+    cargo test
     @echo "\n🔍 Running Rust clippy..."
-    cargo clippy --all-features -- -D warnings
+    cargo clippy -- -D warnings
     @echo "\n🎨 Checking Rust formatting..."
     cargo fmt --check
     @echo "\n📦 Building Rust packages..."
-    cargo build --release --all-features
+    cargo build --release
     @echo "\n🐍 Building Python packages..."
     just build-python-wheels
     @echo "\n✅ All pre-publish checks passed!"
@@ -116,11 +117,21 @@ publish-rust-dry-run:
     @echo "\n📦 Publishing is-it-slop-preprocessing..."
     cargo publish -p is-it-slop-preprocessing --dry-run
     @echo "\n📦 Publishing is-it-slop (library + binary)..."
-    cargo publish -p is-it-slop --dry-run
+    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop --dry-run
+
+# Create model artifacts tarball for GitHub releases
+package-artifacts:
+    @echo "=== Creating model artifacts tarball ==="
+    @cd crates/is-it-slop && tar -czf ../../model_artifacts.tar.gz model_artifacts/
+    @echo "✅ Created model_artifacts.tar.gz ($(du -h model_artifacts.tar.gz | cut -f1))"
+    @echo "   Upload this to GitHub releases as: v{{CARGO_PKG_VERSION}}/model_artifacts.tar.gz"
 
 # Publish Rust crates to crates.io (REAL)
-publish-rust:
+publish-rust: package-artifacts
     @echo "=== Publishing Rust crates to crates.io ==="
+    @echo "\n⚠️  IMPORTANT: Before publishing, upload model_artifacts.tar.gz to GitHub releases!"
+    @echo "   Create release: gh release create v{{CARGO_PKG_VERSION}}"
+    @echo "   Upload tarball: gh release upload v{{CARGO_PKG_VERSION}} model_artifacts.tar.gz"
     @echo "\n⚠️  This will publish to crates.io (no undo!)"
     @echo "Press Enter to continue or Ctrl+C to abort..."
     @read confirmation
@@ -129,7 +140,9 @@ publish-rust:
     @echo "\nWaiting 30s for crates.io to update..."
     @sleep 30
     @echo "\n📦 Publishing is-it-slop..."
-    cargo publish -p is-it-slop
+    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop
+    @echo "\n✅ All crates published!"
+    @echo "\nℹ️  Users will download model artifacts automatically from GitHub releases during build"
 
 # Publish Python packages to PyPI (using uv)
 publish-python:

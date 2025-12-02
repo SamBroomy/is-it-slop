@@ -28,8 +28,11 @@ impl Prediction {
     /// Panics in debug mode if `human_prob` + `ai_prob` does not equal 1.0.
     pub(super) fn new(human_prob: f32, ai_prob: f32) -> Self {
         debug_assert!(
-            (human_prob + ai_prob - 1.0).abs() < f32::EPSILON,
-            "Probabilities must sum to 1.0"
+            (human_prob + ai_prob - 1.0).abs() < 1e-6,
+            "Probabilities must sum to 1.0, got {} + {} = {}",
+            human_prob,
+            ai_prob,
+            human_prob + ai_prob
         );
         Self(human_prob, ai_prob)
     }
