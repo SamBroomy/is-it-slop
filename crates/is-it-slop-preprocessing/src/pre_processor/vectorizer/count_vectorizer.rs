@@ -10,6 +10,12 @@ use crate::pre_processor::{
     },
 };
 
+/// Count vectorizer for building sparse term-frequency matrices.
+///
+/// Builds vocabulary from training texts (with `min_df`/`max_df` filtering), then transforms
+/// texts to sparse CSR matrices where each cell is the count of an n-gram in a document.
+///
+/// Vocabulary is sorted alphabetically after filtering to ensure deterministic feature indices.
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
@@ -26,6 +32,11 @@ pub struct CountVectorizer {
 }
 
 impl CountVectorizer {
+    /// Fit vectorizer on training texts.
+    ///
+    /// # Arguments
+    /// * `texts` - Training documents
+    /// * `params` - Configuration for n-gram extraction and vocabulary filtering
     #[allow(dead_code)]
     pub fn fit<T: AsRef<str> + Sync>(texts: &[T], params: VectorizerParams) -> Self {
         debug!(num_texts = texts.len(), "Fitting CountVectorizer");
@@ -143,6 +154,10 @@ impl CountVectorizer {
         }
     }
 
+    /// Transform texts to sparse term-frequency matrix.
+    ///
+    /// # Returns
+    /// Sparse CSR matrix of shape `(n_texts, n_features)` with term counts
     pub fn transform<T: AsRef<str> + Sync>(&self, texts: &[T]) -> CsMat<f32> {
         debug!(
             num_texts = texts.len(),
@@ -229,11 +244,13 @@ impl CountVectorizer {
         CsMat::new((num_texts, self.num_features()), indptr, indices, data)
     }
 
-    /// Optimized `fit_transform` that computes n-grams only once.
+    /// Fit and transform in a single pass.
     ///
-    /// This method tokenizes once, computes n-grams once, then reuses them
-    /// for both vocabulary building and transformation, achieving ~2x speedup
-    /// over calling `fit()` followed by `transform()`.
+    /// Optimized to compute n-grams only once, achieving ~2x speedup over
+    /// separate `fit()` + `transform()` calls.
+    ///
+    /// # Returns
+    /// Tuple of (fitted vectorizer, term-frequency matrix)
     pub fn fit_transform<T: AsRef<str> + Sync>(
         texts: &[T],
         params: VectorizerParams,
@@ -269,15 +286,14 @@ impl CountVectorizer {
         (vectorizer, transformed)
     }
 
+    /// Number of features (vocabulary size).
     pub fn num_features(&self) -> usize {
         self.vocab.len()
     }
 
-    /// Get the vocabulary as a mapping of human-readable text to feature index.
+    /// Get vocabulary with human-readable text.
     ///
-    /// Would be nice to cache this but makes serialization more complex.
-    ///
-    /// This isn't called frequently enough to justify the added complexity.
+    /// Requires reverse tokenization - can be slow for large vocabularies.
     pub fn vocabulary(&self) -> HashMap<String, usize> {
         // // Lazy initialization of decoded vocabulary
         // if self.decoded_vocab.is_none() {
@@ -303,6 +319,7 @@ impl CountVectorizer {
         // self.decoded_vocab.as_ref().unwrap()
     }
 
+    /// Get the vectorizer parameters.
     pub fn params(&self) -> &VectorizerParams {
         &self.params
     }

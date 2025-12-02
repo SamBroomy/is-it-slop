@@ -4,12 +4,7 @@ fn main() {
     const DEFAULT_THRESHOLD: f32 = 0.5;
     // allow override (useful in CI or when building from other crates)
     let artifacts_dir = env::var("MODEL_ARTIFACTS_DIR").map_or_else(
-        |_| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-                .join("model_artifacts")
-        },
+        |_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("model_artifacts"),
         PathBuf::from,
     );
 

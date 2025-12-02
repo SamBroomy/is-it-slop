@@ -7,12 +7,22 @@ All core functionality is implemented in Rust for maximum performance.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Final, Literal
 
-from ._is_it_slop_rust_bindings import CLASSIFICATION_THRESHOLD, __version__  # type: ignore[import]
+from ._is_it_slop_rust_bindings import CLASSIFICATION_THRESHOLD as _CLASSIFICATION_THRESHOLD
 from ._is_it_slop_rust_bindings import PredictionResult as _PredictionResult
+from ._is_it_slop_rust_bindings import __version__
 from ._is_it_slop_rust_bindings import is_this_slop as _is_this_slop
 from ._is_it_slop_rust_bindings import is_this_slop_batch as _is_this_slop_batch
+
+CLASSIFICATION_THRESHOLD: Final[float] = _CLASSIFICATION_THRESHOLD
+"""Default classification threshold between 0.0 and 1.0.
+
+If P(AI) >= threshold, the text is classified as AI-generated.
+Lower thresholds are more sensitive (classify more as AI), higher thresholds are more conservative (classify more as Human).
+This threshold is optimized for overall f1 score based on validation data and is used by default in prediction functions.
+"""
+
 
 __all__ = ["CLASSIFICATION_THRESHOLD", "Prediction", "__version__", "is_this_slop", "is_this_slop_batch"]
 
@@ -91,16 +101,12 @@ def is_this_slop(text: str, threshold: float | None = None) -> Prediction:
     Args:
         text: Input text to classify. Must be a non-empty string.
         threshold: Classification threshold between 0.0 and 1.0 (default: built-in
-            threshold). If P(AI) >= threshold, the text is classified as AI-generated.
+            threshold optimized for overall f1). If P(AI) >= threshold, the text is classified as AI-generated.
             Lower thresholds are more sensitive (classify more as AI), higher thresholds
             are more conservative (classify more as Human).
 
     Returns:
         Prediction: A result object containing probabilities and classification.
-
-    Raises:
-        RuntimeError: If prediction fails (e.g., model error)
-        TypeError: If text is not a string
 
     Examples:
         >>> result = is_this_slop("This is some text")
@@ -131,15 +137,11 @@ def is_this_slop_batch(texts: list[str], threshold: float | None = None) -> list
     Args:
         texts: List of input texts to classify. All must be non-empty strings.
         threshold: Classification threshold between 0.0 and 1.0 (default: built-in
-            threshold). Applied uniformly to all texts in the batch.
+            threshold optimized for overall f1). Applied uniformly to all texts in the batch.
 
     Returns:
         list[Prediction]: List of prediction results, one for each input text,
             in the same order as the input.
-
-    Raises:
-        RuntimeError: If batch prediction fails (e.g., model error)
-        TypeError: If texts is not a list or contains non-string elements
 
     Examples:
         >>> texts = ["First text", "Second text", "Third text"]

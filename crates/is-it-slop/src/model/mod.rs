@@ -5,9 +5,8 @@ use ort::session::{Session, builder::GraphOptimizationLevel};
 mod threshold;
 pub use threshold::CLASSIFICATION_THRESHOLD;
 
-// pub static MODEL_BYTES: &[u8] = include_bytes!("../../../../model_artifacts/slop-classifier.onnx");
 pub static MODEL_BYTES: &[u8] = include_bytes!(concat!(
-    "../../../../model_artifacts/",
+    "../../model_artifacts/",
     env!("CARGO_PKG_VERSION"),
     "/slop-classifier.onnx"
 ));
@@ -24,7 +23,7 @@ pub static MODEL: LazyLock<Mutex<Session>> = LazyLock::new(|| {
     )
 });
 pub static TOKENIZER_BYTES: &[u8] = include_bytes!(concat!(
-    "../../../../model_artifacts/",
+    "../../model_artifacts/",
     env!("CARGO_PKG_VERSION"),
     "/tfidf_vectorizer.bin"
 ));

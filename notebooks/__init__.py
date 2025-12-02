@@ -25,7 +25,7 @@ df_train = pl.scan_parquet(TRAIN_PATH)
 df_test = pl.scan_parquet(TEST_PATH)
 
 
-MODEL_DIR = ROOT_DIR / "model_artifacts" / __version__
+MODEL_DIR = ROOT_DIR / "crates" / "is-it-slop" / "model_artifacts" / __version__
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 

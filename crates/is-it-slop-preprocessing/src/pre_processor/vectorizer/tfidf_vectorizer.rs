@@ -4,6 +4,17 @@ use tracing::debug;
 
 use super::{count_vectorizer::CountVectorizer, params::VectorizerParams};
 
+/// TF-IDF vectorizer for text preprocessing.
+///
+/// Wraps `CountVectorizer` and applies Inverse Document Frequency (IDF) weighting
+/// with L2 normalization per document. Computes IDF as `log((n_docs + 1) / (df + 1)) + 1`
+/// to match sklearn's `smooth_idf=True` behavior.
+///
+/// # Usage
+///
+/// - Use [`fit_transform`](Self::fit_transform) when training (more efficient)
+/// - Use [`fit`](Self::fit) + [`transform`](Self::transform) when you need the vectorizer separately
+/// - Serialize with `to_bytes()` (bincode) or `to_json()` (serde feature)
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
@@ -13,6 +24,13 @@ pub struct TfidfVectorizer {
 }
 
 impl TfidfVectorizer {
+    /// Fit vectorizer on training texts.
+    ///
+    /// Tokenizes texts, builds vocabulary (filtering by `min_df`/`max_df`), computes IDF weights.
+    ///
+    /// # Arguments
+    /// * `texts` - Training documents
+    /// * `count_vectorizer_params` - Configuration for n-gram extraction and vocabulary filtering
     pub fn fit<T: AsRef<str> + Sync>(
         texts: &[T],
         count_vectorizer_params: VectorizerParams,
@@ -56,6 +74,10 @@ impl TfidfVectorizer {
         }
     }
 
+    /// Transform texts to TF-IDF sparse matrix using fitted vocabulary.
+    ///
+    /// # Returns
+    /// Sparse CSR matrix of shape `(n_texts, n_features)` with L2-normalized TF-IDF values
     pub fn transform<T: AsRef<str> + Sync>(&self, texts: &[T]) -> CsMat<f32> {
         debug!(
             num_texts = texts.len(),
@@ -106,6 +128,13 @@ impl TfidfVectorizer {
         tf_matrix
     }
 
+    /// Fit vectorizer and transform texts in a single pass.
+    ///
+    /// More efficient than calling `fit()` + `transform()` separately: tokenizes and
+    /// computes n-grams only once.
+    ///
+    /// # Returns
+    /// Tuple of (fitted vectorizer, TF-IDF matrix)
     pub fn fit_transform<T: AsRef<str> + Sync>(
         texts: &[T],
         count_vectorizer_params: VectorizerParams,
@@ -129,16 +158,22 @@ impl TfidfVectorizer {
         (vectorizer, tfidf_matrix)
     }
 
+    /// Number of features (vocabulary size) in the fitted vectorizer.
     #[must_use]
     pub fn num_features(&self) -> usize {
         self.count_vectorizer.num_features()
     }
 
+    /// Get vocabulary as a mapping of text n-grams to feature indices.
+    ///
+    /// **Note:** Requires reverse tokenization (tiktoken decoding), which can be slow
+    /// for large vocabularies.
     #[must_use]
     pub fn vocabulary(&self) -> HashMap<String, usize> {
         self.count_vectorizer.vocabulary()
     }
 
+    /// Get the vectorizer parameters.
     #[must_use]
     pub fn params(&self) -> &VectorizerParams {
         self.count_vectorizer.params()
@@ -147,10 +182,14 @@ impl TfidfVectorizer {
 
 #[cfg(feature = "bincode")]
 impl TfidfVectorizer {
+    /// Serialize vectorizer to bytes using bincode format.
+    ///
+    /// Used for fast binary serialization. Preferred format for Rust-to-Rust communication.
     pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         bincode::encode_to_vec(self, bincode::config::standard())
     }
 
+    /// Deserialize vectorizer from bincode bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
         let (vectorizer, _): (Self, usize) =
             bincode::decode_from_slice(bytes, bincode::config::standard())?;
@@ -160,10 +199,14 @@ impl TfidfVectorizer {
 
 #[cfg(feature = "serde")]
 impl TfidfVectorizer {
+    /// Serialize vectorizer to JSON string.
+    ///
+    /// Human-readable format, useful for inspection and debugging.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
 
+    /// Deserialize vectorizer from JSON string.
     pub fn from_json(json_str: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json_str)
     }

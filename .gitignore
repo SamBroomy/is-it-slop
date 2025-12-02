@@ -20,8 +20,9 @@
 !/python/**/*.py
 !/python/**/py.typed
 !/notebooks/__init__.py
-!/model_artifacts/**/classification_threshold.txt
-!/model_artifacts/**/slop-classifier.onnx
-!/model_artifacts/**/tfidf_vectorizer.bin
-!/model_artifacts/**/tfidf_vectorizer.json
+!/crates/is-it-slop/model_artifacts/**/classification_threshold.txt
+!/crates/is-it-slop/model_artifacts/**/slop-classifier.onnx
+!/crates/is-it-slop/model_artifacts/**/tfidf_vectorizer.bin
+!/crates/is-it-slop/model_artifacts/**/tfidf_vectorizer.json
 !/.cargo/config.toml
+!/python/**/README.md

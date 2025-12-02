@@ -1,5 +1,18 @@
 use std::ops::RangeInclusive;
 
+/// Default minimum n-gram size.
+pub const DEFAULT_MIN_NGRAM: usize = 2;
+
+/// Default maximum n-gram size.
+///
+/// **Important**: This value is also used to optimize `SmallVec` storage for n-gram keys.
+/// If you frequently use n-gram ranges larger than this, consider increasing this constant
+/// and recompiling for better performance.
+pub const DEFAULT_MAX_NGRAM: usize = 4;
+
+/// Configuration parameters for text vectorization.
+///
+/// Controls n-gram extraction, vocabulary filtering, and term frequency scaling.
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
@@ -19,6 +32,16 @@ pub struct VectorizerParams {
 }
 
 impl VectorizerParams {
+    /// Create new vectorizer parameters.
+    ///
+    /// # Arguments
+    /// * `ngram_range` - Range of n-gram sizes (e.g., `3..=5` for trigrams to 5-grams)
+    /// * `min_df` - Minimum document frequency (proportion or count)
+    /// * `max_df` - Maximum document frequency (proportion or count)
+    /// * `sublinear_tf` - Whether to apply log scaling to term frequencies
+    ///
+    /// # Panics
+    /// Panics if `min_df` or `max_df` are not positive, or if `ngram_range` is empty.
     pub fn new(
         ngram_range: impl Into<RangeInclusive<usize>>,
         min_df: f32,
@@ -46,11 +69,13 @@ impl VectorizerParams {
         }
     }
 
+    /// Get all n-gram sizes as a slice.
     #[must_use]
     pub fn ngram_counts(&self) -> &[usize] {
         &self.ngram_range
     }
 
+    /// Get the n-gram range as a tuple `(min, max)`.
     #[must_use]
     pub fn ngram_range(&self) -> (usize, usize) {
         (
@@ -59,16 +84,19 @@ impl VectorizerParams {
         )
     }
 
+    /// Get the minimum document frequency threshold.
     #[must_use]
     pub fn min_df(&self) -> f32 {
         self.min_df
     }
 
+    /// Get the maximum document frequency threshold.
     #[must_use]
     pub fn max_df(&self) -> f32 {
         self.max_df
     }
 
+    /// Get whether sublinear TF scaling is enabled.
     #[must_use]
     pub fn sublinear_tf(&self) -> bool {
         self.sublinear_tf
@@ -77,7 +105,7 @@ impl VectorizerParams {
 impl Default for VectorizerParams {
     fn default() -> Self {
         Self {
-            ngram_range: vec![2, 4],
+            ngram_range: vec![DEFAULT_MIN_NGRAM, DEFAULT_MAX_NGRAM],
             min_df: 10.0,
             max_df: 1.0,
             sublinear_tf: false,

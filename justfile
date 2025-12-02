@@ -71,8 +71,25 @@ cli-help:
 # Publishing & Release
 # =============================================================================
 
+# Extract version from workspace Cargo.toml
+CARGO_PKG_VERSION := `grep "^version" Cargo.toml | head -1 | cut -d'"' -f2`
+
+# Verify model artifacts exist and are valid
+check-model-artifacts:
+    @echo "=== Checking model artifacts for version {{CARGO_PKG_VERSION}} ==="
+    @echo "\n📦 Checking for required files..."
+    @test -f crates/is-it-slop/model_artifacts/{{CARGO_PKG_VERSION}}/slop-classifier.onnx || (echo "❌ Missing model ONNX file" && exit 1)
+    @test -f crates/is-it-slop/model_artifacts/{{CARGO_PKG_VERSION}}/tfidf_vectorizer.bin || (echo "❌ Missing vectorizer bin file" && exit 1)
+    @test -f crates/is-it-slop/model_artifacts/{{CARGO_PKG_VERSION}}/classification_threshold.txt || (echo "❌ Missing threshold file" && exit 1)
+    @echo "✅ All artifact files present"
+    @echo "\n📊 Artifact sizes:"
+    @ls -lh crates/is-it-slop/model_artifacts/{{CARGO_PKG_VERSION}}/ | tail -n +2
+    @echo "\n🔍 Validating ONNX model..."
+    @uv run python -c "import onnx; onnx.checker.check_model('crates/is-it-slop/model_artifacts/{{CARGO_PKG_VERSION}}/slop-classifier.onnx'); print('✅ ONNX model is valid')"
+    @echo "\n✅ All model artifacts are valid"
+
 # Run all pre-publish checks (tests, lints, builds)
-pre-publish-check:
+pre-publish-check: check-model-artifacts
     @echo "=== Running pre-publish checks ==="
     @echo "\n📋 Running Rust tests..."
     cargo test --all-features

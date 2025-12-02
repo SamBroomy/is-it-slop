@@ -20,7 +20,7 @@ use crate::model::MODEL;
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust
 /// use is_it_slop::Predictor;
 ///
 /// // Use default threshold

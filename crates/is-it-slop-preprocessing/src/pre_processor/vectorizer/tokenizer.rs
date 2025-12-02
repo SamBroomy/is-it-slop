@@ -1,3 +1,11 @@
+//! Text tokenization using tiktoken BPE encoding.
+//!
+//! Uses the `o200k_base` encoding from tiktoken to convert text into token IDs.
+//! Automatically switches between sequential and parallel processing based on workload:
+//!
+//! - Parallel: >= 100 texts OR >= 10,000 total characters
+//! - Sequential: smaller workloads (avoids thread overhead)
+
 #[cfg(feature = "progress-bars")]
 use std::borrow::Cow;
 
@@ -104,6 +112,15 @@ fn should_use_parallel<T: AsRef<str>>(texts: &[T]) -> bool {
     total_chars >= MIN_CHARS_FOR_PARALLEL
 }
 
+/// Tokenize texts using tiktoken `o200k_base` encoding.
+///
+/// Automatically parallelizes for large workloads (>= 100 texts or >= 10k chars).
+///
+/// # Arguments
+/// * `texts` - Input documents
+///
+/// # Returns
+/// Vector of token ID sequences, one per input text
 pub fn tokenize<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     if should_use_parallel(texts) {
         tokenize_texts_par(texts)
@@ -112,6 +129,9 @@ pub fn tokenize<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     }
 }
 
+/// Decode token IDs back to text.
+///
+/// Used for vocabulary inspection. Not called during training/inference.
 pub fn reverse_tokenize(tokens: &[u32]) -> String {
     let bpe = o200k_base_singleton();
 
