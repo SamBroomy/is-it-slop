@@ -5,28 +5,38 @@ use ort::session::{Session, builder::GraphOptimizationLevel};
 mod threshold;
 pub use threshold::CLASSIFICATION_THRESHOLD;
 
+/// Current model version
+///
+/// This is set during build time based on the model artifacts used.
+/// The model version is used to ensure that the underlying model and tokenizer are compatible.
+pub const MODEL_VERSION: &str = env!("MODEL_VERSION");
+
 pub static MODEL_BYTES: &[u8] = include_bytes!(concat!(
     "../../model_artifacts/",
-    env!("CARGO_PKG_VERSION"),
-    "/slop-classifier.onnx"
+    env!("MODEL_VERSION"),
+    "/",
+    env!("CLASSIFIER_MODEL_FILENAME")
 ));
+
 pub static MODEL: LazyLock<Mutex<Session>> = LazyLock::new(|| {
-    Mutex::new(
-        Session::builder()
-            .expect("Unable to create ONNX Runtime session builder")
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .expect("Unable to set optimization level")
-            .with_intra_threads(4)
-            .expect("Unable to set intra threads")
-            .commit_from_memory(MODEL_BYTES)
-            .expect("Unable to load model from memory"),
-    )
+    let session = Session::builder()
+        .expect("Unable to create ONNX Runtime session builder")
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .expect("Unable to set optimization level")
+        .with_intra_threads(4)
+        .expect("Unable to set intra threads")
+        .commit_from_memory(MODEL_BYTES)
+        .expect("Unable to load model from static bytes");
+
+    Mutex::new(session)
 });
 pub static TOKENIZER_BYTES: &[u8] = include_bytes!(concat!(
     "../../model_artifacts/",
-    env!("CARGO_PKG_VERSION"),
-    "/tfidf_vectorizer.bin"
+    env!("MODEL_VERSION"),
+    "/",
+    env!("TOKENIZER_FILENAME"),
 ));
 pub static PRE_PROCESSOR: LazyLock<TfidfVectorizer> = LazyLock::new(|| {
-    TfidfVectorizer::from_bytes(TOKENIZER_BYTES).expect("Unable to load tokenizer from memory")
+    TfidfVectorizer::from_bytes(TOKENIZER_BYTES)
+        .expect("Unable to load tokenizer from static bytes")
 });

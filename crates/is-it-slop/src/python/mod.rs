@@ -116,7 +116,6 @@ fn is_this_slop_batch(
     })
 }
 
-#[cfg(feature = "python")]
 #[pymodule]
 #[pyo3(name = "_is_it_slop_rust_bindings")]
 fn is_it_slop(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -124,6 +123,7 @@ fn is_it_slop(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("CLASSIFICATION_THRESHOLD", crate::CLASSIFICATION_THRESHOLD)?;
+    m.add("MODEL_VERSION", crate::MODEL_VERSION)?;
 
     m.add_class::<PredictionResult>()?;
     m.add_function(wrap_pyfunction!(is_this_slop, m)?)?;

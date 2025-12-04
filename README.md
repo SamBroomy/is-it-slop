@@ -17,6 +17,8 @@ Fast AI text detection using TF-IDF and ensemble classifiers.
 cargo install is-it-slop --features cli
 ```
 
+Model artifacts (16 MB) are downloaded automatically during build from GitHub releases.
+
 ### Python Package
 
 ```bash

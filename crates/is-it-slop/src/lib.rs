@@ -8,7 +8,7 @@ mod model;
 mod pipeline;
 
 use anyhow::Context;
-pub use model::CLASSIFICATION_THRESHOLD;
+pub use model::{CLASSIFICATION_THRESHOLD, MODEL_VERSION};
 pub use pipeline::{Classification, Prediction};
 
 use crate::model::MODEL;

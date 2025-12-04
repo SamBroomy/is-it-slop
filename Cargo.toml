@@ -45,6 +45,10 @@ pyo3-log = { version = "0.13.2" }
 numpy = "0.27"
 ort = "2.0.0-rc.10"
 clap = { version = "4.5.53", features = ["derive"] }
+ureq = "3.1.4"
+flate2 = "1.1.5"
+tar = "0.4.44"
+tempfile = "3.23.0"
 
 is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.1.0" }
 

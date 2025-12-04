@@ -1,0 +1,115 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # - id: no-commit-to-branch
+      #   args: [--branch, main]
+      #   stages: [pre-commit]
+      - id: check-added-large-files
+        stages: [pre-commit]
+      - id: check-toml
+        stages: [pre-commit]
+      - id: check-yaml
+        stages: [pre-commit]
+      - id: detect-private-key
+        stages: [pre-commit]
+      - id: end-of-file-fixer
+        stages: [pre-commit]
+      - id: mixed-line-ending
+        stages: [pre-commit]
+      - id: trailing-whitespace
+        stages: [pre-commit]
+
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.2
+    hooks:
+      - id: nbstripout
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.9.15
+    hooks:
+      - id: uv-sync
+        args: ["--locked", "--all-packages"]
+      - id: uv-lock
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.7
+    hooks:
+      - id: ruff-check
+        args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]
+        types_or: [python]
+        stages: [pre-commit]
+        files: '^python/.*\.py$'
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        files: '^python/.*\.py$'
+        types: [python]
+
+  - repo: local
+    hooks:
+      # Justfile hooks
+      - id: just-fmt
+        name: just fmt
+        entry: just --unstable --fmt
+        language: system
+        files: ^justfile$
+        stages: [pre-commit]
+        pass_filenames: false
+      # Cargo machete (only when Cargo.toml changes)
+      - id: cargo-machete
+        name: cargo machete
+        description: Find unused dependencies
+        entry: just cargo-machete
+        language: system
+        files: '^Cargo\.toml$'
+        types: [toml]
+        pass_filenames: false
+      # Cargo audit (only when Cargo.lock changes or on manual trigger)
+      - id: cargo-audit
+        name: cargo audit
+        description: Audit for security vulnerabilities
+        entry: just cargo-audit
+        language: system
+        files: '^Cargo\.lock$'
+        types: [toml]
+        pass_filenames: false
+        stages: [manual, pre-push]
+      # Clippy (only on Rust files or Cargo.toml changes)
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Run cargo clippy with fixes (multiple feature sets)
+        entry: just rust-lint-fix
+        language: system
+        files: '(\.rs$|Cargo\.toml$|Cargo\.lock$)'
+        types_or: [rust, toml]
+        pass_filenames: false
+      # Cargo fmt (only on Rust files)
+      - id: cargo-fmt
+        name: cargo fmt
+        description: Format Rust code with cargo fmt
+        entry: cargo +nightly fmt --all
+        language: system
+        files: '\.rs$'
+        types: [rust]
+        pass_filenames: false
+      # Cargo doc (documentation check)
+      - id: cargo-doc
+        name: cargo doc
+        description: Check documentation builds
+        entry: just cargo-docs
+        language: system
+        files: '(Cargo\.toml|crates/*/Cargo\.toml|crates/*/src/.*\.rs)$'
+        types: [rust, toml]
+        stages: [pre-commit]
+        pass_filenames: false
+      # Maturin build check (Python bindings)
+      - id: maturin-check
+        name: maturin check
+        description: Verify Python bindings can build
+        entry: just maturin-check
+        language: system
+        files: '^(pyproject\.toml|Cargo\.toml|crates/*/Cargo\.toml|crates/*/src/.*\.rs|crates/*/build\.rs)$'
+        types_or: [rust, toml]
+        pass_filenames: false
+        stages: [pre-push]

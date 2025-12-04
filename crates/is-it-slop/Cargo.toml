@@ -9,14 +9,9 @@ repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-include = [
-    "src/**",
-    "build.rs",
-    "model_artifacts/0.1.0/classification_threshold.txt",
-    "model_artifacts/0.1.0/slop-classifier.onnx",
-    "model_artifacts/0.1.0/tfidf_vectorizer.bin",
-
-]
+# Model artifacts are downloaded at build time if not present
+# See build.rs for download logic
+exclude = ["model_artifacts/**"]
 
 [lib]
 name = "is_it_slop"
@@ -49,5 +44,14 @@ cli = ["dep:clap", "dep:serde_json", "mimalloc"]
 python = ["dep:pyo3", "dep:pyo3-log", "mimalloc"]
 mimalloc = ["dep:mimalloc"]
 
+[build-dependencies]
+ureq = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["ureq", "flate2", "tar", "tempfile"]

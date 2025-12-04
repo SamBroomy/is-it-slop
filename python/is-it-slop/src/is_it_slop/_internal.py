@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Final, Literal
 
 from ._is_it_slop_rust_bindings import CLASSIFICATION_THRESHOLD as _CLASSIFICATION_THRESHOLD
+from ._is_it_slop_rust_bindings import MODEL_VERSION as _MODEL_VERSION
 from ._is_it_slop_rust_bindings import PredictionResult as _PredictionResult
 from ._is_it_slop_rust_bindings import __version__
 from ._is_it_slop_rust_bindings import is_this_slop as _is_this_slop
@@ -23,8 +24,17 @@ Lower thresholds are more sensitive (classify more as AI), higher thresholds are
 This threshold is optimized for overall f1 score based on validation data and is used by default in prediction functions.
 """
 
+MODEL_VERSION: Final[str] = _MODEL_VERSION
+"""Version of the underlying ML model used for predictions."""
 
-__all__ = ["CLASSIFICATION_THRESHOLD", "Prediction", "__version__", "is_this_slop", "is_this_slop_batch"]
+__all__ = [
+    "CLASSIFICATION_THRESHOLD",
+    "MODEL_VERSION",
+    "Prediction",
+    "__version__",
+    "is_this_slop",
+    "is_this_slop_batch",
+]
 
 
 class Prediction:
