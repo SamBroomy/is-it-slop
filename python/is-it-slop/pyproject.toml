@@ -1,6 +1,6 @@
 [project]
 name = "is-it-slop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Detecting AI generated text using statistical ML models and TF-IDF vectorization"
 readme = "README.md"
 authors = [

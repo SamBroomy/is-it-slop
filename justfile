@@ -361,15 +361,6 @@ publish-rust: release-model
     echo "  Crate version:  ${CRATE_VERSION}"
     echo "  Model version:  ${MODEL_VERSION}"
     echo ""
-
-    # Verify release exists
-    if ! gh release view "v${MODEL_VERSION}" &>/dev/null; then
-        echo "❌ GitHub release v${MODEL_VERSION} not found!"
-        echo "   Run 'just release-model' first"
-        exit 1
-    fi
-
-    echo "✅ GitHub release v${MODEL_VERSION} exists"
     echo ""
     echo "⚠️  This will publish to crates.io (no undo!)"
     echo "Press Enter to continue or Ctrl+C to abort..."
@@ -390,7 +381,7 @@ publish-rust: release-model
     echo ""
     echo "✅ All crates published!"
     echo ""
-    echo "Users will automatically download model v${MODEL_VERSION} during build"
+    echo "Users will automatically download model model-v${MODEL_VERSION} during build"
 
 # Publish Python packages to PyPI (using uv)
 publish-python:
