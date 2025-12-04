@@ -85,7 +85,35 @@ fn copy_artifacts(src_dir: &Path, dest_dir: &Path) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-fn ensure_artifacts_exist(artifacts_dir: &Path) {
+/// Create dummy/placeholder artifact files for publish verification.
+/// These files allow `include_bytes!` to succeed during `cargo publish --dry-run`
+/// but are NOT included in the published crate (excluded via Cargo.toml).
+/// Real users will download actual artifacts when building from crates.io.
+fn create_dummy_artifacts(artifacts_dir: &Path) {
+    let version_dir = artifacts_dir.join(MODEL_VERSION);
+    fs::create_dir_all(&version_dir).expect("Failed to create artifacts directory");
+
+    println!("cargo:warning=Creating dummy artifacts for publish verification...");
+
+    // Create minimal dummy files
+    for filename in REQUIRED_ARTIFACTS {
+        let file_path = version_dir.join(filename);
+        if !file_path.exists() {
+            let dummy_content: &[u8] = match *filename {
+                // Threshold file needs valid content
+                THRESHOLD_FILENAME => b"0.5",
+                // Other files just need to exist (content doesn't matter for publish verify)
+                _ => b"DUMMY_FOR_PUBLISH_VERIFY",
+            };
+            fs::write(&file_path, dummy_content)
+                .unwrap_or_else(|e| panic!("Failed to create dummy {filename}: {e}"));
+            println!("cargo:warning=Created dummy: {filename}");
+        }
+    }
+    println!("cargo:warning=Dummy artifacts created - DO NOT use this build for actual inference!");
+}
+
+fn ensure_artifacts_exist(artifacts_dir: &Path, skip_download: bool) {
     let version_dir = artifacts_dir.join(MODEL_VERSION);
 
     let all_exist = REQUIRED_ARTIFACTS.iter().all(|filename| {
@@ -97,6 +125,12 @@ fn ensure_artifacts_exist(artifacts_dir: &Path) {
         //     "cargo:warning=Using local model artifacts at {}",
         //     version_dir.display()
         // );
+        return;
+    }
+
+    if skip_download {
+        // Create dummy files for publish verification
+        create_dummy_artifacts(artifacts_dir);
         return;
     }
 
@@ -116,7 +150,7 @@ fn ensure_artifacts_exist(artifacts_dir: &Path) {
         );
         eprintln!("cargo:warning=");
         eprintln!("cargo:warning=Option 2: Build from repository");
-        eprintln!("cargo:warning=  git clone https://github.com/SamBroomy/is-it-slop.git");
+        eprintln!("cargo:warning=  git clone {}", env!("CARGO_PKG_REPOSITORY"));
         eprintln!("cargo:warning=  cd is-it-slop && cargo build");
         eprintln!("cargo:warning=");
         panic!("Model artifacts required but not found");
@@ -145,9 +179,10 @@ fn main() {
 
     // Ensure artifacts exist (download if necessary)
     // Skip download if SKIP_MODEL_DOWNLOAD is set (for crates.io publishing dry-run)
-    if env::var("SKIP_MODEL_DOWNLOAD").is_err() {
-        ensure_artifacts_exist(&artifacts_dir);
-    }
+    let skip_download = env::var("SKIP_MODEL_DOWNLOAD").is_ok();
+
+    // Ensure artifacts exist (download or create dummies)
+    ensure_artifacts_exist(&artifacts_dir, skip_download);
 
     // Read classification threshold into a constant
     let threshold_path = artifacts_dir
