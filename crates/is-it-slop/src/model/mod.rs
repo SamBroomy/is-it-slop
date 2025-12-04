@@ -2,8 +2,8 @@ use std::sync::{LazyLock, Mutex};
 
 use is_it_slop_preprocessing::pre_processor::TfidfVectorizer;
 use ort::session::{Session, builder::GraphOptimizationLevel};
-mod threshold;
-pub use threshold::CLASSIFICATION_THRESHOLD;
+
+include!(concat!(env!("OUT_DIR"), "/threshold.rs"));
 
 /// Current model version
 ///
@@ -12,12 +12,10 @@ pub use threshold::CLASSIFICATION_THRESHOLD;
 pub const MODEL_VERSION: &str = env!("MODEL_VERSION");
 
 pub static MODEL_BYTES: &[u8] = include_bytes!(concat!(
-    "../../model_artifacts/",
-    env!("MODEL_VERSION"),
+    env!("MODEL_ARTIFACTS_DIR"),
     "/",
     env!("CLASSIFIER_MODEL_FILENAME")
 ));
-
 pub static MODEL: LazyLock<Mutex<Session>> = LazyLock::new(|| {
     let session = Session::builder()
         .expect("Unable to create ONNX Runtime session builder")
@@ -30,9 +28,9 @@ pub static MODEL: LazyLock<Mutex<Session>> = LazyLock::new(|| {
 
     Mutex::new(session)
 });
+
 pub static TOKENIZER_BYTES: &[u8] = include_bytes!(concat!(
-    "../../model_artifacts/",
-    env!("MODEL_VERSION"),
+    env!("MODEL_ARTIFACTS_DIR"),
     "/",
     env!("TOKENIZER_FILENAME"),
 ));
