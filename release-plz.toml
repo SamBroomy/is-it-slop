@@ -2,5 +2,13 @@
 dependencies_update = true
 semver_check = true
 
+[[package]]
+name = "is-it-slop-preprocessing"
+version_group = "is-it-slop"
+
+[[package]]
+name = "is-it-slop"
+version_group = "is-it-slop"
+
 [changelog]
 protect_breaking_commits = true
