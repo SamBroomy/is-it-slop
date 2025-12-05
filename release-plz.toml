@@ -1,6 +1,8 @@
 [workspace]
 dependencies_update = true
-semver_check = true
+# semver_check = true
+git_release_enable = true
+
 
 [[package]]
 name = "is-it-slop-preprocessing"
