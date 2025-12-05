@@ -416,6 +416,7 @@ publish-rust: release-model
     git tag -a "${TAG}" -m "Release ${TAG}"
 
     echo "📤 Pushing tag to origin..."
+    git push origin HEAD
     git push origin "${TAG}"
 
     echo ""
@@ -424,7 +425,7 @@ publish-rust: release-model
     echo "🐍 Python wheels will be built and published by CI."
     echo "   Watch progress at: https://github.com/SamBroomy/is-it-slop/actions"
     echo ""
-    echo "Users will automatically download model model-v${MODEL_VERSION} during build"# Publish Python packages to PyPI (using uv)
+    echo "Users will automatically download model model-v${MODEL_VERSION} during build"
 
 publish-python: build-pre-processing-bindings build-bindings
     @echo "=== Publishing Python packages to PyPI ==="
