@@ -97,20 +97,159 @@ cli-help:
 # Publishing & Release
 # =============================================================================
 
-# Run all pre-publish checks (tests, lints, builds)
+# Full release: model artifacts → crates.io → git tag → triggers PyPI via CI
+publish: pre-publish-check release-model _publish-rust-crates _create-and-push-tag
+    @echo ""
+    @echo "✅ Release complete!"
+    @echo ""
+    @echo "🐍 Python wheels are being built and published by CI."
+    @echo "   Watch progress at: https://github.com/SamBroomy/is-it-slop/actions"
+
+# Internal: publish Rust crates to crates.io
+_publish-rust-crates:
+    #!/usr/bin/env bash
+    set -e
+    echo ""
+    echo "📦 Publishing is-it-slop-preprocessing to crates.io..."
+    cargo publish -p is-it-slop-preprocessing
+
+    echo ""
+    echo "⏳ Waiting 15s for crates.io to index..."
+    sleep 15
+
+    echo ""
+    echo "📦 Publishing is-it-slop to crates.io..."
+    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop
+
+# Internal: create and push git tag
+_create-and-push-tag:
+    #!/usr/bin/env bash
+    set -e
+    CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+    TAG="v${CRATE_VERSION}"
+
+    echo ""
+    echo "🏷️  Creating git tag ${TAG}..."
+
+    # Delete existing tag if it exists (allows re-running after CI fix)
+    if git rev-parse "${TAG}" >/dev/null 2>&1; then
+        echo "⚠️  Tag ${TAG} already exists locally, deleting..."
+        git tag -d "${TAG}"
+    fi
+    if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+        echo "⚠️  Tag ${TAG} already exists on remote, deleting..."
+        git push origin --delete "${TAG}" || true
+    fi
+
+    git tag -a "${TAG}" -m "Release ${TAG}"
+
+    echo "📤 Pushing to origin..."
+    git push origin HEAD
+    git push origin "${TAG}"
+
+    echo ""
+    echo "✅ Tag ${TAG} pushed - CI will build and publish Python wheels"
+
+# Run all pre-publish checks
 pre-publish-check:
-    @echo "=== Running pre-publish checks ==="
-    @echo "\n📋 Running Rust tests..."
+    #!/usr/bin/env bash
+    set -e
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    cd "${REPO_ROOT}"
+
+    MODEL_VERSION=$(grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1 | cut -d'"' -f2)
+    CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+    TAG="v${CRATE_VERSION}"
+
+    echo "=== Pre-publish checks ==="
+    echo ""
+    echo "  Crate version:  ${CRATE_VERSION}"
+    echo "  Model version:  ${MODEL_VERSION}"
+    echo "  Git tag:        ${TAG}"
+    echo ""
+
+    # Check for uncommitted changes
+    if ! git diff-index --quiet HEAD --; then
+        echo "❌ You have uncommitted changes!"
+        echo "   Please commit or stash them before publishing."
+        exit 1
+    fi
+
+    echo "📋 Running Rust tests..."
     cargo test --all-features
-    @echo "\n🔍 Running Rust clippy..."
+
+    echo ""
+    echo "🔍 Running Rust clippy..."
     cargo clippy --all-features -- -D warnings
-    @echo "\n🎨 Checking Rust formatting..."
+
+    echo ""
+    echo "🎨 Checking Rust formatting..."
     cargo fmt --check
-    @echo "\n📦 Building Rust packages..."
+
+    echo ""
+    echo "📦 Building release..."
     cargo build --release --all-features
-    @echo "\n🐍 Building Python packages..."
+
     just build-python-wheels
-    @echo "\n✅ All pre-publish checks passed!"
+
+    echo ""
+    echo "✅ All pre-publish checks passed!"
+    echo ""
+    echo "⚠️  This will:"
+    echo "    1. Release model artifacts to GitHub (if new)"
+    echo "    2. Publish Rust crates to crates.io"
+    echo "    3. Create/update git tag ${TAG}"
+    echo "    4. Trigger CI to build and publish Python wheels to PyPI"
+    echo ""
+    echo "Press Enter to continue or Ctrl+C to abort..."
+    read confirmation
+
+# Dry run: test everything without publishing
+publish-dry-run: pre-publish-check
+    @echo "=== Dry-run publishing ==="
+    @echo ""
+    @echo "📦 Testing is-it-slop-preprocessing..."
+    cargo publish -p is-it-slop-preprocessing --dry-run
+    @echo ""
+    @echo "📦 Testing is-it-slop..."
+    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop --dry-run
+    @echo ""
+    @echo "✅ Dry run complete - everything looks good!"
+    @echo ""
+    @echo "Run 'just publish' to publish for real."
+
+# Trigger CI to rebuild Python wheels (useful after CI fixes)
+retrigger-release:
+    #!/usr/bin/env bash
+    set -e
+    CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+    TAG="v${CRATE_VERSION}"
+
+    echo "=== Re-triggering release for ${TAG} ==="
+    echo ""
+    echo "This will delete and recreate the tag to trigger CI."
+    echo "Use this after fixing CI issues."
+    echo ""
+    echo "Press Enter to continue or Ctrl+C to abort..."
+    read confirmation
+
+    # Delete and recreate tag
+    if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+        echo "Deleting remote tag ${TAG}..."
+        git push origin --delete "${TAG}"
+    fi
+    if git rev-parse "${TAG}" >/dev/null 2>&1; then
+        echo "Deleting local tag ${TAG}..."
+        git tag -d "${TAG}"
+    fi
+
+    echo "Creating new tag ${TAG}..."
+    git tag -a "${TAG}" -m "Release ${TAG}"
+    git push origin "${TAG}"
+
+    echo ""
+    echo "✅ Tag ${TAG} recreated - CI will rebuild Python wheels"
+    echo "   Watch: https://github.com/SamBroomy/is-it-slop/actions"
 
 # Build all Python wheels
 build-python-wheels:
@@ -359,113 +498,9 @@ publish-rust-dry-run:
     @echo "\n📦 Publishing is-it-slop (library + binary)..."
     SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop --dry-run
 
-# Publish Rust crates to crates.io (REAL)
-publish-rust: release-model
-    #!/usr/bin/env bash
-    set -e
-    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-    cd "${REPO_ROOT}"
-
-    MODEL_VERSION=$(grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1 | cut -d'"' -f2)
-    CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
-    TAG="v${CRATE_VERSION}"
-
-    echo "=== Publishing Rust crates to crates.io ==="
-    echo ""
-    echo "  Crate version:  ${CRATE_VERSION}"
-    echo "  Model version:  ${MODEL_VERSION}"
-    echo "  Git tag:        ${TAG}"
-    echo ""
-
-    # Check if tag already exists
-    if git rev-parse "${TAG}" >/dev/null 2>&1; then
-        echo "⚠️  Tag ${TAG} already exists!"
-        echo "    If you need to re-publish, bump the version in Cargo.toml"
-        exit 1
-    fi
-
-    # Check for uncommitted changes
-    if ! git diff-index --quiet HEAD --; then
-        echo "⚠️  You have uncommitted changes!"
-        echo "    Please commit or stash them before publishing."
-        exit 1
-    fi
-
-    echo "⚠️  This will:"
-    echo "    1. Publish to crates.io (no undo!)"
-    echo "    2. Create and push git tag ${TAG}"
-    echo "    3. Trigger CI to build and publish Python wheels to PyPI"
-    echo ""
-    echo "Press Enter to continue or Ctrl+C to abort..."
-    read confirmation
-
-    echo ""
-    echo "📦 Publishing is-it-slop-preprocessing..."
-    cargo publish -p is-it-slop-preprocessing
-
-    echo ""
-    echo "Waiting 15s for crates.io to update..."
-    sleep 15
-
-    echo ""
-    echo "📦 Publishing is-it-slop..."
-    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop
-
-    echo ""
-    echo "🏷️  Creating git tag ${TAG}..."
-    git tag -a "${TAG}" -m "Release ${TAG}"
-
-    echo "📤 Pushing tag to origin..."
-    git push origin HEAD
-    git push origin "${TAG}"
-
-    echo ""
-    echo "✅ Rust crates published!"
-    echo ""
-    echo "🐍 Python wheels will be built and published by CI."
-    echo "   Watch progress at: https://github.com/SamBroomy/is-it-slop/actions"
-    echo ""
-    echo "Users will automatically download model model-v${MODEL_VERSION} during build"
-
-publish-python: build-pre-processing-bindings build-bindings
-    @echo "=== Publishing Python packages to PyPI ==="
-    @echo "\n⚠️  This will publish to PyPI (no undo!)"
-    @echo "Press Enter to continue or Ctrl+C to abort..."
-    @read confirmation
-    @echo "\n🐍 Publishing slop-pre-processing..."
-    uv run --directory python/slop-pre-processing maturin publish
-    @echo "\n🐍 Publishing is-it-slop..."
-    uv run --directory python/is-it-slop maturin publish
-
-# Publish Python packages to TestPyPI (for testing)
-publish-python-test:
-    @echo "=== Publishing Python packages to TestPyPI ==="
-    @echo "\n🐍 Publishing slop-pre-processing to TestPyPI..."
-    uv run --directory python/slop-pre-processing maturin publish --repository testpypi
-    @echo "\n🐍 Publishing is-it-slop to TestPyPI..."
-    uv run --directory python/is-it-slop maturin publish --repository testpypi
-
-# Full release workflow (all platforms)
-release: pre-publish-check
-    @echo "\n=== Ready to publish! ==="
-    @echo "\nRun these commands to publish:"
-    @echo "  just publish-rust        # Publish to crates.io"
-    @echo "  just publish-python      # Publish to PyPI"
-    @echo "\nOr test first with:"
-    @echo "  just publish-rust-dry-run"
-    @echo "  just publish-python-test  # TestPyPI"
-
 # Quick install from source (Rust binary only)
 install-cli:
     cargo install --path crates/is-it-slop --features cli --force
-
-# Test installation from crates.io (simulates user experience)
-test-install-rust:
-    @echo "=== Testing Rust installation ==="
-    @echo "\nLibrary usage:"
-    cargo add is-it-slop --dry-run
-    @echo "\nBinary installation:"
-    cargo install is-it-slop --dry-run
 
 # Show current version across all packages
 show-versions:
