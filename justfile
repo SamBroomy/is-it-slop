@@ -119,7 +119,7 @@ _publish-rust-crates:
 
     echo ""
     echo "📦 Publishing is-it-slop to crates.io..."
-    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop
+    cargo publish -p is-it-slop
 
 # Internal: create and push git tag
 _create-and-push-tag:
@@ -176,11 +176,12 @@ pre-publish-check:
     fi
 
     echo "📋 Running Rust tests..."
-    cargo test --all-features
+
+    cargo test --all-targets --workspace --features all-testable
 
     echo ""
     echo "🔍 Running Rust clippy..."
-    cargo clippy --all-features -- -D warnings
+    cargo clippy --all-targets --workspace --features all-testable -- -D warnings
 
     echo ""
     echo "🎨 Checking Rust formatting..."
@@ -188,7 +189,7 @@ pre-publish-check:
 
     echo ""
     echo "📦 Building release..."
-    cargo build --release --all-features
+    cargo build --release --all-targets --workspace --features all-testable
 
     just build-python-wheels
 
@@ -212,7 +213,7 @@ publish-dry-run: pre-publish-check
     cargo publish -p is-it-slop-preprocessing --dry-run
     @echo ""
     @echo "📦 Testing is-it-slop..."
-    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop --dry-run
+    cargo publish -p is-it-slop --dry-run
     @echo ""
     @echo "✅ Dry run complete - everything looks good!"
     @echo ""
@@ -496,7 +497,7 @@ publish-rust-dry-run:
     @echo "\n📦 Publishing is-it-slop-preprocessing..."
     cargo publish -p is-it-slop-preprocessing --dry-run
     @echo "\n📦 Publishing is-it-slop (library + binary)..."
-    SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop --dry-run
+    cargo publish -p is-it-slop --dry-run
 
 # Quick install from source (Rust binary only)
 install-cli:
@@ -522,7 +523,7 @@ cargo-machete:
 [group('ci')]
 [group('lint')]
 cargo-docs:
-    cargo doc --all-features --no-deps
+    cargo doc --all-targets --workspace --features all-testable --no-deps
 
 # Cargo audit
 [group('ci')]
@@ -544,5 +545,5 @@ maturin-check: build-pre-processing-bindings build-bindings
 [group('lint')]
 [group('precommit')]
 rust-lint-fix:
-    cargo clippy --workspace --all-targets --fix --allow-staged --allow-dirty --quiet -- -D warnings
+    cargo clippy --workspace --features all-testable --all-targets --fix --allow-staged --allow-dirty --quiet -- -D warnings
     cargo clippy --workspace --all-targets --no-default-features --fix --allow-staged --allow-dirty --quiet -- -D warnings

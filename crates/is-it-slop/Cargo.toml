@@ -44,14 +44,17 @@ cli = ["dep:clap", "dep:serde_json", "mimalloc"]
 python = ["dep:pyo3", "dep:pyo3-log", "mimalloc"]
 mimalloc = ["dep:mimalloc"]
 
+
+all-testable = ["cli"] # add other features here, but NOT python
+
 [build-dependencies]
 ureq = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
-
+directories = { workspace = true }
 [lints]
 workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["ureq", "flate2", "tar", "tempfile"]
+ignored = ["ureq", "flate2", "tar", "tempfile", "directories"]

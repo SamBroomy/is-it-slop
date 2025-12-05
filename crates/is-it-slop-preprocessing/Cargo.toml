@@ -49,6 +49,7 @@ bincode = ["dep:bincode"]
 progress-bars = ["dep:indicatif"]
 mimalloc = ["dep:mimalloc"]
 
+all-testable = ["serde", "bincode"]
 
 [lints]
 workspace = true

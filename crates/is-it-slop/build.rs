@@ -31,6 +31,14 @@ fn default_artifact_url(version: &str) -> String {
         version
     )
 }
+
+/// Get the user cache directory for model artifacts
+/// Returns ~/.cache/is-it-slop/models/ on Linux, ~/Library/Caches/is-it-slop/models/ on macOS, etc.
+fn get_cache_dir() -> Option<PathBuf> {
+    // Try directories crate location
+    directories::ProjectDirs::from("", "", "is-it-slop").map(|dirs| dirs.cache_dir().join("models"))
+}
+
 /// Check if all required artifacts exist in a directory
 fn artifacts_exist(dir: &Path) -> bool {
     REQUIRED_ARTIFACTS.iter().all(|f| dir.join(f).exists())
@@ -49,7 +57,7 @@ fn copy_artifacts(src_dir: &Path, dest_dir: &Path) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Download artifacts directly to target directory
+/// Download artifacts to target directory
 fn download_artifacts(
     target_dir: &Path,
     model_version: &str,
@@ -77,7 +85,7 @@ fn download_artifacts(
     fs::create_dir_all(target_dir)?;
 
     // Try with version subdir first, then flat
-    let extracted_version_dir = temp_dir.path().join(MODEL_VERSION);
+    let extracted_version_dir = temp_dir.path().join(model_version);
     let src = if extracted_version_dir.exists() {
         extracted_version_dir
     } else {
@@ -98,61 +106,67 @@ fn download_artifacts(
     Ok(())
 }
 
-/// Create dummy/placeholder artifact files for publish verification.
-/// These files allow `include_bytes!` to succeed during `cargo publish --dry-run`
-/// but are NOT included in the published crate (excluded via Cargo.toml).
-/// Real users will download actual artifacts when building from crates.io.
-fn create_dummy_artifacts(target_dir: &Path) {
-    fs::create_dir_all(target_dir).expect("Failed to create artifacts directory");
-
-    println!("cargo:warning=Creating dummy artifacts for publish verification...");
-
-    for filename in REQUIRED_ARTIFACTS {
-        let file_path = target_dir.join(filename);
-        let dummy_content: &[u8] = match *filename {
-            "classification_threshold.txt" => b"0.5",
-            _ => b"DUMMY_FOR_PUBLISH_VERIFY",
-        };
-        fs::write(&file_path, dummy_content)
-            .unwrap_or_else(|e| panic!("Failed to create dummy {filename}: {e}"));
-    }
-
-    println!("cargo:warning=Dummy artifacts created - DO NOT use this build for actual inference!");
-}
-
 /// Ensure artifacts exist in `OUT_DIR`.
 /// Priority:
-/// 1. Already in `OUT_DIR` → skip
+/// 1. Already in `OUT_DIR` → use as-is
 /// 2. Copy from local source/override dir → copy to `OUT_DIR`
-/// 3. Download from GitHub → directly to `OUT_DIR`
-/// 4. Create dummies → in `OUT_DIR` (publish verification only)
+/// 3. Copy from user cache dir → copy to `OUT_DIR`
+/// 4. Download from GitHub → save to cache AND `OUT_DIR`
 fn ensure_artifacts_in_out_dir(
     out_artifacts_dir: &Path,
     source_artifacts_dir: &Path,
     model_version: &str,
-    skip_download: bool,
 ) {
-    // 1. Already exist in OUT_DIR?
+    // 1. Already exist in OUT_DIR? Done.
     if artifacts_exist(out_artifacts_dir) {
         return;
     }
 
-    // 2. Exist in source/local dir? Copy to OUT_DIR
-    let source_version_dir = source_artifacts_dir.join(MODEL_VERSION);
+    // 2. Exist in source/local dir (dev environment)? Copy to OUT_DIR
+    let source_version_dir = source_artifacts_dir.join(model_version);
     if artifacts_exist(&source_version_dir) {
         copy_artifacts(&source_version_dir, out_artifacts_dir)
-            .expect("Failed to copy artifacts to OUT_DIR");
+            .expect("Failed to copy artifacts from source to OUT_DIR");
         return;
     }
 
-    // 3. Skip download mode? Create dummies
-    if skip_download {
-        create_dummy_artifacts(out_artifacts_dir);
-        return;
+    // 3. Exist in user cache? Copy to OUT_DIR
+    if let Some(cache_dir) = get_cache_dir() {
+        let cache_version_dir = cache_dir.join(model_version);
+        if artifacts_exist(&cache_version_dir) {
+            println!(
+                "cargo:warning=Using cached model artifacts from {}",
+                cache_version_dir.display()
+            );
+            copy_artifacts(&cache_version_dir, out_artifacts_dir)
+                .expect("Failed to copy artifacts from cache to OUT_DIR");
+            return;
+        }
     }
 
-    // 4. Download directly to OUT_DIR (warn - this is notable for users)
+    // 4. Download from GitHub
     println!("cargo:warning=Model artifacts not found locally, downloading...");
+
+    // First, try to download to cache (so future builds don't re-download)
+    if let Some(cache_dir) = get_cache_dir() {
+        let cache_version_dir = cache_dir.join(model_version);
+        if let Err(e) = download_artifacts(&cache_version_dir, model_version) {
+            println!("cargo:warning=Failed to download to cache: {e}");
+            println!("cargo:warning=Falling back to direct download to OUT_DIR...");
+            // Fall through to direct download below
+        } else {
+            // Successfully downloaded to cache, now copy to OUT_DIR
+            copy_artifacts(&cache_version_dir, out_artifacts_dir)
+                .expect("Failed to copy artifacts from cache to OUT_DIR");
+            println!(
+                "cargo:warning=Model artifacts cached at {}",
+                cache_version_dir.display()
+            );
+            return;
+        }
+    }
+
+    // Fallback: download directly to OUT_DIR (no caching)
     if let Err(e) = download_artifacts(out_artifacts_dir, model_version) {
         let default_url = default_artifact_url(model_version);
         eprintln!("cargo:warning=Failed to download model artifacts: {e}");
@@ -170,7 +184,7 @@ fn main() {
     let model_version = env::var("MODEL_VERSION").unwrap_or_else(|_| MODEL_VERSION.to_string());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
-    let out_artifacts_dir = out_dir.join("model_artifacts").join(MODEL_VERSION);
+    let out_artifacts_dir = out_dir.join("model_artifacts").join(&model_version);
 
     // Source artifacts directory (local dev or env override)
     let source_artifacts_dir = env::var("MODEL_ARTIFACTS_DIR").map_or_else(
@@ -178,17 +192,10 @@ fn main() {
         PathBuf::from,
     );
 
-    let skip_download = env::var("SKIP_MODEL_DOWNLOAD").is_ok();
-
     // Ensure artifacts exist in OUT_DIR
-    ensure_artifacts_in_out_dir(
-        &out_artifacts_dir,
-        &source_artifacts_dir,
-        &model_version,
-        skip_download,
-    );
+    ensure_artifacts_in_out_dir(&out_artifacts_dir, &source_artifacts_dir, &model_version);
 
-    // Expose env vars
+    // Expose env vars for include_bytes! macros
     println!("cargo:rustc-env=MODEL_VERSION={model_version}");
     println!(
         "cargo:rustc-env=MODEL_ARTIFACTS_DIR={}",
@@ -223,12 +230,12 @@ pub const CLASSIFICATION_THRESHOLD: f32 = {val};\n"
     fs::write(out_dir.join("threshold.rs"), threshold_rs).expect("Failed to write threshold.rs");
 
     // Only rerun if source artifacts change or env vars change
-    let source_version_dir = source_artifacts_dir.join(MODEL_VERSION);
+    let source_version_dir = source_artifacts_dir.join(&model_version);
     for filename in REQUIRED_ARTIFACTS {
         let source_file = source_version_dir.join(filename);
         println!("cargo:rerun-if-changed={}", source_file.display());
     }
     println!("cargo:rerun-if-env-changed=MODEL_ARTIFACTS_DIR");
     println!("cargo:rerun-if-env-changed=MODEL_ARTIFACT_URL");
-    println!("cargo:rerun-if-env-changed=SKIP_MODEL_DOWNLOAD");
+    println!("cargo:rerun-if-env-changed=MODEL_VERSION");
 }

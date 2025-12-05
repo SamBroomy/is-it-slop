@@ -19,8 +19,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Clippy
-        env:
-          SKIP_MODEL_DOWNLOAD: "1"
-        run: cargo clippy --all-targets --workspace -- -D warnings
+        run: cargo clippy --all-targets --workspace --features all-testable -- -D warnings
       - name: Run tests
-        run: cargo test --all-targets --workspace
+        run: cargo test --all-targets --workspace --features all-testable
