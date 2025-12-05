@@ -1,0 +1,6 @@
+[workspace]
+dependencies_update = true
+semver_check = true
+
+[changelog]
+protect_breaking_commits = true

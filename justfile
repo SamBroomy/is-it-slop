@@ -38,7 +38,7 @@ model-pipeline: && build-pre-processing-bindings dataset-curation training-pipel
     uv sync -U --dev --all-extras --all-groups
 
 build-pre-processing-bindings:
-    uv run --directory python/is-it-slop-preprocessing maturin develop --release
+    uv run --directory python/is-it-slop-preprocessing maturin develop --release --uv
 
 dataset-curation:
     uv run jupyter nbconvert --to script notebooks/dataset_curation.ipynb
@@ -49,7 +49,7 @@ training-pipeline:
     uv run python notebooks/train.py --force-retrain-vectorizer
 
 build-bindings:
-    uv run --directory python/is-it-slop maturin develop --release
+    uv run --directory python/is-it-slop maturin develop --release --uv
 
 build-cli-release:
     cargo build --release --features cli --bin is-it-slop
@@ -94,171 +94,11 @@ cli-help:
     cargo run --features cli --bin is-it-slop -- --help
 
 # =============================================================================
-# Publishing & Release
+# Model Artifacts Management
 # =============================================================================
 
-# Full release: model artifacts → crates.io → git tag → triggers PyPI via CI
-publish: pre-publish-check release-model _publish-rust-crates _create-and-push-tag
-    @echo ""
-    @echo "✅ Release complete!"
-    @echo ""
-    @echo "🐍 Python wheels are being built and published by CI."
-    @echo "   Watch progress at: https://github.com/SamBroomy/is-it-slop/actions"
-
-# Internal: publish Rust crates to crates.io
-_publish-rust-crates:
-    #!/usr/bin/env bash
-    set -e
-    echo ""
-    echo "📦 Publishing is-it-slop-preprocessing to crates.io..."
-    cargo publish -p is-it-slop-preprocessing
-
-    echo ""
-    echo "⏳ Waiting 15s for crates.io to index..."
-    sleep 15
-
-    echo ""
-    echo "📦 Publishing is-it-slop to crates.io..."
-    cargo publish -p is-it-slop
-
-# Internal: create and push git tag
-_create-and-push-tag:
-    #!/usr/bin/env bash
-    set -e
-    CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
-    TAG="v${CRATE_VERSION}"
-
-    echo ""
-    echo "🏷️  Creating git tag ${TAG}..."
-
-    # Delete existing tag if it exists (allows re-running after CI fix)
-    if git rev-parse "${TAG}" >/dev/null 2>&1; then
-        echo "⚠️  Tag ${TAG} already exists locally, deleting..."
-        git tag -d "${TAG}"
-    fi
-    if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
-        echo "⚠️  Tag ${TAG} already exists on remote, deleting..."
-        git push origin --delete "${TAG}" || true
-    fi
-
-    git tag -a "${TAG}" -m "Release ${TAG}"
-
-    echo "📤 Pushing to origin..."
-    git push origin HEAD
-    git push origin "${TAG}"
-
-    echo ""
-    echo "✅ Tag ${TAG} pushed - CI will build and publish Python wheels"
-
-# Run all pre-publish checks
-pre-publish-check:
-    #!/usr/bin/env bash
-    set -e
-    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-    cd "${REPO_ROOT}"
-
-    MODEL_VERSION=$(grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1 | cut -d'"' -f2)
-    CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
-    TAG="v${CRATE_VERSION}"
-
-    echo "=== Pre-publish checks ==="
-    echo ""
-    echo "  Crate version:  ${CRATE_VERSION}"
-    echo "  Model version:  ${MODEL_VERSION}"
-    echo "  Git tag:        ${TAG}"
-    echo ""
-
-    # Check for uncommitted changes
-    if ! git diff-index --quiet HEAD --; then
-        echo "❌ You have uncommitted changes!"
-        echo "   Please commit or stash them before publishing."
-        exit 1
-    fi
-
-    echo "📋 Running Rust tests..."
-
-    cargo test --all-targets --workspace --features all-testable
-
-    echo ""
-    echo "🔍 Running Rust clippy..."
-    cargo clippy --all-targets --workspace --features all-testable -- -D warnings
-
-    echo ""
-    echo "🎨 Checking Rust formatting..."
-    cargo fmt --check
-
-    echo ""
-    echo "📦 Building release..."
-    cargo build --release --all-targets --workspace --features all-testable
-
-    just build-python-wheels
-
-    echo ""
-    echo "✅ All pre-publish checks passed!"
-    echo ""
-    echo "⚠️  This will:"
-    echo "    1. Release model artifacts to GitHub (if new)"
-    echo "    2. Publish Rust crates to crates.io"
-    echo "    3. Create/update git tag ${TAG}"
-    echo "    4. Trigger CI to build and publish Python wheels to PyPI"
-    echo ""
-    echo "Press Enter to continue or Ctrl+C to abort..."
-    read confirmation
-
-# Dry run: test everything without publishing
-publish-dry-run: pre-publish-check
-    @echo "=== Dry-run publishing ==="
-    @echo ""
-    @echo "📦 Testing is-it-slop-preprocessing..."
-    cargo publish -p is-it-slop-preprocessing --dry-run
-    @echo ""
-    @echo "📦 Testing is-it-slop..."
-    cargo publish -p is-it-slop --dry-run
-    @echo ""
-    @echo "✅ Dry run complete - everything looks good!"
-    @echo ""
-    @echo "Run 'just publish' to publish for real."
-
-# Trigger CI to rebuild Python wheels (useful after CI fixes)
-retrigger-release:
-    #!/usr/bin/env bash
-    set -e
-    CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
-    TAG="v${CRATE_VERSION}"
-
-    echo "=== Re-triggering release for ${TAG} ==="
-    echo ""
-    echo "This will delete and recreate the tag to trigger CI."
-    echo "Use this after fixing CI issues."
-    echo ""
-    echo "Press Enter to continue or Ctrl+C to abort..."
-    read confirmation
-
-    # Delete and recreate tag
-    if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
-        echo "Deleting remote tag ${TAG}..."
-        git push origin --delete "${TAG}"
-    fi
-    if git rev-parse "${TAG}" >/dev/null 2>&1; then
-        echo "Deleting local tag ${TAG}..."
-        git tag -d "${TAG}"
-    fi
-
-    echo "Creating new tag ${TAG}..."
-    git tag -a "${TAG}" -m "Release ${TAG}"
-    git push origin "${TAG}"
-
-    echo ""
-    echo "✅ Tag ${TAG} recreated - CI will rebuild Python wheels"
-    echo "   Watch: https://github.com/SamBroomy/is-it-slop/actions"
-
-# Build all Python wheels
-build-python-wheels:
-    @echo "Building is-it-slop-preprocessing wheel..."
-    uv run --directory python/is-it-slop-preprocessing maturin build --release
-    @echo "Building is-it-slop wheel..."
-    uv run --directory python/is-it-slop maturin build --release
-
+# Package model artifacts into a tarball
+[group('release')]
 package-artifacts:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -333,12 +173,9 @@ package-artifacts:
     printf "  %-25s %9s%%\n" "Space saved:" "$RATIO"
     printf "  %-25s %9sx\n" "Compression ratio:" "$COMPRESSION_FACTOR"
     echo "----------------------------------------"
-    echo ""
-    echo "Next steps:"
-    echo "  1. Create GitHub release:  gh release create model-v${MODEL_VERSION} --title 'Model v${MODEL_VERSION}' --notes 'Model artifacts for is-it-slop'"
-    echo "  2. Upload tarball:         gh release upload model-v${MODEL_VERSION} ${TAR_PATH}"
 
 # Check if MODEL_VERSION bump is needed (warns if model files changed but version didn't)
+[group('release')]
 check-model-version:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -353,7 +190,6 @@ check-model-version:
     if gh release view "model-v${MODEL_VERSION}" &>/dev/null; then
         echo "⚠️  Release model-v${MODEL_VERSION} already exists on GitHub!"
         echo ""
-        sleep 10
 
         # Download the existing release to compare
         TEMP_DIR=$(mktemp -d)
@@ -414,6 +250,7 @@ check-model-version:
     fi
 
 # Create GitHub release with model artifacts (with safety check)
+[group('release')]
 create-model-release: check-model-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -445,6 +282,8 @@ create-model-release: check-model-version
         echo "✅ Model release model-v${MODEL_VERSION} created"
     fi
 
+# Test downloading model artifacts from GitHub
+[group('release')]
 test-artifact-download:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -482,35 +321,56 @@ test-artifact-download:
     echo ""
     echo "✅ Download test passed! Build succeeded."
 
-# Full model release workflow
+# Full model release workflow (run when model artifacts change)
+[group('release')]
 release-model: package-artifacts create-model-release test-artifact-download
     @echo ""
     @echo "✅ Model release complete!"
     @echo ""
-    @echo "You can now publish the crate:"
-    @echo "  just publish-rust-dry-run"
-    @echo "  just publish-rust"
+    @echo "Model artifacts are now available on GitHub."
+    @echo "Rust/Python releases are handled automatically by CI:"
+    @echo "  - Rust: release-plz creates releases on merge to main"
+    @echo "  - Python: wheels built when release-plz pushes a tag"
 
-# Publish Rust crates to crates.io (dry-run)
-publish-rust-dry-run:
-    @echo "=== Dry-run publishing Rust crates ==="
-    @echo "\n📦 Publishing is-it-slop-preprocessing..."
-    cargo publish -p is-it-slop-preprocessing --dry-run
-    @echo "\n📦 Publishing is-it-slop (library + binary)..."
-    cargo publish -p is-it-slop --dry-run
+# =============================================================================
+# Local Development & Testing
+# =============================================================================
 
-# Quick install from source (Rust binary only)
+# Build all Python wheels locally (for testing)
+[group('dev')]
+build-python-wheels:
+    @echo "Building is-it-slop-preprocessing wheel..."
+    uv run --directory python/is-it-slop-preprocessing maturin build --release
+    @echo "Building is-it-slop wheel..."
+    uv run --directory python/is-it-slop maturin build --release
+
+# Quick install CLI from source
+[group('dev')]
 install-cli:
     cargo install --path crates/is-it-slop --features cli --force
 
 # Show current version across all packages
+[group('dev')]
 show-versions:
     @echo "=== Package Versions ==="
     @echo "\nRust workspace:"
     @grep "^version" Cargo.toml | head -1
+    @echo "\nModel version:"
+    @grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1
     @echo "\nPython packages:"
     @echo "  is-it-slop-preprocessing:" && grep "^version" python/is-it-slop-preprocessing/pyproject.toml
     @echo "  is-it-slop:" && grep "^version" python/is-it-slop/pyproject.toml
+
+# Run all checks locally (mirrors CI)
+[group('dev')]
+check: rust-lint-fix
+    cargo fmt --all --check
+    cargo clippy --all-targets --workspace --features all-testable -- -D warnings
+    cargo test --all-targets --workspace --features all-testable
+
+# =============================================================================
+# CI & Linting
+# =============================================================================
 
 # Remove unused dependencies
 [group('ci')]
