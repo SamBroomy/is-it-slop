@@ -1,5 +1,9 @@
 *
 !*/
+# Ensures the .git directory is included when release-plz copies the project in a temp dir
+!.git/
+!.git/**
+
 /target
 
 !.gitignore
