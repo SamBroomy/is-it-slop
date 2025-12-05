@@ -24,4 +24,5 @@
 !/python/**/README.md
 !/crates/is-it-slop/model_artifacts/.gitkeep
 !.pre-commit-config.yaml
-!/.github/workflows/**.yaml
+!/.github/workflows/**/*.yml
+!/.github/workflows/**/*.yaml
