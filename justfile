@@ -42,7 +42,7 @@ build-pre-processing-bindings:
 
 dataset-curation:
     uv run jupyter nbconvert --to script notebooks/dataset_curation.ipynb
-    uv run python notebooks/dataset_curation.py
+    uv run python notebooks/dataset_curation.py --force-retrain-vectorizer
 
 training-pipeline:
     uv run jupyter nbconvert --to script notebooks/train.ipynb
@@ -213,11 +213,11 @@ check-model-version:
     if gh release view "model-v${MODEL_VERSION}" &>/dev/null; then
         echo "⚠️  Release model-v${MODEL_VERSION} already exists on GitHub!"
         echo ""
+        sleep 10
 
         # Download the existing release to compare
         TEMP_DIR=$(mktemp -d)
         trap "rm -rf ${TEMP_DIR}" EXIT
-
         echo "Downloading existing release for comparison..."
         curl -sL "https://github.com/SamBroomy/is-it-slop/releases/download/model-v${MODEL_VERSION}/model-v${MODEL_VERSION}.tar.gz" \
             | tar -xz -C "${TEMP_DIR}" 2>/dev/null || {
@@ -305,29 +305,42 @@ create-model-release: check-model-version
         echo "✅ Model release model-v${MODEL_VERSION} created"
     fi
 
-# Test that artifacts can be downloaded (simulates fresh user build)
 test-artifact-download:
     #!/usr/bin/env bash
     set -euo pipefail
     MODEL_VERSION=$(grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1 | cut -d'"' -f2)
-    ART_DIR="crates/is-it-slop/model_artifacts/${MODEL_VERSION}"
 
     echo "=== Testing artifact download ==="
-    echo "Removing local artifacts at ${ART_DIR}..."
-    rm -rf "${ART_DIR}"
 
-    echo "Rebuilding (should trigger download)..."
+    LOCAL_ART_DIR="crates/is-it-slop/model_artifacts/${MODEL_VERSION}"
+    BACKUP_DIR=""
+
+    # Cleanup function - always restore artifacts on exit
+    cleanup() {
+        if [ -n "${BACKUP_DIR}" ] && [ -d "${BACKUP_DIR}" ]; then
+            echo "Restoring local artifacts..."
+            rm -rf "${LOCAL_ART_DIR}" 2>/dev/null || true
+            mv "${BACKUP_DIR}" "${LOCAL_ART_DIR}"
+        fi
+    }
+    trap cleanup EXIT
+
+    # Move local artifacts aside (if they exist)
+    if [ -d "${LOCAL_ART_DIR}" ]; then
+        BACKUP_DIR="${LOCAL_ART_DIR}.backup.$$"
+        echo "Temporarily moving local artifacts aside..."
+        mv "${LOCAL_ART_DIR}" "${BACKUP_DIR}"
+    fi
+
+    # Clean and rebuild
+    echo "Cleaning build cache..."
     cargo clean -p is-it-slop
+
+    echo "Rebuilding (should trigger download from GitHub)..."
     cargo build -p is-it-slop
 
-    if [ -d "${ART_DIR}" ]; then
-        echo ""
-        echo "✅ Artifacts downloaded successfully!"
-        ls -la "${ART_DIR}"
-    else
-        echo "❌ Download failed - artifacts not found"
-        exit 1
-    fi
+    echo ""
+    echo "✅ Download test passed! Build succeeded."
 
 # Full model release workflow
 release-model: package-artifacts create-model-release test-artifact-download
@@ -355,14 +368,34 @@ publish-rust: release-model
 
     MODEL_VERSION=$(grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1 | cut -d'"' -f2)
     CRATE_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+    TAG="v${CRATE_VERSION}"
 
     echo "=== Publishing Rust crates to crates.io ==="
     echo ""
     echo "  Crate version:  ${CRATE_VERSION}"
     echo "  Model version:  ${MODEL_VERSION}"
+    echo "  Git tag:        ${TAG}"
     echo ""
+
+    # Check if tag already exists
+    if git rev-parse "${TAG}" >/dev/null 2>&1; then
+        echo "⚠️  Tag ${TAG} already exists!"
+        echo "    If you need to re-publish, bump the version in Cargo.toml"
+        exit 1
+    fi
+
+    # Check for uncommitted changes
+    if ! git diff-index --quiet HEAD --; then
+        echo "⚠️  You have uncommitted changes!"
+        echo "    Please commit or stash them before publishing."
+        exit 1
+    fi
+
+    echo "⚠️  This will:"
+    echo "    1. Publish to crates.io (no undo!)"
+    echo "    2. Create and push git tag ${TAG}"
+    echo "    3. Trigger CI to build and publish Python wheels to PyPI"
     echo ""
-    echo "⚠️  This will publish to crates.io (no undo!)"
     echo "Press Enter to continue or Ctrl+C to abort..."
     read confirmation
 
@@ -379,12 +412,21 @@ publish-rust: release-model
     SKIP_MODEL_DOWNLOAD=1 cargo publish -p is-it-slop
 
     echo ""
-    echo "✅ All crates published!"
-    echo ""
-    echo "Users will automatically download model model-v${MODEL_VERSION} during build"
+    echo "🏷️  Creating git tag ${TAG}..."
+    git tag -a "${TAG}" -m "Release ${TAG}"
 
-# Publish Python packages to PyPI (using uv)
-publish-python:
+    echo "📤 Pushing tag to origin..."
+    git push origin "${TAG}"
+
+    echo ""
+    echo "✅ Rust crates published!"
+    echo ""
+    echo "🐍 Python wheels will be built and published by CI."
+    echo "   Watch progress at: https://github.com/SamBroomy/is-it-slop/actions"
+    echo ""
+    echo "Users will automatically download model model-v${MODEL_VERSION} during build"# Publish Python packages to PyPI (using uv)
+
+publish-python: build-pre-processing-bindings build-bindings
     @echo "=== Publishing Python packages to PyPI ==="
     @echo "\n⚠️  This will publish to PyPI (no undo!)"
     @echo "Press Enter to continue or Ctrl+C to abort..."

@@ -23,6 +23,20 @@ AI probability: 15.23%
 
 """
 
-from ._internal import CLASSIFICATION_THRESHOLD, Prediction, __version__, is_this_slop, is_this_slop_batch
+from ._internal import (
+    CLASSIFICATION_THRESHOLD,
+    MODEL_VERSION,
+    Prediction,
+    __version__,
+    is_this_slop,
+    is_this_slop_batch,
+)
 
-__all__ = ["CLASSIFICATION_THRESHOLD", "Prediction", "__version__", "is_this_slop", "is_this_slop_batch"]
+__all__ = [
+    "CLASSIFICATION_THRESHOLD",
+    "MODEL_VERSION",
+    "Prediction",
+    "__version__",
+    "is_this_slop",
+    "is_this_slop_batch",
+]
