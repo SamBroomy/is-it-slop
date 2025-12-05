@@ -1315,12 +1315,12 @@ wheels = [
 
 [[package]]
 name = "is-it-slop"
-version = "0.3.1"
+version = "0.3.2"
 source = { editable = "python/is-it-slop" }
 
 [[package]]
 name = "is-it-slop-package"
-version = "0.3.1"
+version = "0.3.2"
 source = { virtual = "." }
 dependencies = [
     { name = "datasets" },
@@ -1383,7 +1383,7 @@ dev = [
 
 [[package]]
 name = "is-it-slop-preprocessing"
-version = "0.3.1"
+version = "0.3.2"
 source = { editable = "python/is-it-slop-preprocessing" }
 dependencies = [
     { name = "numpy" },

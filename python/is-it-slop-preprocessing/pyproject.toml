@@ -1,6 +1,6 @@
 [project]
 name = "is-it-slop-preprocessing"
-version = "0.3.1"
+version = "0.3.2"
 description = "Fast TF-IDF vectorization with Rust-backed preprocessing"
 readme = "README.md"
 authors = [
