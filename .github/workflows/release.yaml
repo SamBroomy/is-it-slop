@@ -30,11 +30,11 @@ jobs:
       - name: Clippy
         env:
           SKIP_MODEL_DOWNLOAD: "1"
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy --all-targets --workspace -- -D warnings
       - name: Run tests
         env:
           SKIP_MODEL_DOWNLOAD: "1"
-        run: cargo test --all-features
+        run: cargo test --all-targets --workspace
 
   # =============================================================================
   # Python Wheel Builds (only on tags or workflow_dispatch)
