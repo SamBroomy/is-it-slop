@@ -28,12 +28,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Clippy
-        env:
-          SKIP_MODEL_DOWNLOAD: "1"
         run: cargo clippy --all-targets --workspace -- -D warnings
       - name: Run tests
-        env:
-          SKIP_MODEL_DOWNLOAD: "1"
         run: cargo test --all-targets --workspace
 
   # =============================================================================
