@@ -47,6 +47,6 @@ jobs:
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:
-          command: release-pr
+          command: release-pr -vv
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
