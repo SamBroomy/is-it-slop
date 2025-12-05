@@ -11,7 +11,7 @@ Key Features
 
 Quick Start
 -----------
->>> from slop_pre_processing import TfidfVectorizer, VectorizerParams
+>>> from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
 >>> params = VectorizerParams(ngram_range=(3, 5), min_df=10, max_df=0.8)
 >>> vectorizer, X_train = TfidfVectorizer.fit_transform(train_texts, params)
 >>> X_test = vectorizer.transform(test_texts)

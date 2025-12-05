@@ -1,5 +1,5 @@
 [project]
-name = "slop-pre-processing"
+name = "is-it-slop-preprocessing"
 version = "0.3.1"
 description = "Fast TF-IDF vectorization with Rust-backed preprocessing"
 readme = "README.md"
@@ -18,4 +18,4 @@ bindings = "pyo3"
 features = ["python"]
 python-source = "src"
 manifest-path = "../../crates/is-it-slop-preprocessing/Cargo.toml"
-module-name = "slop_pre_processing._slop_pre_processing_rust_bindings"
+module-name = "is_it_slop_preprocessing._is_it_slop_preprocessing_rust_bindings"

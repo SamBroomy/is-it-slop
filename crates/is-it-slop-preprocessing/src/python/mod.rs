@@ -259,8 +259,8 @@ impl RustTfidfVectorizer {
 }
 
 #[pymodule]
-#[pyo3(name = "_slop_pre_processing_rust_bindings")]
-fn slop_pre_processing(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_is_it_slop_preprocessing_rust_bindings")]
+fn is_it_slop_preprocessing(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize Python logging for Rust components
     pyo3_log::init();
 

@@ -1,4 +1,4 @@
-"""Internal interface and types for the `slop_pre_processing` package.
+"""Internal interface and types for the `is_it_slop_preprocessing` package.
 
 This module provides the main interface to the Rust bindings for text vectorization
 using TF-IDF.
@@ -15,7 +15,7 @@ from scipy.sparse import csr_matrix
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from ._slop_pre_processing_rust_bindings import RustTfidfVectorizer, RustVectorizerParams, __version__
+from ._is_it_slop_preprocessing_rust_bindings import RustTfidfVectorizer, RustVectorizerParams, __version__
 
 __all__ = ["TfidfVectorizer", "VectorizerParams", "__version__"]
 
@@ -84,7 +84,7 @@ class TfidfVectorizer:
 
     Examples
     --------
-    >>> from slop_pre_processing import TfidfVectorizer, VectorizerParams
+    >>> from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
     >>> params = VectorizerParams(ngram_range=(3, 5), min_df=10)
     >>> vectorizer = TfidfVectorizer.fit(train_texts, params)
     >>> X_test = vectorizer.transform(test_texts)

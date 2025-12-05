@@ -1,4 +1,4 @@
-# slop-pre-processing
+# is-it-slop-preprocessing
 
 Fast TF-IDF text vectorization for training AI text detection models.
 
@@ -15,13 +15,13 @@ The python bindings allow us to use the same Rust-based text preprocessing at tr
 ## Installation
 
 ```bash
-pip install slop-pre-processing
+pip install is-it-slop-preprocessing
 ```
 
 ## Quick Start
 
 ```python
-from slop_pre_processing import TfidfVectorizer, VectorizerParams
+from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
 
 # Configure vectorizer
 params = VectorizerParams(

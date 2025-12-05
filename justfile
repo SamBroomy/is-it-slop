@@ -38,7 +38,7 @@ model-pipeline: && build-pre-processing-bindings dataset-curation training-pipel
     uv sync -U --dev --all-extras --all-groups
 
 build-pre-processing-bindings:
-    uv run --directory python/slop-pre-processing maturin develop --release
+    uv run --directory python/is-it-slop-preprocessing maturin develop --release
 
 dataset-curation:
     uv run jupyter nbconvert --to script notebooks/dataset_curation.ipynb
@@ -254,8 +254,8 @@ retrigger-release:
 
 # Build all Python wheels
 build-python-wheels:
-    @echo "Building slop-pre-processing wheel..."
-    uv run --directory python/slop-pre-processing maturin build --release
+    @echo "Building is-it-slop-preprocessing wheel..."
+    uv run --directory python/is-it-slop-preprocessing maturin build --release
     @echo "Building is-it-slop wheel..."
     uv run --directory python/is-it-slop maturin build --release
 
@@ -509,7 +509,7 @@ show-versions:
     @echo "\nRust workspace:"
     @grep "^version" Cargo.toml | head -1
     @echo "\nPython packages:"
-    @echo "  slop-pre-processing:" && grep "^version" python/slop-pre-processing/pyproject.toml
+    @echo "  is-it-slop-preprocessing:" && grep "^version" python/is-it-slop-preprocessing/pyproject.toml
     @echo "  is-it-slop:" && grep "^version" python/is-it-slop/pyproject.toml
 
 # Remove unused dependencies
