@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_PROFILE_TEST_DEBUG: 0
+  # Disable incremental compilation for faster from-scratch builds
+  CARGO_INCREMENTAL: 0
+
 jobs:
   rust-check:
     runs-on: ubuntu-latest
@@ -23,6 +28,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --all-targets --workspace --features all-testable -- -D warnings
+        run: cargo clippy --all-targets --workspace --features all-testable --locked -- -D warnings
       - name: Run tests
-        run: cargo test --all-targets --workspace --features all-testable
+        run: cargo test --all-targets --workspace --features all-testable --locked
