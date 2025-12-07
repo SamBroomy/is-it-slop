@@ -69,7 +69,7 @@ jobs:
           manylinux: ${{ matrix.platform.manylinux }}
           working-directory: ${{ matrix.python-crate.path }}
           before-script-linux: |
-            # Install OpenSSL development libraries
+            # Install dependencies based on package manager
             if command -v apt-get &> /dev/null; then
               apt-get update
               apt-get install -y libssl-dev pkg-config
@@ -78,8 +78,17 @@ jobs:
             elif command -v yum &> /dev/null; then
               yum install -y openssl-devel pkgconfig
             elif command -v apk &> /dev/null; then
+              # Alpine Linux - install from edge/community for onnxruntime
               apk add openssl-dev pkgconfig
+              # Add edge community repo and install onnxruntime
+              echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
+              apk update
+              apk add onnxruntime-dev
+              # Set ORT_LIB_LOCATION for ort-sys to find the library
+              export ORT_LIB_LOCATION=/usr
             fi
+        env:
+          ORT_LIB_LOCATION: ${{ contains(matrix.platform.target, 'musl') && '/usr' || '' }}
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
