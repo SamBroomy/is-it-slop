@@ -45,7 +45,7 @@ flate2 = "1.1.5"
 tar = "0.4.44"
 tempfile = "3.23.0"
 directories = "6"
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.3.4" }
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.3" }
 
 
 [workspace.lints.clippy]

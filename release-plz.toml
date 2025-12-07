@@ -8,6 +8,7 @@ git_release_enable = true
 allow_dirty = false
 changelog_update = true
 
+
 [[package]]
 name = "is-it-slop"
 version_group = "main"
