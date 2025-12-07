@@ -11,15 +11,15 @@ changelog_update = true
 [[package]]
 name = "is-it-slop-preprocessing"
 version_group = "main"
-release = false
+release = true
 git_release_enable = false
 git_tag_enable = false
 
 [[package]]
 name = "is-it-slop"
 version_group = "main"
-git_release_enable = true
 release = true
+git_release_enable = true
 
 
 [changelog]
