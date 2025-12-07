@@ -1,16 +1,24 @@
 [workspace]
+# Use a single tag without package name prefix
+git_tag_name = "v{{ version }}"
 dependencies_update = true
-# semver_check = true
+semver_check = true
 git_release_enable = true
+# All packages share the same version
+allow_dirty = false
+changelog_update = true
+
+[[package]]
+name = "is-it-slop"
+version_group = "main"
+release = true
 
 
 [[package]]
 name = "is-it-slop-preprocessing"
-version_group = "is-it-slop"
+version_group = "main"
+release = false
 
-[[package]]
-name = "is-it-slop"
-version_group = "is-it-slop"
 
 [changelog]
 protect_breaking_commits = true
