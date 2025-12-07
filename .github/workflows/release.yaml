@@ -32,12 +32,14 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             manylinux: musllinux_1_2
+            ort_lib_location: /usr
           - runner: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             manylinux: manylinux_2_28
           - runner: ubuntu-22.04
             target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
+            ort_lib_location: /usr
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             manylinux: null
@@ -70,6 +72,7 @@ jobs:
           working-directory: ${{ matrix.python-crate.path }}
           before-script-linux: |
             # Install dependencies based on package manager
+            # Install dependencies based on package manager
             if command -v apt-get &> /dev/null; then
               apt-get update
               apt-get install -y libssl-dev pkg-config
@@ -83,12 +86,10 @@ jobs:
               # Add edge community repo and install onnxruntime
               echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
               apk update
-              apk add onnxruntime-dev
-              # Set ORT_LIB_LOCATION for ort-sys to find the library
-              export ORT_LIB_LOCATION=/usr
+              apk add onnxruntime-dev || true
             fi
         env:
-          ORT_LIB_LOCATION: ${{ contains(matrix.platform.target, 'musl') && '/usr' || '' }}
+          ORT_LIB_LOCATION: ${{ matrix.platform.ort_lib_location }}
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -118,6 +119,7 @@ jobs:
         with:
           name: sdist-${{ matrix.python-crate.name }}
           path: ${{ matrix.python-crate.path }}/dist
+
   # =============================================================================
   # Publish to PyPI (only on tags, not dry run)
   # =============================================================================
