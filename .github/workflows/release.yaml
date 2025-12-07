@@ -85,8 +85,6 @@ jobs:
             #   # musllinux (Alpine)
             #   apk add openssl-dev pkgconfig
             fi
-        env:
-          ORT_LIB_LOCATION: ${{ matrix.platform.ort_lib_location }}
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -105,6 +103,11 @@ jobs:
             name: is-it-slop-preprocessing
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.8.2
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
