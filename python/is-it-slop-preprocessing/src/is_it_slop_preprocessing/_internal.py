@@ -72,7 +72,12 @@ class VectorizerParams:
         )
 
     def as_rust(self) -> RustVectorizerParams:
-        """Return the underlying Rust object."""
+        """Return the underlying Rust object.
+
+        Returns:
+            RustVectorizerParams: The underlying Rust parameters object
+
+        """
         return self._inner
 
 
@@ -157,8 +162,17 @@ class TfidfVectorizer:
 
         Validated here so we dont pass invalid data to the Rust side.
 
+        Args:
+            texts: Input texts to validate.
+
+
         Returns:
             The texts as a list of strings.
+
+        Raises:
+            TypeError: If the input is not a list of strings or a 1D NumPy array of strings.
+            ValueError: If the input NumPy array is not 1-dimensional or has an invalid dtype.
+
 
         """
         if isinstance(texts, np.ndarray):
@@ -251,6 +265,9 @@ class TfidfVectorizer:
         Args:
             path: File path to save the raw bincode bytes.
 
+        Raises:
+            ValueError: If the file extension is not .json or .bin.
+
         """
         path = Path(path)
 
@@ -274,6 +291,7 @@ class TfidfVectorizer:
 
         Raises:
             FileNotFoundError: If the file does not exist.
+            ValueError: If the file extension is not .json or .bin.
 
         """
         path = Path(path)

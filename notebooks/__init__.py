@@ -1,9 +1,12 @@
 import sys
 from pathlib import Path
+from typing import Final
 
 import polars as pl
 from is_it_slop import MODEL_VERSION
 from semver import Version
+
+SEED: Final[int] = 42
 
 RETRAINED_MODEL_VERSION = Version.parse(MODEL_VERSION)
 
@@ -50,6 +53,7 @@ __all__ = [
     "PLOT_DIR",
     "RETRAINED_MODEL_VERSION",
     "RETRAIN_VECTORIZER",
+    "SEED",
     "TEST_PATH",
     "TRAIN_PATH",
     "VECTORIZER_BIN_PATH",

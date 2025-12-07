@@ -94,11 +94,21 @@ class Prediction:
         return self._inner.classification  # type: ignore[return-value]
 
     def __repr__(self) -> str:
-        """Return a detailed string representation."""
+        """Return a detailed string representation.
+
+        Returns:
+            str: Detailed representation of the prediction
+
+        """
         return self._inner.__repr__()
 
     def __str__(self) -> str:
-        """Return a human-readable string representation."""
+        """Return a human-readable string representation.
+
+        Returns:
+            str: Human-readable summary of the prediction
+
+        """
         return self._inner.__str__()
 
 

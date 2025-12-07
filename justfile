@@ -35,17 +35,15 @@ run-pre-push:
 # =============================================================================
 
 model-pipeline: && build-pre-processing-bindings dataset-curation training-pipeline build-bindings build-cli-release
-    uv sync -U --dev --all-extras --all-groups
+    uv sync --all-extras --all-groups
 
 build-pre-processing-bindings:
     uv run --directory python/is-it-slop-preprocessing maturin develop --release --uv
 
-dataset-curation:
-    uv run jupyter nbconvert --to script notebooks/dataset_curation.ipynb
+dataset-curation: sync-notebooks
     uv run python notebooks/dataset_curation.py --force-retrain-vectorizer
 
-training-pipeline:
-    uv run jupyter nbconvert --to script notebooks/train.ipynb
+training-pipeline: sync-notebooks
     uv run python notebooks/train.py --force-retrain-vectorizer
 
 build-bindings:
@@ -407,3 +405,53 @@ maturin-check: build-pre-processing-bindings build-bindings
 rust-lint-fix:
     cargo clippy --workspace --features all-testable --all-targets --fix --allow-staged --allow-dirty --quiet -- -D warnings
     cargo clippy --workspace --all-targets --no-default-features --fix --allow-staged --allow-dirty --quiet -- -D warnings
+
+# =============================================================================
+# Notebook Management
+# =============================================================================
+
+# Convert notebooks to Python scripts (for version control)
+[group('notebooks')]
+notebooks-to-scripts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Converting notebooks to Python scripts..."
+    for nb in notebooks/*.ipynb; do
+        if [ -f "$nb" ]; then
+            echo "  Converting $(basename "$nb")..."
+            uv run jupyter nbconvert --to script "$nb" --output-dir notebooks/
+        fi
+    done
+    echo "✅ All notebooks converted"
+
+# Convert Python scripts back to notebooks (restore dev environment)
+[group('notebooks')]
+scripts-to-notebooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Converting Python scripts to notebooks..."
+    for py in notebooks/*.py; do
+        if [ -f "$py" ] && [ "$(basename "$py")" != "__init__.py" ]; then
+            nb="${py%.py}.ipynb"
+            if [ ! -f "$nb" ]; then
+                echo "  Converting $(basename "$py") -> $(basename "$nb")..."
+                uv run jupytext --to notebook "$py" --output "$nb"
+            else
+                echo "  Skipping $(basename "$py") (notebook exists)"
+            fi
+        fi
+    done
+    echo "✅ Scripts converted to notebooks"
+
+# Sync notebooks: convert to scripts and strip outputs for cleaner diffs
+[group('notebooks')]
+[group('precommit')]
+sync-notebooks: notebooks-to-scripts
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Optionally strip outputs from notebooks to reduce size
+    if command -v nbstripout &> /dev/null; then
+        echo "Stripping notebook outputs..."
+        nbstripout notebooks/*.ipynb 2>/dev/null || true
+    fi
+    echo "✅ Notebooks synced"

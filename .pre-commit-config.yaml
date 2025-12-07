@@ -1,4 +1,18 @@
 repos:
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.2
+    hooks:
+      - id: nbstripout
+
+  - repo: local
+    hooks:
+      - id: sync-notebooks
+        name: Sync notebooks to scripts
+        entry: just sync-notebooks
+        language: system
+        files: \.ipynb$
+        pass_filenames: false
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -15,15 +29,12 @@ repos:
         stages: [pre-commit]
       - id: end-of-file-fixer
         stages: [pre-commit]
+        exclude: '^notebooks/.*\.py$' # Exclude synced notebook scripts
       - id: mixed-line-ending
         stages: [pre-commit]
       - id: trailing-whitespace
         stages: [pre-commit]
-
-  - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.2
-    hooks:
-      - id: nbstripout
+        exclude: '^notebooks/.*\.py$' # Exclude synced notebook scripts
 
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.9.15
