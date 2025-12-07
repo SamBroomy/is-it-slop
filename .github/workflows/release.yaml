@@ -57,17 +57,27 @@ jobs:
       - name: "Set up Python"
         uses: actions/setup-python@v6
         with:
-          python-version-file: "pyproject.toml"
+          python-version: "3.11"
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.8.2
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist
+          args: --release --out dist --find-interpreter
           sccache: true
           manylinux: ${{ matrix.platform.manylinux }}
           working-directory: ${{ matrix.python-crate.path }}
+          before-script-linux: |
+            # Install OpenSSL development libraries
+            if command -v apt-get &> /dev/null; then
+              apt-get update
+              apt-get install -y libssl-dev pkg-config
+            elif command -v yum &> /dev/null; then
+              yum install -y openssl-devel pkg-config
+            elif command -v apk &> /dev/null; then
+              apk add openssl-dev pkgconfig
+            fi
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
