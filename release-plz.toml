@@ -3,22 +3,23 @@
 git_tag_name = "v{{ version }}"
 dependencies_update = true
 semver_check = true
-git_release_enable = true
 # All packages share the same version
 allow_dirty = false
 changelog_update = true
 
 
 [[package]]
-name = "is-it-slop"
-version_group = "main"
-release = true
-
-
-[[package]]
 name = "is-it-slop-preprocessing"
 version_group = "main"
 release = false
+git_release_enable = false
+git_tag_enable = false
+
+[[package]]
+name = "is-it-slop"
+version_group = "main"
+git_release_enable = true
+release = true
 
 
 [changelog]
