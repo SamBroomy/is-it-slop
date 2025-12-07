@@ -28,13 +28,13 @@ jobs:
         platform:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            manylinux: auto
+            manylinux: manylinux_2_28
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             manylinux: musllinux_1_2
           - runner: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
-            manylinux: auto
+            manylinux: manylinux_2_28
           - runner: ubuntu-22.04
             target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
@@ -73,6 +73,8 @@ jobs:
             if command -v apt-get &> /dev/null; then
               apt-get update
               apt-get install -y libssl-dev pkg-config
+            elif command -v dnf &> /dev/null; then
+              dnf install -y openssl-devel pkgconfig
             elif command -v yum &> /dev/null; then
               yum install -y openssl-devel pkgconfig
             elif command -v apk &> /dev/null; then
