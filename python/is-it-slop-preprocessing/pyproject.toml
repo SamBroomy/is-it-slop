@@ -1,13 +1,60 @@
 [project]
 name = "is-it-slop-preprocessing"
 dynamic = ["version"]
-description = "Fast TF-IDF vectorization with Rust-backed preprocessing"
-readme = "README.md"
+description = "Fast TF-IDF vectorization. Preprocessing step for `is-it-slop` package, written in Rust."
 authors = [
     { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
 ]
 requires-python = ">=3.11"
+keywords = [
+    "AI-text-detector",
+    "ML",
+    "TF-IDF",
+    "Tokenization",
+    "ai-detection",
+    "machine-learning",
+    "onnx",
+    "pyo3",
+    "rust",
+    "text-classification",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Unix",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Rust",
+    "Topic :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
+license = "./../../LICENSE"
+readme = "./README.md"
+
 dependencies = ["numpy>=2.0", "scipy>=1.14"]
+
+[project.urls]
+Homepage = "https://github.com/SamBroomy/is-it-slop/blob/main/python/is-it-slop-preprocessing/README.md"
+Documentation = "https://github.com/SamBroomy/is-it-slop/blob/main/README.md"
+Repository = "https://github.com/SamBroomy/is-it-slop"
+Issues = "https://github.com/SamBroomy/is-it-slop/issues"
+
 
 [build-system]
 requires = ["maturin>=1.10,<2.0"]

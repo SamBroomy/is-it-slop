@@ -2,6 +2,7 @@
 name = "is-it-slop"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description.workspace = true
@@ -18,22 +19,20 @@ name = "is_it_slop"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+is-it-slop-preprocessing = { workspace = true }
+
+anyhow = { workspace = true }
 ndarray = { workspace = true }
 ort = { workspace = true }
-sprs = { workspace = true }
-anyhow = { workspace = true }
 serde = { workspace = true }
-
+sprs = { workspace = true }
 # CLI-only dependenciess
-serde_json = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
-
+serde_json = { workspace = true, optional = true }
 # Python bindings dependencies
 mimalloc = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
 pyo3-log = { workspace = true, optional = true }
-
-is-it-slop-preprocessing = { workspace = true }
 
 [[bin]]
 name = "is-it-slop"
@@ -49,15 +48,18 @@ stub-model = []
 
 all-testable = ["cli"] # add other features here, but NOT python
 
+[package.metadata.docs.rs]
+features = ["stub-model"]
+
 [build-dependencies]
-ureq = { workspace = true }
+directories = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
-directories = { workspace = true }
+ureq = { workspace = true }
 
 [lints]
 workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["ureq", "flate2", "tar", "tempfile", "directories"]
+ignored = ["directories", "flate2", "tar", "tempfile", "ureq"]

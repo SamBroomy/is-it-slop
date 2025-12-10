@@ -2,14 +2,14 @@
 name = "is-it-slop-preprocessing"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description.workspace = true
+description = "Preprocessing step for is-it-slop package, providing fast TF-IDF vectorization."
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-
 
 [lib]
 name = "is_it_slop_preprocessing"
@@ -17,32 +17,32 @@ crate-type = ["cdylib", "rlib"]
 
 
 [dependencies]
-tiktoken-rs = { workspace = true }
+ahash = { workspace = true }
+bincode = { workspace = true, optional = true }
+dashmap = { workspace = true }
 indicatif = { workspace = true, optional = true }
-sprs = { workspace = true }
+mimalloc = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }
+pyo3 = { workspace = true, optional = true }
+pyo3-log = { workspace = true, optional = true }
 rayon = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-bincode = { workspace = true, optional = true }
 smallvec = { workspace = true }
-dashmap = { workspace = true }
-ahash = { workspace = true }
-mimalloc = { workspace = true, optional = true }
+sprs = { workspace = true }
+tiktoken-rs = { workspace = true }
 tracing = { workspace = true }
-pyo3 = { workspace = true, optional = true }
-numpy = { workspace = true, optional = true }
-pyo3-log = { workspace = true, optional = true }
 
 [features]
 default = ["bincode"]
 python = [
-    "pyo3",
-    "numpy",
-    "pyo3-log",
-    "mimalloc",
-    "serde",
     "bincode",
+    "mimalloc",
+    "numpy",
     "progress-bars",
+    "pyo3",
+    "pyo3-log",
+    "serde",
 ]
 serde = ["dep:serde", "dep:serde_json"]
 bincode = ["dep:bincode"]

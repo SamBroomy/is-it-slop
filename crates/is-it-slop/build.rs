@@ -1,3 +1,8 @@
+//! Build script for is-it-slop crate
+//!
+//! This build script handles downloading and managing model artifacts required for runtime
+//! inference.
+
 use std::{
     env, fs,
     io::Read,

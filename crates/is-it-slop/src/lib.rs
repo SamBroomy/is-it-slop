@@ -1,3 +1,52 @@
+//! # is-it-slop
+//!
+//! A fast and accurate AI text detector built with Rust.
+//!
+//! This crate provides tools to classify whether text was written by AI or a human,
+//! using a machine learning model based on TF-IDF features and ONNX runtime inference.
+//!
+//! ## Quick Start
+//!
+//! ```rust
+//! use is_it_slop::Predictor;
+//!
+//! let predictor = Predictor::new();
+//!
+//! // Get raw probabilities
+//! let prediction = predictor.predict("Some text to analyze")?;
+//! println!(
+//!     "AI probability: {:.2}%",
+//!     prediction.ai_probability() * 100.0
+//! );
+//!
+//! // Or get a classification directly
+//! let class = predictor.classify("Some text to analyze")?;
+//! println!("Classification: {:?}", class);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! ## Custom Threshold
+//!
+//! ```rust
+//! use is_it_slop::Predictor;
+//!
+//! // Use a custom threshold (default is [`CLASSIFICATION_THRESHOLD`])
+//! let predictor = Predictor::new().with_threshold(0.7);
+//! let class = predictor.classify("Some text")?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! ## Batch Processing
+//!
+//! ```rust
+//! use is_it_slop::Predictor;
+//!
+//! let predictor = Predictor::new();
+//! let texts = vec!["First text", "Second text", "Third text"];
+//! let predictions = predictor.predict_batch(&texts)?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+
 #[cfg(feature = "python")]
 mod python;
 
