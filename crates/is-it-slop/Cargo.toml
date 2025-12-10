@@ -24,11 +24,11 @@ sprs = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 
-# CLI-only dependencies (optional)
+# CLI-only dependenciess
 serde_json = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 
-# Python bindings dependencies (optional)
+# Python bindings dependencies
 mimalloc = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
 pyo3-log = { workspace = true, optional = true }
@@ -40,7 +40,6 @@ name = "is-it-slop"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
 cli = ["dep:clap", "dep:serde_json", "mimalloc"]
 python = ["dep:pyo3", "dep:pyo3-log", "mimalloc"]
 mimalloc = ["dep:mimalloc"]

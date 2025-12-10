@@ -13,7 +13,8 @@ use super::{count_vectorizer::CountVectorizer, params::VectorizerParams};
 /// # Usage
 ///
 /// - Use [`fit_transform`](Self::fit_transform) when training (more efficient)
-/// - Use [`fit`](Self::fit) + [`transform`](Self::transform) when you need the vectorizer separately
+/// - Use [`fit`](Self::fit) + [`transform`](Self::transform) when you need the vectorizer
+///   separately
 /// - Serialize with `to_bytes()` (bincode) or `to_json()` (serde feature)
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

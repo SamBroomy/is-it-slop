@@ -4,6 +4,7 @@ mod prediction;
 use std::sync::Mutex;
 
 pub use classification::Classification;
+use ndarray::Ix2;
 use ort::{
     session::Session,
     value::{Tensor, Value},
@@ -37,7 +38,7 @@ fn parse_model_outputs(outputs: &ort::session::SessionOutputs<'_>) -> ort::Resul
     // Second output: class probabilities (e.g., [{0: ..., 1: ...}])
     let probs_array = outputs[1]
         .try_extract_array::<f32>()?
-        .into_dimensionality::<ndarray::Ix2>()
+        .into_dimensionality::<Ix2>()
         .expect("valid 2d array");
 
     let first_row = probs_array.row(0);
@@ -49,7 +50,7 @@ fn parse_model_outputs_batch(
 ) -> ort::Result<Vec<Prediction>> {
     let probs_array = outputs[1]
         .try_extract_array::<f32>()?
-        .into_dimensionality::<ndarray::Ix2>()
+        .into_dimensionality::<Ix2>()
         .expect("valid 2d array");
 
     Ok(probs_array

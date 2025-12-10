@@ -12,8 +12,9 @@ pub type NgramKey = SmallVec<[u32; NGRAM_CONST_KEY]>;
 
 /// Count n-grams in a sequence of tokens.
 ///
-/// This optimized version uses `SmallVec` to avoid heap allocations for typical n-gram sizes (≤8 tokens).
-/// The function pre-allocates `HashMap` capacity and uses the efficient `and_modify` pattern.
+/// This optimized version uses `SmallVec` to avoid heap allocations for typical n-gram sizes (≤8
+/// tokens). The function pre-allocates `HashMap` capacity and uses the efficient `and_modify`
+/// pattern.
 ///
 /// # Arguments
 /// * `tokens` - Sequence of token IDs

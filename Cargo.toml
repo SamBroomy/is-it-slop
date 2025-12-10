@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0-alpha.0"
 edition = "2024"
 rust-version = "1.89"
 authors = ["SamBroomy"]
@@ -45,8 +45,8 @@ flate2 = "1.1.5"
 tar = "0.4.44"
 tempfile = "3.23.0"
 directories = "6"
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.4" }
-
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.5.0-alpha" }
+is-it-slop = { path = "crates/is-it-slop", version = "0.5.0-alpha" }
 
 [workspace.lints.clippy]
 multiple_crate_versions = "allow"
