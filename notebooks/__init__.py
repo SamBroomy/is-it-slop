@@ -1,7 +1,8 @@
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
+import numpy as np
 import polars as pl
 from is_it_slop import MODEL_VERSION
 from semver import Version
@@ -45,6 +46,21 @@ MODEL_ONNX_PATH = MODEL_DIR / "slop-classifier.onnx"
 CLASSIFICATION_THRESHOLD_PATH = MODEL_DIR / "classification_threshold.txt"
 
 
+class ProbabilisticClassifier(Protocol):
+    """Base protocol for classifiers with predict_proba."""
+
+    def predict_proba(self, X) -> np.ndarray: ...  # noqa: ANN001
+    def predict(self, X) -> np.ndarray: ...  # noqa: ANN001
+    def fit(self, X, y) -> "ProbabilisticClassifier": ...  # noqa: ANN001
+
+
+class LinearClassifier(ProbabilisticClassifier, Protocol):
+    """Protocol for linear classifiers with coefficients."""
+
+    @property
+    def coef_(self) -> np.ndarray: ...
+
+
 __all__ = [
     "CLASSIFICATION_THRESHOLD_PATH",
     "DATA_PATH",
@@ -58,6 +74,8 @@ __all__ = [
     "TRAIN_PATH",
     "VECTORIZER_BIN_PATH",
     "VECTORIZER_JSON_PATH",
+    "LinearClassifier",
+    "ProbabilisticClassifier",
     "df",
     "df_test",
     "df_train",

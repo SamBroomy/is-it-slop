@@ -2,7 +2,7 @@ line-length = 120
 show-fixes = true
 src = ["python/"]
 extend-include = ["notebooks/*.ipynb"]
-exclude = ["notebooks/*.py"]
+# exclude = ["notebooks/*.py"]
 [lint]
 preview = true
 select = ["ALL"]
@@ -36,7 +36,7 @@ ignore = [
 split-on-trailing-comma = false
 
 [lint.per-file-ignores]
-"notebooks/*.{ipynb}" = [
+"notebooks/*.{ipynb,py}" = [
     "FBT003",  # Boolean position value in function
     "T201",    # Use of print detected
     "ERA001",  # Commented-out code
@@ -46,10 +46,14 @@ split-on-trailing-comma = false
     "PLR0914", # Too many branches in function
     "PLR0915", # Too many statements in function
     "PLR2004", # Magic value
+    "D100",    # Missing docstring in public module
     "D101",    # Missing docstring in public class
     "D102",    # Missing docstring in public method
     "D104",    # Missing docstring in public package
     "DOC201",  # Return is not documented in the docstring
+    "EXE001",  # Shebang is present but file is not executableetected
+    "UP009",   # UTF-8 encoding declaration is unnecessary
+    "B018",    # Useless expression
 ]
 
 

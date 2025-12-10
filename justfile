@@ -11,14 +11,14 @@ bootstrap: && install-pre-commit
 [group('git-hooks')]
 install-pre-commit:
     #!/usr/bin/env sh
-    if ! command -v prefligit &> /dev/null; then
+    if ! command -v prek &> /dev/null; then
         echo "Installing prefligit..."
-        cargo install --locked --git https://github.com/j178/prefligit
+        cargo install --locked prek --force
     else
-        echo "prefligit is already installed"
+        echo "prek is already installed"
     fi
-    prefligit install
-    prefligit run --all-files
+    prek install
+    prek run --all-files
 
 # Run the pre-commit hooks
 [group('git-hooks')]
@@ -381,7 +381,7 @@ cargo-machete:
 [group('ci')]
 [group('lint')]
 cargo-docs:
-    cargo doc --all-targets --workspace --features all-testable --no-deps
+    cargo doc --all-features --workspace --no-deps
 
 # Cargo audit
 [group('ci')]

@@ -1,1 +1,5 @@
+# Jupyter notebooks - auto-generated JSON, collapse in diffs
 notebooks/**/*.ipynb linguist-generated=true
+
+# Large plotting utilities - exclude from language stats
+notebooks/plots.py linguist-vendored=true

@@ -1,10 +1,34 @@
+
+<div align=center>
+<img src="https://cdn.pixabay.com/photo/2014/04/02/17/04/pink-307853_1280.png" alt-text="pigs love slop", width="350px"/>
+
+[![Crates.io](https://img.shields.io/crates/v/is-it-slop?style=for-the-badge)](https://crates.io/crates/is-it-slop)
+[![Crates.io Downloads](https://img.shields.io/crates/d/is-it-slop?style=for-the-badge&label=crates.io%20downloads)](https://crates.io/crates/is-it-slop)
+[![Docs.rs](https://img.shields.io/docsrs/is-it-slop?style=for-the-badge)](https://docs.rs/crate/is-it-slop/latest)
+
+[![PyPI](https://img.shields.io/pypi/v/is-it-slop?style=for-the-badge)](https://pypi.org/project/is-it-slop/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/is-it-slop?style=for-the-badge&label=pypi%20downloads)](https://pypi.org/project/is-it-slop/)
+[![License](https://img.shields.io/crates/l/is-it-slop?style=for-the-badge)](./LICENSE)
+
+</div>
+
+---
+
+`is-it-slop`
+A fast and accurate ***AI text detector*** built with Rust and Python.
+
+A CLI tool and library, classifying whether a given text was written by AI or a human.
+
 # is-it-slop
 
 Fast AI text detection using TF-IDF and ensemble classifiers.
 
 ## Features
 
-- **Fast**: Rust-based preprocessing
+- **Fast**: Rust-based preprocessing and ONNX inference
+- **Minimal**: Just a ~13 MB ML model + 3 MB vectorizer for pre-processing — no heavy transformer models or GPU required
+- **Self-Contained**: Single ~35 MB binary with ONNX runtime bundled. No Python, external dependencies, or network access needed at runtime
+- **Robust**: [Trained on](./notebooks/train.ipynb) [15+ curated datasets](./notebooks/dataset_curation.ipynb)
 - **Accurate**: 96%+ accuracy (F1 0.96, MCC 0.93)
 - **Portable**: ONNX model embedded in CLI binary
 - **Dual APIs**: Rust library + Python bindings
@@ -17,7 +41,7 @@ Fast AI text detection using TF-IDF and ensemble classifiers.
 cargo install is-it-slop --features cli
 ```
 
-Model artifacts (16 MB) are downloaded automatically during build from GitHub releases.
+Model artifacts (14.1 MB zip archive) are downloaded automatically during build from GitHub releases.
 
 ### Python Package
 
@@ -96,3 +120,13 @@ For more information about look in the `notebooks/` directory.
 ## License
 
 [MIT](./LICENSE)
+
+# Description
+
+# Getting Started
+
+## Dependencies
+
+## Installation
+
+##

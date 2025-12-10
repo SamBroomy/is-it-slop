@@ -5,7 +5,7 @@ members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing"]
 [workspace.package]
 version = "0.5.0-alpha.0"
 edition = "2024"
-rust-version = "1.89"
+# rust-version = "1.89"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
 license = "MIT"
 repository = "https://github.com/SamBroomy/is-it-slop"

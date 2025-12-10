@@ -2,12 +2,11 @@
 name = "is-it-slop-preprocessing"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Preprocessing step for is-it-slop package, providing fast TF-IDF vectorization."
 repository.workspace = true
-readme = "README.md"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
