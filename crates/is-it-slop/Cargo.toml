@@ -40,9 +40,12 @@ name = "is-it-slop"
 required-features = ["cli"]
 
 [features]
+default = ["cli"]
 cli = ["dep:clap", "dep:serde_json", "mimalloc"]
 python = ["dep:pyo3", "dep:pyo3-log", "mimalloc"]
 mimalloc = ["dep:mimalloc"]
+# Build with empty model artifacts (for docs, won't work at runtime)
+stub-model = []
 
 
 all-testable = ["cli"] # add other features here, but NOT python
@@ -53,6 +56,7 @@ flate2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
 directories = { workspace = true }
+
 [lints]
 workspace = true
 

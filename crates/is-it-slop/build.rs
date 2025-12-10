@@ -57,6 +57,19 @@ fn copy_artifacts(src_dir: &Path, dest_dir: &Path) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// Create dummy/stub artifacts for docs-only builds
+fn create_stub_artifacts(target_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(target_dir)?;
+
+    // Create empty/minimal stub files
+    // These will compile but panic at runtime if used
+    fs::write(target_dir.join(CLASSIFIER_MODEL_FILENAME), b"")?;
+    fs::write(target_dir.join(TOKENIZER_FILENAME), b"")?;
+    fs::write(target_dir.join(THRESHOLD_FILENAME), "0.5")?;
+
+    Ok(())
+}
+
 /// Download artifacts to target directory
 fn download_artifacts(
     target_dir: &Path,
@@ -192,9 +205,19 @@ fn main() {
         PathBuf::from,
     );
 
-    // Ensure artifacts exist in OUT_DIR
-    ensure_artifacts_in_out_dir(&out_artifacts_dir, &source_artifacts_dir, &model_version);
-
+    // Check if the model doesn't need to be downloaded (e.g docs-only build)
+    let is_docs_rs = env::var("DOCS_RS").is_ok();
+    let is_stub_model = env::var("IS_IT_SLOP_STUB_MODEL").is_ok();
+    if is_docs_rs || is_stub_model {
+        println!("cargo:warning=Building with stub model artifacts (docs-only build)");
+        println!(
+            "cargo:warning=Runtime inference will panic! This build is for compilation/docs only."
+        );
+        create_stub_artifacts(&out_artifacts_dir).expect("Failed to create stub artifacts");
+    } else {
+        // Ensure artifacts exist in OUT_DIR
+        ensure_artifacts_in_out_dir(&out_artifacts_dir, &source_artifacts_dir, &model_version);
+    }
     // Expose env vars for include_bytes! macros
     println!("cargo:rustc-env=MODEL_VERSION={model_version}");
     println!(
@@ -238,4 +261,5 @@ pub const CLASSIFICATION_THRESHOLD: f32 = {val};\n"
     println!("cargo:rerun-if-env-changed=MODEL_ARTIFACTS_DIR");
     println!("cargo:rerun-if-env-changed=MODEL_ARTIFACT_URL");
     println!("cargo:rerun-if-env-changed=MODEL_VERSION");
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
 }
