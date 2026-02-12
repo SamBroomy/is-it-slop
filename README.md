@@ -38,7 +38,7 @@ Fast AI text detection using TF-IDF and ensemble classifiers.
 ### CLI (Rust)
 
 ```bash
-cargo install is-it-slop --features cli
+cargo install is-it-slop --locked --features cli
 ```
 
 Model artifacts (14.1 MB zip archive) are downloaded automatically during build from GitHub releases.
