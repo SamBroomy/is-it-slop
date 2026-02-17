@@ -94,7 +94,7 @@ Text → Clean → Tokenize → Chunk (150 tokens, 15 overlap)
      → TF-IDF per chunk → ONNX → Aggregate predictions → Result
 ```
 
-### How do you tokenize the text?
+### Why BPE Tokenization?
 
 We use tiktoken's BPE tokenization (o200k_base) to convert text into token sequences. This allows us to capture subword information and create token n-grams without having to deal with creating a custom tokenizer (where BPE tokenization handles edge cases and is widely used in LLMs).
 
