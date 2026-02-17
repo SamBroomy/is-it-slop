@@ -24,6 +24,7 @@
 !notebooks/**/*.ipynb
 !/notebooks/**/*.py
 !/plots/*.png
+!/plots/*.svg
 !/python/**/*.py
 !/python/**/py.typed
 !/notebooks/__init__.py
