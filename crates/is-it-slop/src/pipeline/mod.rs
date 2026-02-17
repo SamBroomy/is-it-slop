@@ -27,14 +27,18 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use is_it_slop::{
-//!     model::MODEL,
-//!     pipeline::{AggregationMethod, predict},
-//! };
+//! use is_it_slop::Predictor;
 //!
-//! let result = predict(&MODEL, "Example text", AggregationMethod::default()).unwrap();
-//! println!("Classification: {}", result.classification());
-//! println!("Confidence: {:.2}%", result.confidence() * 100.0);
+//! let predictor = Predictor::new();
+//! let result = predictor.predict("Example text").unwrap();
+//! println!(
+//!     "AI probability: {:.2}%",
+//!     result.prediction.ai_probability() * 100.0
+//! );
+//! println!(
+//!     "Classification: {}",
+//!     result.classification(predictor.threshold())
+//! );
 //! ```
 
 mod classification;

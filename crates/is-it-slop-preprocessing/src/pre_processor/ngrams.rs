@@ -19,16 +19,13 @@
 //!
 //! Shorter n-grams (2-3 tokens) have trailing zeros that must be stripped before decoding.
 //!
-//! # Example
+//! # Usage
 //!
-//! ```rust
-//! use is_it_slop_preprocessing::pre_processor::ngrams::count_ngrams;
+//! This module is internal to the preprocessing pipeline. N-grams are extracted
+//! automatically during vectorization via [`TfidfVectorizer`] or [`CountVectorizer`].
 //!
-//! let tokens = vec![1, 2, 3, 4, 5];
-//! let ngram_sizes = vec![2, 3]; // bigrams and trigrams
-//! let ngram_counts = count_ngrams(&tokens, &ngram_sizes);
-//! // Returns: {[1,2]: 1, [2,3]: 1, [3,4]: 1, [4,5]: 1, [1,2,3]: 1, [2,3,4]: 1, [3,4,5]: 1}
-//! ```
+//! [`TfidfVectorizer`]: crate::pre_processor::TfidfVectorizer
+//! [`CountVectorizer`]: crate::pre_processor::CountVectorizer
 
 use std::{fmt::Debug, hash::Hash, ops::AddAssign};
 

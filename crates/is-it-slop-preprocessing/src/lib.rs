@@ -25,8 +25,9 @@
 //! use is_it_slop_preprocessing::pre_processor::{TfidfVectorizer, VectorizerParams};
 //!
 //! let texts = vec!["example text 1", "example text 2"];
-//! let params = VectorizerParams::new(2..=4, 10.0, 0.8, true);
+//! let params = VectorizerParams::new(10.0, 0.8, true); // min_df, max_df, sublinear_tf
 //! let (vectorizer, tfidf_matrix) = TfidfVectorizer::fit_transform(&texts, params);
+//! // N-gram range is fixed at 2-4 (bigrams through 4-grams)
 //! ```
 //!
 //! [`TfidfVectorizer`]: pre_processor::TfidfVectorizer

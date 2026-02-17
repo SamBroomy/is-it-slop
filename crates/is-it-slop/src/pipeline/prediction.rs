@@ -95,7 +95,11 @@ impl Prediction {
         Self(human_prob, ai_prob)
     }
 
-    pub(super) fn from_ai_probability(ai_prob: f32) -> Self {
+    /// Create a prediction from AI probability (P(Human) = 1 - P(AI)).
+    ///
+    /// This is a convenience constructor for tests and examples.
+    #[must_use]
+    pub fn from_ai_probability(ai_prob: f32) -> Self {
         let human_prob = 1.0 - ai_prob;
         Self::new(human_prob, ai_prob)
     }

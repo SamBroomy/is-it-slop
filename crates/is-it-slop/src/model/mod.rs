@@ -306,11 +306,18 @@ mod tests {
     }
 
     #[test]
-    fn test_model_bytes_alignment() {
-        // Verify model bytes have some alignment (sanity check)
-        // ONNX models should be aligned for efficient loading
-        let addr = MODEL_BYTES.as_ptr() as usize;
-        // Most systems align to at least 8 bytes
-        assert_eq!(addr % 4, 0, "Model bytes should have reasonable alignment");
+    fn test_model_bytes_not_empty() {
+        // Verify model bytes are embedded correctly
+        // Note: include_bytes! doesn't guarantee alignment, which is fine -
+        // ONNX Runtime handles unaligned input, and rkyv uses AlignedVec for vectorizer
+        assert!(!MODEL_BYTES.is_empty(), "Model bytes should not be empty");
+        assert!(
+            !TOKENIZER_BYTES.is_empty(),
+            "Tokenizer bytes should not be empty"
+        );
+
+        // Sanity check: ONNX models typically start with specific magic bytes
+        // But we just check they're present, not their alignment
+        assert!(MODEL_BYTES.len() > 100, "Model should be reasonably sized");
     }
 }
