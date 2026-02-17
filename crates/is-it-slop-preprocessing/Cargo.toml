@@ -18,37 +18,45 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 ahash = { workspace = true }
 bincode = { workspace = true, optional = true }
-dashmap = { workspace = true }
+bpe-openai = { workspace = true }
+dashmap = { workspace = true, features = ["rayon"] }
 indicatif = { workspace = true, optional = true }
 mimalloc = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
-pyo3-log = { workspace = true, optional = true }
+# pyo3-log = { workspace = true, optional = true }
 rayon = { workspace = true }
+regex = { workspace = true }
+rkyv = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-smallvec = { workspace = true }
 sprs = { workspace = true }
-tiktoken-rs = { workspace = true }
 tracing = { workspace = true }
 
 [features]
-default = ["bincode"]
+default = ["rkyv"]
 python = [
     "bincode",
     "mimalloc",
     "numpy",
     "progress-bars",
     "pyo3",
-    "pyo3-log",
+    # "pyo3-log",
+    "rkyv",
     "serde",
 ]
-serde = ["dep:serde", "dep:serde_json"]
 bincode = ["dep:bincode"]
-progress-bars = ["dep:indicatif"]
 mimalloc = ["dep:mimalloc"]
+progress-bars = ["dep:indicatif"]
+rkyv = ["dep:rkyv"]
+serde = ["dep:serde", "dep:serde_json"]
 
-all-testable = ["serde", "bincode"]
+all-testable = ["serde", "rkyv", "bincode"]
+
+[dev-dependencies]
+csv = "1.4"
+mimalloc = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [lints]
 workspace = true

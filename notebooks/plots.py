@@ -7,7 +7,7 @@ import pandas as pd
 import polars as pl
 import tiktoken
 from __init__ import PLOT_DIR, SEED, ProbabilisticClassifier, df_test
-from is_it_slop_preprocessing import TfidfVectorizer
+from is_it_slop_preprocessing import TfidfVectorizer, reverse_tokenize, tokenize
 from loguru import logger
 from matplotlib import gridspec
 from scipy.sparse import csr_matrix
@@ -325,15 +325,17 @@ def analyze_features_by_ngram_length(vectorizer: TfidfVectorizer, models, top_n:
         print(f"Top {top_n} features predicting AI text:")
         for idx in top_ai_indices:
             if idx in idx_to_ngram:
-                print(f"  '{idx_to_ngram[idx]}': {coefs[idx]:.4f}")
+                print(f"  '{idx_to_ngram[idx].strip('!')}': {coefs[idx]:.4f}")
 
         print(f"\nTop {top_n} features predicting Human text:")
         for idx in top_human_indices:
             if idx in idx_to_ngram:
-                print(f"  '{idx_to_ngram[idx]}': {coefs[idx]:.4f}")
+                print(f"  '{idx_to_ngram[idx].strip('!')}': {coefs[idx]:.4f}")
 
 
-def dataset_bias_analysis(df_test: pd.DataFrame, y_pred_proba: np.ndarray, decision_threshold: float = 0.5) -> None:
+def dataset_bias_analysis(
+    df_test: pd.DataFrame, y_probs: np.ndarray, y_pred: np.ndarray, decision_threshold: float = 0.5
+) -> None:
     """Analyze dataset-specific biases and patterns.
 
     Reveals:
@@ -344,8 +346,8 @@ def dataset_bias_analysis(df_test: pd.DataFrame, y_pred_proba: np.ndarray, decis
     _fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
     df_analysis = df_test.copy()
-    df_analysis["pred_proba_ai"] = y_pred_proba[:, 1]
-    df_analysis["pred_label"] = (y_pred_proba[:, 1] > decision_threshold).astype(int)
+    df_analysis["pred_proba_ai"] = y_probs
+    df_analysis["pred_label"] = y_pred.astype(int)
     df_analysis["correct"] = df_analysis["pred_label"] == df_analysis["label"]
 
     # 1. Prediction distribution by dataset
@@ -485,7 +487,7 @@ def embedding_visualization(
     2. t-SNE colored by dataset source
     3. Class density contours
     4. Dataset centroids in t-SNE space
-    5. SVD explained variance
+    5. Feature sparsity distribution
     6. Class centroids with separation metric
     """
     # Sample for performance
@@ -660,34 +662,61 @@ def embedding_visualization(
     ax.grid(True, alpha=0.3)
 
     # ============================================================
-    # 5. SVD explained variance
+    # 5. Feature sparsity distribution
     # ============================================================
     ax = axes[2, 0]
 
-    cumsum_var = np.cumsum(svd.explained_variance_ratio_)
-    ax.plot(range(1, len(cumsum_var) + 1), cumsum_var, linewidth=2, color="#9b59b6")
-    ax.axhline(y=0.5, color="red", linestyle="--", linewidth=1, label="50%")
-    ax.axhline(y=0.8, color="orange", linestyle="--", linewidth=1, label="80%")
-    ax.set_xlabel("Number of SVD Components", fontsize=11)
-    ax.set_ylabel("Cumulative Explained Variance", fontsize=11)
-    ax.set_title("SVD Variance Explained", fontsize=13, fontweight="bold")
+    # Calculate sparsity (proportion of zeros) for each sample
+    if hasattr(X_sample, "toarray"):
+        # Sparse matrix
+        sparsity_per_sample = 1 - (X_sample.getnnz(axis=1) / X_sample.shape[1])
+    else:
+        # Dense matrix
+        sparsity_per_sample = (X_sample == 0).mean(axis=1)
+
+    # Plot histogram split by class
+    ax.hist(
+        sparsity_per_sample[human_mask],
+        bins=50,
+        alpha=0.6,
+        color="#3498db",
+        label=f"Human (μ={sparsity_per_sample[human_mask].mean():.3f})",
+        density=True,
+    )
+    ax.hist(
+        sparsity_per_sample[ai_mask],
+        bins=50,
+        alpha=0.6,
+        color="#e74c3c",
+        label=f"AI (μ={sparsity_per_sample[ai_mask].mean():.3f})",
+        density=True,
+    )
+
+    ax.set_xlabel("Sparsity (proportion of zero features)", fontsize=11)
+    ax.set_ylabel("Density", fontsize=11)
+    ax.set_title("TF-IDF Feature Sparsity Distribution", fontsize=13, fontweight="bold")
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Add text showing how many components needed
-    comp_50 = np.argmax(cumsum_var >= 0.5) + 1 if any(cumsum_var >= 0.5) else 50
-    comp_80 = np.argmax(cumsum_var >= 0.8) + 1 if any(cumsum_var >= 0.8) else 50
+    # Add interpretation text
+    mean_sparsity_human = sparsity_per_sample[human_mask].mean()
+    mean_sparsity_ai = sparsity_per_sample[ai_mask].mean()
+
+    interpretation = "Higher sparsity = fewer active features\n"
+    if abs(mean_sparsity_human - mean_sparsity_ai) > 0.05:
+        interpretation += "Significant difference detected:\n"
+        interpretation += f"{'Human' if mean_sparsity_human > mean_sparsity_ai else 'AI'} texts are more sparse"
+    else:
+        interpretation += "Similar sparsity patterns"
 
     ax.text(
         0.05,
         0.95,
-        f"50% variance: {comp_50} components\n"
-        f"80% variance: {comp_80} components\n"
-        f"Total variance (50 comp): {cumsum_var[-1]:.3f}",
+        interpretation,
         transform=ax.transAxes,
-        fontsize=10,
+        fontsize=9,
         verticalalignment="top",
-        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
+        bbox={"boxstyle": "round", "facecolor": "lightyellow", "alpha": 0.8},
     )
 
     # ============================================================
@@ -800,14 +829,6 @@ def artifact_position_analysis(
     model: ProbabilisticClassifier,
     decision_threshold: float = 0.5,
 ) -> None:
-    """Analyze if model relies on positional artifacts (start/end of documents).
-
-    Reveals:
-    - Positional feature importance
-    - Boundary artifact detection
-    - Content vs structural learning
-    """
-    enc = tiktoken.get_encoding("o200k_base")
 
     _fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
@@ -816,21 +837,20 @@ def artifact_position_analysis(
     middle_chunks = []
     end_chunks = []
     chunk_labels = []
+    text_tokens = tokenize(texts)
 
     print(f"Extracting positional chunks from {len(texts)} texts...")
-    for text, label in zip(texts, labels, strict=False):
-        tokens = enc.encode(text)
-
+    for tokens, label in zip(text_tokens, labels, strict=False):
         if len(tokens) < 100:
             continue
 
         # Take first/last/middle 50 tokens
         chunk_size = min(50, len(tokens) // 5)
 
-        start = enc.decode(tokens[:chunk_size])
-        end = enc.decode(tokens[-chunk_size:])
+        start = reverse_tokenize(tokens[:chunk_size])
+        end = reverse_tokenize(tokens[-chunk_size:])
         mid_start = len(tokens) // 2 - chunk_size // 2
-        middle = enc.decode(tokens[mid_start : mid_start + chunk_size])
+        middle = reverse_tokenize(tokens[mid_start : mid_start + chunk_size])
 
         start_chunks.append(start)
         middle_chunks.append(middle)
@@ -1004,7 +1024,8 @@ def per_dataset_accuracy_analysis(X_test_tfidf: csr_matrix, model: Probabilistic
 
     # Accuracy by dataset source
     accuracy_by_dataset = (
-        df_test_full.group_by("dataset")
+        df_test_full
+        .group_by("dataset")
         .agg([
             pl.len().alias("count"),
             pl.col("correct").mean().alias("accuracy"),
@@ -1023,3 +1044,629 @@ def per_dataset_accuracy_analysis(X_test_tfidf: csr_matrix, model: Probabilistic
 
     print("\nHardest datasets (more realistic):")
     print(accuracy_by_dataset.head(5))
+
+
+def top_ngrams_visualization(vectorizer: TfidfVectorizer, model_coef: np.ndarray, top_n: int = 20) -> None:
+    """
+    Visualize top predictive n-grams for Human and AI classes.
+
+    Shows token n-grams with highest absolute coefficients (most discriminative features).
+    N-grams are already decoded in the vocabulary.
+
+    Args:
+        vectorizer: Fitted TfidfVectorizer with vocabulary
+        model_coef: Model coefficients (shape: n_features,)
+        top_n: Number of top n-grams to display per class
+    """
+    logger.info("Generating top n-grams visualization...")
+
+    # Get vocabulary and coefficients
+    # Vocabulary is dict[str, int] where keys are already decoded n-gram strings
+    vocab = vectorizer.vocabulary
+    coef = model_coef.flatten()
+
+    # Create reverse mapping: index -> n-gram string
+    idx_to_ngram = {idx: ngram for ngram, idx in vocab.items()}
+
+    # Sort by coefficient (positive = AI, negative = Human)
+    sorted_indices = np.argsort(coef)
+
+    # Top Human-indicative (most negative)
+    top_human_indices = sorted_indices[:top_n]
+    top_human_ngrams = []
+    top_human_coefs = []
+
+    for idx in top_human_indices:
+        if idx in idx_to_ngram:
+            # N-gram is already decoded as string
+            top_human_ngrams.append(idx_to_ngram[idx])
+            top_human_coefs.append(coef[idx])
+
+    # Top AI-indicative (most positive)
+    top_ai_indices = sorted_indices[-top_n:][::-1]
+    top_ai_ngrams = []
+    top_ai_coefs = []
+
+    for idx in top_ai_indices:
+        if idx in idx_to_ngram:
+            # N-gram is already decoded as string
+            top_ai_ngrams.append(idx_to_ngram[idx])
+            top_ai_coefs.append(coef[idx])
+
+    # Create figure
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+
+    # Human-indicative n-grams (negative coefficients)
+    y_pos = np.arange(len(top_human_ngrams))
+    ax1.barh(y_pos, top_human_coefs, color="#3498db")
+    ax1.set_yticks(y_pos)
+    ax1.set_yticklabels([f'"{ng}"' for ng in top_human_ngrams], fontsize=9)
+    ax1.set_xlabel("Coefficient (← More Human)")
+    ax1.set_title(f"Top {top_n} Human-Indicative N-grams")
+    ax1.invert_yaxis()
+    ax1.grid(axis="x", alpha=0.3)
+
+    # AI-indicative n-grams (positive coefficients)
+    y_pos = np.arange(len(top_ai_ngrams))
+    ax2.barh(y_pos, top_ai_coefs, color="#e74c3c")
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels([f'"{ng}"' for ng in top_ai_ngrams], fontsize=9)
+    ax2.set_xlabel("Coefficient (More AI →)")
+    ax2.set_title(f"Top {top_n} AI-Indicative N-grams")
+    ax2.invert_yaxis()
+    ax2.grid(axis="x", alpha=0.3)
+
+    plt.tight_layout()
+    plot_path = PLOT_DIR / "top_ngrams_visualization.png"
+    plt.savefig(plot_path, bbox_inches="tight")
+    mlflow.log_artifact(str(plot_path))
+    logger.info(f"Saved top n-grams visualization to {plot_path}")
+
+
+def chunk_agreement_analysis(
+    chunk_probs: np.ndarray,
+    chunk_to_doc_idx: np.ndarray,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    chunk_threshold: float,
+    n_docs: int,
+) -> None:
+    """
+    Analyze chunk agreement patterns within documents.
+
+    Visualizes:
+    1. Distribution of chunk agreement scores
+    2. Agreement vs prediction correctness
+    3. Agreement by document length (number of chunks)
+
+    Args:
+        chunk_probs: Per-chunk AI probabilities
+        chunk_to_doc_idx: Mapping from chunk index to document index
+        y_true: True document labels
+        y_pred: Predicted document labels
+        chunk_threshold: Threshold for chunk classification
+        n_docs: Total number of documents
+    """
+    logger.info("Generating chunk agreement analysis...")
+
+    # Calculate chunk agreement per document
+    doc_agreements = []
+    doc_num_chunks = []
+    doc_correct = []
+
+    for doc_idx in range(n_docs):
+        mask = chunk_to_doc_idx == doc_idx
+        if mask.any():
+            doc_chunk_probs = chunk_probs[mask]
+            num_chunks = len(doc_chunk_probs)
+
+            # Agreement: proportion of chunks with same classification
+            chunk_classes = (doc_chunk_probs >= chunk_threshold).astype(int)
+            agreement = max(np.sum(chunk_classes == 0) / num_chunks, np.sum(chunk_classes == 1) / num_chunks)
+
+            doc_agreements.append(agreement)
+            doc_num_chunks.append(num_chunks)
+            doc_correct.append(y_true[doc_idx] == y_pred[doc_idx])
+
+    doc_agreements = np.array(doc_agreements)
+    doc_num_chunks = np.array(doc_num_chunks)
+    doc_correct = np.array(doc_correct)
+
+    # Create figure with 3 subplots
+    fig = plt.figure(figsize=(16, 5))
+    gs = gridspec.GridSpec(1, 3, figure=fig)
+
+    # Subplot 1: Agreement distribution
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.hist(doc_agreements, bins=50, color="#9b59b6", alpha=0.7, edgecolor="black")
+    ax1.axvline(doc_agreements.mean(), color="red", linestyle="--", label=f"Mean: {doc_agreements.mean():.3f}")
+    ax1.set_xlabel("Chunk Agreement Score")
+    ax1.set_ylabel("Number of Documents")
+    ax1.set_title("Distribution of Chunk Agreement")
+    ax1.legend()
+    ax1.grid(alpha=0.3)
+
+    # Subplot 2: Agreement vs correctness
+    ax2 = fig.add_subplot(gs[0, 1])
+    correct_mask = doc_correct
+    incorrect_mask = ~doc_correct
+
+    ax2.scatter(
+        doc_agreements[correct_mask],
+        np.random.rand(correct_mask.sum()) * 0.4 + 0.5,
+        alpha=0.5,
+        color="#2ecc71",
+        label=f"Correct ({correct_mask.sum()})",
+        s=20,
+    )
+    ax2.scatter(
+        doc_agreements[incorrect_mask],
+        np.random.rand(incorrect_mask.sum()) * 0.4,
+        alpha=0.5,
+        color="#e74c3c",
+        label=f"Incorrect ({incorrect_mask.sum()})",
+        s=20,
+    )
+
+    ax2.set_xlabel("Chunk Agreement Score")
+    ax2.set_ylabel("Prediction Outcome (jittered)")
+    ax2.set_title("Agreement vs Prediction Correctness")
+    ax2.set_ylim(-0.1, 1.1)
+    ax2.legend()
+    ax2.grid(alpha=0.3)
+
+    # Add interpretation text
+    avg_correct_agreement = doc_agreements[correct_mask].mean()
+    avg_incorrect_agreement = doc_agreements[incorrect_mask].mean()
+    ax2.text(
+        0.02,
+        0.98,
+        f"Avg agreement (correct): {avg_correct_agreement:.3f}\n"
+        f"Avg agreement (incorrect): {avg_incorrect_agreement:.3f}",
+        transform=ax2.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
+
+    # Subplot 3: Agreement by document length
+    ax3 = fig.add_subplot(gs[0, 2])
+
+    # Bin by number of chunks
+    chunk_bins = [1, 2, 3, 5, 10, max(doc_num_chunks) + 1]
+    chunk_labels = ["1", "2", "3-4", "5-9", "10+"]
+    binned_chunks = np.digitize(doc_num_chunks, chunk_bins[:-1])
+
+    agreement_by_length = []
+    for i in range(1, len(chunk_bins)):
+        mask = binned_chunks == i
+        if mask.any():
+            agreement_by_length.append(doc_agreements[mask].mean())
+        else:
+            agreement_by_length.append(0)
+
+    ax3.bar(chunk_labels, agreement_by_length, color="#3498db", alpha=0.7, edgecolor="black")
+    ax3.set_xlabel("Number of Chunks in Document")
+    ax3.set_ylabel("Average Agreement Score")
+    ax3.set_title("Agreement vs Document Length")
+    ax3.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    plot_path = PLOT_DIR / "chunk_agreement_analysis.png"
+    plt.savefig(plot_path, bbox_inches="tight")
+    mlflow.log_artifact(str(plot_path))
+    logger.info(f"Saved chunk agreement analysis to {plot_path}")
+
+    # Log summary statistics
+    mlflow.log_metric("avg_chunk_agreement", float(doc_agreements.mean()))
+    mlflow.log_metric("avg_agreement_correct", float(avg_correct_agreement))
+    mlflow.log_metric("avg_agreement_incorrect", float(avg_incorrect_agreement))
+
+
+def aggregation_comparison(
+    chunk_probs: np.ndarray,
+    chunk_to_doc_idx: np.ndarray,
+    y_true: np.ndarray,
+    chunk_threshold: float,
+    doc_threshold: float,
+    n_docs: int,
+) -> None:
+    """
+    Compare three aggregation methods: Mean, Max, WeightedMean.
+
+    Visualizes:
+    1. Confusion matrices for each method
+    2. ROC curves overlaid
+    3. Prediction probability distributions
+
+    Args:
+        chunk_probs: Per-chunk AI probabilities
+        chunk_to_doc_idx: Mapping from chunk to document
+        y_true: True document labels
+        chunk_threshold: Threshold for chunk-level classification
+        doc_threshold: Threshold for document-level classification
+        n_docs: Total number of documents
+    """
+    logger.info("Generating aggregation method comparison...")
+
+    from sklearn.metrics import ConfusionMatrixDisplay, roc_curve, auc
+
+    # Define aggregation methods
+    def aggregate_mean(chunk_probs, chunk_to_doc_idx, n_docs):
+        doc_probs = np.zeros(n_docs)
+        for doc_idx in range(n_docs):
+            mask = chunk_to_doc_idx == doc_idx
+            if mask.any():
+                doc_probs[doc_idx] = chunk_probs[mask].mean()
+        return doc_probs
+
+    def aggregate_max(chunk_probs, chunk_to_doc_idx, n_docs):
+        doc_probs = np.zeros(n_docs)
+        for doc_idx in range(n_docs):
+            mask = chunk_to_doc_idx == doc_idx
+            if mask.any():
+                doc_probs[doc_idx] = chunk_probs[mask].max()
+        return doc_probs
+
+    def aggregate_weighted_mean(chunk_probs, chunk_to_doc_idx, n_docs, threshold):
+        doc_probs = np.zeros(n_docs)
+        for doc_idx in range(n_docs):
+            mask = chunk_to_doc_idx == doc_idx
+            if mask.any():
+                doc_chunk_probs = chunk_probs[mask]
+                weights = np.abs(doc_chunk_probs - threshold)
+                doc_probs[doc_idx] = np.average(doc_chunk_probs, weights=weights)
+        return doc_probs
+
+    # Compute predictions for each method
+    methods = {
+        "Mean": aggregate_mean(chunk_probs, chunk_to_doc_idx, n_docs),
+        "Max": aggregate_max(chunk_probs, chunk_to_doc_idx, n_docs),
+        "WeightedMean": aggregate_weighted_mean(chunk_probs, chunk_to_doc_idx, n_docs, chunk_threshold),
+    }
+
+    # Create figure
+    fig = plt.figure(figsize=(18, 10))
+    gs = gridspec.GridSpec(2, 3, figure=fig)
+
+    # Row 1: Confusion matrices
+    for idx, (name, probs) in enumerate(methods.items()):
+        ax = fig.add_subplot(gs[0, idx])
+        preds = (probs >= doc_threshold).astype(int)
+
+        ConfusionMatrixDisplay.from_predictions(y_true, preds, ax=ax, colorbar=False, cmap="Blues")
+        ax.set_title(f"{name} Aggregation")
+
+        # Calculate metrics
+        from sklearn.metrics import accuracy_score, f1_score
+
+        acc = accuracy_score(y_true, preds)
+        f1 = f1_score(y_true, preds)
+        ax.text(0.5, -0.15, f"Acc: {acc:.3f} | F1: {f1:.3f}", ha="center", transform=ax.transAxes, fontsize=10)
+
+    # Row 2, Col 1: ROC curves
+    ax_roc = fig.add_subplot(gs[1, 0])
+    for name, probs in methods.items():
+        fpr, tpr, _ = roc_curve(y_true, probs)
+        roc_auc = auc(fpr, tpr)
+        ax_roc.plot(fpr, tpr, label=f"{name} (AUC={roc_auc:.3f})", linewidth=2)
+
+    ax_roc.plot([0, 1], [0, 1], "k--", label="Random")
+    ax_roc.set_xlabel("False Positive Rate")
+    ax_roc.set_ylabel("True Positive Rate")
+    ax_roc.set_title("ROC Curves: Aggregation Methods")
+    ax_roc.legend()
+    ax_roc.grid(alpha=0.3)
+
+    # Row 2, Col 2: Probability distributions
+    ax_dist = fig.add_subplot(gs[1, 1])
+    bins = np.linspace(0, 1, 50)
+    colors = ["#3498db", "#e74c3c", "#2ecc71"]
+
+    for (name, probs), color in zip(methods.items(), colors):
+        ax_dist.hist(probs, bins=bins, alpha=0.5, label=name, color=color, edgecolor="black")
+
+    ax_dist.axvline(doc_threshold, color="black", linestyle="--", label=f"Threshold ({doc_threshold:.3f})")
+    ax_dist.set_xlabel("AI Probability")
+    ax_dist.set_ylabel("Number of Documents")
+    ax_dist.set_title("Prediction Distributions")
+    ax_dist.legend()
+    ax_dist.grid(alpha=0.3)
+
+    # Row 2, Col 3: Method recommendation
+    ax_text = fig.add_subplot(gs[1, 2])
+    ax_text.axis("off")
+
+    recommendation_text = """
+Aggregation Method Comparison
+
+Mean: Simple average of chunk predictions
+- Balanced, robust to outliers
+- Good for consistent documents
+
+Max: Most suspicious chunk wins
+- Conservative for AI detection
+- Sensitive to single AI-like chunk
+
+WeightedMean (Default): Confidence-weighted
+- Weighs high-confidence chunks more
+- Best performance on test set
+- Balances precision and recall
+
+Use Max for high-precision needs,
+Mean for interpretability,
+WeightedMean for best F1 score.
+    """
+
+    ax_text.text(
+        0.1,
+        0.9,
+        recommendation_text.strip(),
+        verticalalignment="top",
+        fontsize=10,
+        family="monospace",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.3),
+    )
+
+    plt.tight_layout()
+    plot_path = PLOT_DIR / "aggregation_comparison.png"
+    plt.savefig(plot_path, bbox_inches="tight")
+    mlflow.log_artifact(str(plot_path))
+    logger.info(f"Saved aggregation comparison to {plot_path}")
+
+
+def chunking_behavior_analysis(
+    chunk_to_doc_idx: np.ndarray, chunked_tokens: list[list[list[int]]], n_docs: int
+) -> None:
+    """
+    Analyze chunking behavior on real documents.
+
+    Visualizes:
+    1. Distribution of chunk counts per document
+    2. Scatter: document length vs number of chunks
+    3. Chunk size distribution
+
+    Args:
+        chunk_to_doc_idx: Mapping from chunk index to document index
+        chunked_tokens: List of documents, each containing list of token chunks
+        n_docs: Total number of documents
+    """
+    logger.info("Generating chunking behavior analysis...")
+
+    # Calculate statistics per document
+    doc_num_chunks = []
+    doc_total_tokens = []
+    all_chunk_sizes = []
+
+    for doc_idx in range(n_docs):
+        if doc_idx < len(chunked_tokens):
+            chunks = chunked_tokens[doc_idx]
+            doc_num_chunks.append(len(chunks))
+
+            total_tokens = sum(len(chunk) for chunk in chunks)
+            doc_total_tokens.append(total_tokens)
+
+            for chunk in chunks:
+                all_chunk_sizes.append(len(chunk))
+
+    doc_num_chunks = np.array(doc_num_chunks)
+    doc_total_tokens = np.array(doc_total_tokens)
+    all_chunk_sizes = np.array(all_chunk_sizes)
+
+    # Create figure
+    fig = plt.figure(figsize=(16, 5))
+    gs = gridspec.GridSpec(1, 3, figure=fig)
+
+    # Subplot 1: Chunk count distribution
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.hist(doc_num_chunks, bins=range(1, max(doc_num_chunks) + 2), color="#9b59b6", alpha=0.7, edgecolor="black")
+    ax1.axvline(doc_num_chunks.mean(), color="red", linestyle="--", label=f"Mean: {doc_num_chunks.mean():.1f}")
+    ax1.set_xlabel("Number of Chunks per Document")
+    ax1.set_ylabel("Number of Documents")
+    ax1.set_title("Chunk Count Distribution")
+    ax1.legend()
+    ax1.grid(alpha=0.3)
+
+    # Subplot 2: Document length vs chunks
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.scatter(doc_total_tokens, doc_num_chunks, alpha=0.3, s=10, color="#3498db")
+
+    # Add trend line
+    z = np.polyfit(doc_total_tokens, doc_num_chunks, 1)
+    p = np.poly1d(z)
+    x_trend = np.linspace(doc_total_tokens.min(), doc_total_tokens.max(), 100)
+    ax2.plot(x_trend, p(x_trend), "r--", alpha=0.8, label="Trend")
+
+    ax2.set_xlabel("Total Tokens in Document")
+    ax2.set_ylabel("Number of Chunks")
+    ax2.set_title("Document Length vs Chunk Count")
+    ax2.legend()
+    ax2.grid(alpha=0.3)
+
+    # Subplot 3: Chunk size distribution
+    ax3 = fig.add_subplot(gs[0, 2])
+    ax3.hist(all_chunk_sizes, bins=50, color="#2ecc71", alpha=0.7, edgecolor="black")
+    ax3.axvline(all_chunk_sizes.mean(), color="red", linestyle="--", label=f"Mean: {all_chunk_sizes.mean():.1f}")
+    ax3.axvline(
+        np.median(all_chunk_sizes), color="blue", linestyle="--", label=f"Median: {np.median(all_chunk_sizes):.1f}"
+    )
+    ax3.set_xlabel("Chunk Size (tokens)")
+    ax3.set_ylabel("Number of Chunks")
+    ax3.set_title("Chunk Size Distribution")
+    ax3.legend()
+    ax3.grid(alpha=0.3)
+
+    # Add statistics text
+    stats_text = (
+        f"Total documents: {n_docs}\n"
+        f"Total chunks: {len(all_chunk_sizes)}\n"
+        f"Avg chunks/doc: {doc_num_chunks.mean():.1f}\n"
+        f"Single-chunk docs: {(doc_num_chunks == 1).sum()} ({100 * (doc_num_chunks == 1).sum() / n_docs:.1f}%)"
+    )
+    ax3.text(
+        0.98,
+        0.98,
+        stats_text,
+        transform=ax3.transAxes,
+        verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        fontsize=9,
+    )
+
+    plt.tight_layout()
+    plot_path = PLOT_DIR / "chunking_behavior_analysis.png"
+    plt.savefig(plot_path, bbox_inches="tight")
+    mlflow.log_artifact(str(plot_path))
+    logger.info(f"Saved chunking behavior analysis to {plot_path}")
+
+    # Log summary statistics
+    mlflow.log_metric("avg_chunks_per_doc", float(doc_num_chunks.mean()))
+    mlflow.log_metric("avg_chunk_size", float(all_chunk_sizes.mean()))
+    mlflow.log_metric("single_chunk_doc_pct", float(100 * (doc_num_chunks == 1).sum() / n_docs))
+
+
+def confidence_correctness_analysis(
+    y_probs: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray, threshold: float
+) -> None:
+    """
+    Analyze relationship between prediction confidence and correctness.
+
+    Visualizes:
+    1. Scatter: confidence vs correctness
+    2. Accuracy by confidence bins
+    3. Confidence distributions for correct vs incorrect predictions
+
+    Args:
+        y_probs: Predicted probabilities (AI probability)
+        y_true: True labels
+        y_pred: Predicted labels
+        threshold: Classification threshold
+    """
+    logger.info("Generating confidence vs correctness analysis...")
+
+    # Calculate confidence (distance from threshold)
+    confidence = np.abs(y_probs - threshold)
+    correct = y_true == y_pred
+
+    # Create figure
+    fig = plt.figure(figsize=(16, 5))
+    gs = gridspec.GridSpec(1, 3, figure=fig)
+
+    # Subplot 1: Confidence vs correctness scatter
+    ax1 = fig.add_subplot(gs[0, 0])
+
+    # Jitter y-axis for visibility
+    y_jitter = correct.astype(float) + np.random.randn(len(correct)) * 0.05
+
+    colors = np.where(correct, "#2ecc71", "#e74c3c")
+    ax1.scatter(confidence, y_jitter, alpha=0.3, s=20, c=colors)
+
+    ax1.set_xlabel("Prediction Confidence (distance from threshold)")
+    ax1.set_ylabel("Correct (1) / Incorrect (0)")
+    ax1.set_title("Confidence vs Prediction Correctness")
+    ax1.set_ylim(-0.3, 1.3)
+    ax1.axhline(0.5, color="gray", linestyle="--", alpha=0.5)
+    ax1.grid(alpha=0.3)
+
+    # Add trend line
+    from scipy.stats import pearsonr
+
+    corr, p_value = pearsonr(confidence, correct.astype(float))
+    ax1.text(
+        0.02,
+        0.98,
+        f"Correlation: {corr:.3f} (p={p_value:.3e})",
+        transform=ax1.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
+
+    # Subplot 2: Accuracy by confidence bins
+    ax2 = fig.add_subplot(gs[0, 1])
+
+    # Bin by confidence
+    confidence_bins = [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5]
+    bin_labels = ["0-0.05", "0.05-0.1", "0.1-0.15", "0.15-0.2", "0.2-0.3", "0.3-0.5", "0.5+"]
+    binned_confidence = np.digitize(confidence, confidence_bins)
+
+    accuracies = []
+    counts = []
+    # np.digitize with n bins creates indices 0 to n
+    # We skip index 0 (values < 0, shouldn't happen) and use 1 to n
+    for i in range(1, len(confidence_bins) + 1):
+        mask = binned_confidence == i
+        if mask.any():
+            accuracies.append(correct[mask].mean())
+            counts.append(mask.sum())
+        else:
+            accuracies.append(0)
+            counts.append(0)
+
+    bars = ax2.bar(bin_labels, accuracies, color="#3498db", alpha=0.7, edgecolor="black")
+
+    # Add count labels on bars
+    for bar, count in zip(bars, counts):
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width() / 2, height, f"n={count}", ha="center", va="bottom", fontsize=8)
+
+    ax2.set_xlabel("Confidence Bin")
+    ax2.set_ylabel("Accuracy")
+    ax2.set_title("Accuracy by Confidence Level")
+    ax2.set_ylim(0, 1.1)
+    ax2.axhline(correct.mean(), color="red", linestyle="--", label=f"Overall: {correct.mean():.3f}")
+    ax2.legend()
+    ax2.grid(axis="y", alpha=0.3)
+
+    # Subplot 3: Confidence distributions
+    ax3 = fig.add_subplot(gs[0, 2])
+
+    correct_mask = correct
+    incorrect_mask = ~correct
+
+    bins = np.linspace(0, confidence.max(), 50)
+    ax3.hist(
+        confidence[correct_mask],
+        bins=bins,
+        alpha=0.6,
+        color="#2ecc71",
+        label=f"Correct ({correct_mask.sum()})",
+        density=True,
+    )
+    ax3.hist(
+        confidence[incorrect_mask],
+        bins=bins,
+        alpha=0.6,
+        color="#e74c3c",
+        label=f"Incorrect ({incorrect_mask.sum()})",
+        density=True,
+    )
+
+    ax3.set_xlabel("Prediction Confidence")
+    ax3.set_ylabel("Density")
+    ax3.set_title("Confidence Distribution by Correctness")
+    ax3.legend()
+    ax3.grid(alpha=0.3)
+
+    # Add interpretation
+    avg_conf_correct = confidence[correct_mask].mean()
+    avg_conf_incorrect = confidence[incorrect_mask].mean()
+    ax3.text(
+        0.98,
+        0.98,
+        f"Avg conf (correct): {avg_conf_correct:.3f}\nAvg conf (incorrect): {avg_conf_incorrect:.3f}",
+        transform=ax3.transAxes,
+        verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
+
+    plt.tight_layout()
+    plot_path = PLOT_DIR / "confidence_correctness_analysis.png"
+    plt.savefig(plot_path, bbox_inches="tight")
+    mlflow.log_artifact(str(plot_path))
+    logger.info(f"Saved confidence vs correctness analysis to {plot_path}")
+
+    # Log metrics
+    mlflow.log_metric("confidence_correctness_corr", float(corr))
+    mlflow.log_metric("avg_confidence_correct", float(avg_conf_correct))
+    mlflow.log_metric("avg_confidence_incorrect", float(avg_conf_incorrect))

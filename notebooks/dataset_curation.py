@@ -16,11 +16,17 @@ import polars as pl
 import polars.selectors as cs
 from __init__ import DATA_PATH, RETRAINED_MODEL_VERSION, SEED, TEST_PATH, TRAIN_PATH
 from datasets import load_dataset
-from is_it_slop_preprocessing import __version__
+from is_it_slop_preprocessing import CleaningMode, TextCleaner, __version__
 from loguru import logger
 
 print(f"Bindings version: {__version__}")
 print(f"Pipeline model version output: {RETRAINED_MODEL_VERSION}")
+
+cleaner = TextCleaner(mode=CleaningMode.TRAINING)
+
+
+def clean_text_inner(series: pl.Series) -> pl.Series:
+    return pl.Series(series.name, cleaner.clean_batch(series.to_list()))
 
 
 # logging.basicConfig(level=logging.INFO)
@@ -29,8 +35,20 @@ print(f"Pipeline model version output: {RETRAINED_MODEL_VERSION}")
 
 
 def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
+
+    return (
+        df.with_columns(pl.col(text_col).map_batches(clean_text_inner, return_dtype=pl.Utf8))
+        .filter(pl.col(text_col).is_not_null())
+        .filter(pl.col(text_col).str.len_chars() > 0)
+    )
+
     return (
         df.with_columns(
+            pl.col(text_col)
+            .str.replace_all(r"[\u200B-\u200D\uFEFF]", "")  # Zero-width spaces
+            .str.replace_all(r"\u00A0", " ")  # Non-breaking space
+        )
+        .with_columns(
             pl.col(text_col)
             .str.replace_all(r"â€™", "'")  # Right single quote
             .str.replace_all(r"â€œ", '"')  # Left double quote
@@ -38,7 +56,7 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             .str.replace_all(r'â€"', "—")  # Em dash
             .str.replace_all(r'â€"', "–")  # En dash  # noqa: RUF001
         )
-        # 2. Decode HTML entities
+        # Decode HTML entities
         .with_columns(
             pl.col(text_col)
             .str.replace_all(r"&#39;", "'")
@@ -52,13 +70,13 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             .str.replace_all(r"#39;?", "'")  # Partial &#39; → '
             .str.replace_all(r"quot;?", '"')  # Partial &quot; → "
         )
-        # 3. Remove HTML tags
+        # Remove HTML tags
         .with_columns(
             pl.col(text_col)
             .str.replace_all(r"<br\s*/?>", " ")
             .str.replace_all(r"</?(p|div|span|strong|em|b|i|ul|ol|li|h[1-6])>", "")
         )
-        # 4. Remove citation markers (more aggressive)
+        # Remove citation markers (more aggressive)
         .with_columns(
             pl.col(text_col)
             # Remove [1], [2], [123] with optional trailing punctuation
@@ -71,7 +89,7 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             .str.replace_all(r"\d+\]", "")  # Remove 1], 2], etc.
             .str.replace_all(r"\[\d+\]", "")  # Remove [1], [2], etc.
         )
-        # 5. Remove news wire attributions and datelines
+        # Remove news wire attributions and datelines
         .with_columns(
             pl.col(text_col)
             # Remove news agencies in parentheses
@@ -86,7 +104,7 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             # Clean up remaining em-dash patterns from datelines
             .str.replace_all(r"\)\s*—\s*", ") ")
         )
-        # 5. Remove news wire attributions and datelines
+        # Remove news wire attributions and datelines
         .with_columns(
             pl.col(text_col)
             # News agencies in parentheses
@@ -111,7 +129,7 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             .str.replace_all(r"\s*—\s*(?:The|A)\s+", " ")
             .str.replace_all(r"\)\s*—\s*", ") ")
         )
-        # 6. Remove academic/structured document section headers
+        # Remove academic/structured document section headers
         .with_columns(
             pl.col(text_col)
             .str.replace_all(
@@ -135,7 +153,7 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             .str.replace_all(r"\.\s*Description\s*\n", ".\n")
             .str.replace_all(r"^\s*Description\s*\n", "")
         )
-        # 7. Remove timestamp/timezone markers (metadata artifacts)
+        # Remove timestamp/timezone markers (metadata artifacts)
         .with_columns(
             pl.col(text_col)
             # Timezone abbreviations with punctuation (EDT, EST, PST, etc.)
@@ -145,7 +163,7 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
                 r"\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\s*(?:EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC)?\s*[,\.]?", " "
             )
         )
-        # 8. Remove academic prompt artifacts (sentence start only)
+        # Remove academic prompt artifacts (sentence start only)
         .with_columns(
             pl.col(text_col)
             .str.replace_all(r"^(?:This (?:paper|study|article|abstract|research))\s+", "")
@@ -156,7 +174,7 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             .str.replace_all(r"^\d+\.\s+", "")  # Start of line
             .str.replace_all(r"\n\d+\.\s+", "\n")  # After newline
         )
-        # 9. Normalize whitespace
+        # Normalize whitespace
         .with_columns(
             pl.col(text_col)
             .str.replace_all(r"  +", " ")
@@ -164,9 +182,9 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
             .str.replace_all(r" \n", "\n")
             .str.replace_all(r"\n ", "\n")
         )
-        # 10. Strip quotes/whitespace
+        # Strip quotes/whitespace
         .with_columns(pl.col(text_col).str.strip_chars().str.strip_chars("'\"").str.strip_chars())
-        # 10. Filter null/empty (preserve original logic)
+        # Filter null/empty
         .filter(pl.col(text_col).is_not_null())
         .filter(pl.col(text_col).str.len_chars() > 0)
     )
@@ -2189,6 +2207,35 @@ logger.info("Loaded Human Preference 140k text")
 # human_preference_140k.head(5).collect()
 
 
+# # [Raid Bench](https://huggingface.co/datasets/liamdugan/raid)
+
+# In[ ]:
+
+
+from polars_splitters import sample
+
+df: pl.LazyFrame = load_dataset("liamdugan/raid")["train"].to_polars().lazy()  # type: ignore[reportAttributeAccessIssue]
+
+human, ai = (
+    df.select("model", "attack", "domain", "generation")
+    .rename({"generation": "text"})
+    .with_columns(pl.when(pl.col("model") == "human").then(0).otherwise(1).alias("label").cast(pl.Int8))
+    .filter(pl.col("model").is_in(["human", "gpt4", "cohere-chat", "chatgpt", "gpt3", "llama-chat", "mistral-chat"]))
+    .collect()
+    .partition_by("label")
+)
+
+target_rows = human.height + 1
+ai_rows = ai.height
+fraction = target_rows / ai_rows
+
+ai = sample(ai, fraction=fraction, stratify_by=["domain", "model", "attack"], seed=SEED).sample(target_rows, seed=SEED)
+raid = (
+    pl.concat([human.lazy(), ai.lazy()]).select(["text", "label"]).pipe(clean_text).with_columns(dataset=pl.lit("raid"))
+)
+logger.info("Loaded Raid Bench text")
+
+
 # ## AI vs Human
 # 
 # 7 datasets containing 10,000 samples, 5,000 human-written and 5,000 AI-generated.
@@ -2258,6 +2305,10 @@ logger.info("Loaded Human Preference 140k text")
 # ### Arena Human Preference 140k
 # 
 # 135,634 samples (x2 for both columns) of AI generated data. 
+# 
+# ### Raid Bench Summary
+# 
+# 320_916 (160452 human, 160464 AI) samples of AI vs Human text
 
 # # Dataset curation
 # 
@@ -2353,30 +2404,35 @@ logger.info("Loaded Human Preference 140k text")
 # Human samples: N/A     - 115,000 total
 # AI samples: 20,000     - 115,000 total
 # 
+# ### Raid Bench Summary
+# Take a sample of 170,000 of AI vs Human text (85,000 from each class).
+# 
+# Human samples: 85,000   - 200,000 total
+# AI samples: 85,000      - 200,000 total
 
 # In[ ]:
 
 
-def strat_sample(df: pl.LazyFrame, n_per_stratum: int, stratify_by: str = "label", *, seed: int = 42) -> pl.LazyFrame:
+def strat_sample(df: pl.LazyFrame, n_per_stratum: int, stratify_by: str = "label") -> pl.LazyFrame:
     sample_h = (
         df.filter(pl.col(stratify_by) == 0)
         .unique(maintain_order=True)
         .collect()
-        .sample(n=n_per_stratum, seed=seed, shuffle=True)
+        .sample(n=n_per_stratum, seed=SEED, shuffle=True)
         .lazy()
     )
     sample_a = (
         df.filter(pl.col(stratify_by) == 1)
         .unique(maintain_order=True)
         .collect()
-        .sample(n=n_per_stratum, seed=seed, shuffle=True)
+        .sample(n=n_per_stratum, seed=SEED, shuffle=True)
         .lazy()
     )
     return pl.concat([sample_h, sample_a])
 
 
-def sample(df: pl.LazyFrame, n: int, seed: int = 42) -> pl.LazyFrame:
-    return df.unique(maintain_order=True).collect().sample(n=n, seed=seed, shuffle=True).lazy()
+def sample(df: pl.LazyFrame, n: int) -> pl.LazyFrame:
+    return df.unique(maintain_order=True).collect().sample(n=n, seed=SEED, shuffle=True).lazy()
 
 
 # In[ ]:
@@ -2390,7 +2446,7 @@ df = (
             *[
                 ai_vs_human_llama_8B,
                 ai_vs_human_gemma,
-                strat_sample(ai_vs_human_gpt35t, 4_500, seed=SEED),
+                strat_sample(ai_vs_human_gpt35t, 4_500),
                 ai_vs_human_llama,
                 ai_vs_human_qwen,
                 ai_vs_human_smolLM2,
@@ -2399,25 +2455,16 @@ df = (
             # There are duplicates in the Human vs AI sentences dataset
             # (specifically for the human class so we will
             # oversample below on the human data so when we drop duplicates later we still have enough human data)
-            strat_sample(human_vs_ai_sentences, 5_500, seed=SEED),
-            strat_sample(ai_movie_reviews, n_per_stratum=5_000, seed=SEED),
+            strat_sample(human_vs_ai_sentences, 5_500),
+            strat_sample(ai_movie_reviews, n_per_stratum=5_000),
             # Human and AI generated text datasets
-            strat_sample(ai_and_human, n_per_stratum=10_000, seed=SEED),
-            strat_sample(human_vs_machine, n_per_stratum=10_000, seed=SEED),
+            strat_sample(ai_and_human, n_per_stratum=10_000),
+            strat_sample(human_vs_machine, n_per_stratum=10_000),
             # Human text datasets
-            *[
-                sample(imdb, 7_500, seed=SEED),
-                sample(ag, 15_000, seed=SEED),
-                sample(rt, 7_500, seed=SEED),
-                sample(newswire, 35_492, seed=SEED),
-                english_quotes,
-            ],
+            *[sample(imdb, 7_500), sample(ag, 15_000), sample(rt, 7_500), sample(newswire, 35_492), english_quotes],
             # AI text datasets
-            *[
-                sample(expert_arena, 10_000, seed=SEED),
-                sample(search_arena, 20_000, seed=SEED),
-                sample(human_preference_140k, 20_000, seed=SEED),
-            ],
+            *[sample(expert_arena, 10_000), sample(search_arena, 20_000), sample(human_preference_140k, 20_000)],
+            strat_sample(raid, n_per_stratum=85_000),
         ],
         how="diagonal",
     )

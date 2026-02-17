@@ -13,10 +13,10 @@
 //! let predictor = Predictor::new();
 //!
 //! // Get raw probabilities
-//! let prediction = predictor.predict("Some text to analyze")?;
+//! let result = predictor.predict("Some text to analyze")?;
 //! println!(
 //!     "AI probability: {:.2}%",
-//!     prediction.ai_probability() * 100.0
+//!     result.prediction.ai_probability() * 100.0
 //! );
 //!
 //! // Or get a classification directly
@@ -53,14 +53,14 @@ mod python;
 #[cfg(feature = "cli")]
 pub mod cli;
 
-mod model;
-mod pipeline;
+pub mod model;
+pub mod pipeline;
 
 use anyhow::Context;
-pub use model::{CLASSIFICATION_THRESHOLD, MODEL_VERSION};
-pub use pipeline::{Classification, Prediction};
+pub use model::MODEL_VERSION;
+pub use pipeline::{AggregationMethod, Classification, Prediction, UnifiedPrediction};
 
-use crate::model::MODEL;
+use crate::model::{CHUNK_CLASSIFICATION_THRESHOLD, CLASSIFICATION_THRESHOLD, MODEL};
 
 /// Builder struct for configuring and running predictions.
 ///
@@ -83,6 +83,7 @@ use crate::model::MODEL;
 /// ```
 pub struct Predictor {
     threshold: f32,
+    agg_method: AggregationMethod,
 }
 
 impl Predictor {
@@ -91,6 +92,7 @@ impl Predictor {
     pub fn new() -> Self {
         Self {
             threshold: CLASSIFICATION_THRESHOLD,
+            agg_method: AggregationMethod::WeightedMean(CHUNK_CLASSIFICATION_THRESHOLD),
         }
     }
 
@@ -105,6 +107,16 @@ impl Predictor {
         self
     }
 
+    /// Set a custom aggregation method for chunk predictions.
+    ///
+    /// The aggregation method determines how chunk-level predictions
+    /// are combined into a final document-level prediction.
+    #[must_use]
+    pub fn with_aggregation_method(mut self, method: AggregationMethod) -> Self {
+        self.agg_method = method;
+        self
+    }
+
     /// Get the current threshold value.
     #[must_use]
     pub fn threshold(&self) -> f32 {
@@ -114,8 +126,8 @@ impl Predictor {
     /// Predict probabilities for a single text.
     ///
     /// Returns a `Prediction` containing P(Human) and P(AI).
-    pub fn predict<T: AsRef<str>>(&self, text: T) -> anyhow::Result<Prediction> {
-        pipeline::predict(&MODEL, text.as_ref())
+    pub fn predict<T: AsRef<str>>(&self, text: T) -> anyhow::Result<UnifiedPrediction> {
+        pipeline::predict(&MODEL, text.as_ref(), self.agg_method)
             .with_context(|| "Failed to predict probabilities for the given text")
     }
 
@@ -125,8 +137,8 @@ impl Predictor {
     pub fn predict_batch<T: AsRef<str> + Sync>(
         &self,
         texts: &[T],
-    ) -> anyhow::Result<Vec<Prediction>> {
-        pipeline::predict_batch(&MODEL, texts)
+    ) -> anyhow::Result<Vec<UnifiedPrediction>> {
+        pipeline::predict_batch(&MODEL, texts, self.agg_method)
             .with_context(|| "Failed to predict probabilities for the given texts")
     }
 
@@ -171,11 +183,24 @@ mod tests {
             .predict("This is a test text")
             .expect("Prediction should succeed");
 
-        assert!(prediction.human_probability() >= 0.0);
-        assert!(prediction.human_probability() <= 1.0);
-        assert!(prediction.ai_probability() >= 0.0);
-        assert!(prediction.ai_probability() <= 1.0);
-        assert!((prediction.human_probability() + prediction.ai_probability() - 1.0).abs() < 0.001);
+        assert!(prediction.chunk_predictions.iter().all(|p| {
+            p.human_probability() >= 0.0
+                && p.human_probability() <= 1.0
+                && p.ai_probability() >= 0.0
+                && p.ai_probability() <= 1.0
+                && (p.human_probability() + p.ai_probability() - 1.0).abs() < 0.001
+        }));
+
+        assert!(prediction.prediction.human_probability() >= 0.0);
+        assert!(prediction.prediction.human_probability() <= 1.0);
+        assert!(prediction.prediction.ai_probability() >= 0.0);
+        assert!(prediction.prediction.ai_probability() <= 1.0);
+        assert!(
+            (prediction.prediction.human_probability() + prediction.prediction.ai_probability()
+                - 1.0)
+                .abs()
+                < 0.001
+        );
     }
 
     #[test]
@@ -209,10 +234,10 @@ mod tests {
 
         assert_eq!(predictions.len(), 3);
         for pred in predictions {
-            assert!(pred.human_probability() >= 0.0);
-            assert!(pred.human_probability() <= 1.0);
-            assert!(pred.ai_probability() >= 0.0);
-            assert!(pred.ai_probability() <= 1.0);
+            assert!(pred.prediction.human_probability() >= 0.0);
+            assert!(pred.prediction.human_probability() <= 1.0);
+            assert!(pred.prediction.ai_probability() >= 0.0);
+            assert!(pred.prediction.ai_probability() <= 1.0);
         }
     }
 

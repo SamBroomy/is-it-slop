@@ -2,14 +2,15 @@ line-length = 120
 show-fixes = true
 src = ["python/"]
 extend-include = ["notebooks/*.ipynb"]
-# exclude = ["notebooks/*.py"]
+exclude = ["python/**/tests/**", "python/**/test_*.py"]
+
 [lint]
 preview = true
 select = ["ALL"]
 ignore = [
     # --- modules ---
-    "CPY", # # Flake8-copyright
-
+    "CPY",    # Flake8-copyright
+    "RUF067", # non-empty-init-module
     # # --- specific rules ---
     # "ASYNC240", # Async functions should not use pathlib.Path methods
     # "N999",     # Invalid module name

@@ -21,6 +21,8 @@ repos:
       #   stages: [pre-commit]
       - id: check-added-large-files
         stages: [pre-commit]
+        args: ["--maxkb=500"]
+        exclude: '^(plots/.*\.png|uv\.lock)$' # Exclude plots and uv.lock
       - id: check-toml
         stages: [pre-commit]
       - id: check-yaml
@@ -37,14 +39,14 @@ repos:
         exclude: '^notebooks/.*\.py$' # Exclude synced notebook scripts
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.9.15
+    rev: 0.10.3
     hooks:
       - id: uv-sync
         args: ["--locked", "--all-packages"]
       - id: uv-lock
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.7
+    rev: v0.15.1
     hooks:
       - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]

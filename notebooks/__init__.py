@@ -4,15 +4,16 @@ from typing import Final, Protocol
 
 import numpy as np
 import polars as pl
-from is_it_slop import MODEL_VERSION
+
+# from is_it_slop import MODEL_VERSION
 from semver import Version
 
 SEED: Final[int] = 42
-
+MODEL_VERSION = "2.0.0"
 RETRAINED_MODEL_VERSION = Version.parse(MODEL_VERSION)
 
 # Get from command line argument or set to True to force retraining
-RETRAIN_VECTORIZER = "--force-retrain-vectorizer" in sys.argv or False
+RETRAIN_VECTORIZER = "--force-retrain-vectorizer" in sys.argv or True
 if RETRAIN_VECTORIZER:
     RETRAINED_MODEL_VERSION = RETRAINED_MODEL_VERSION.bump_minor()
 if "--bump-major" in sys.argv:
@@ -28,8 +29,8 @@ DATA_DIR = ROOT_DIR / "data" / str(RETRAINED_MODEL_VERSION)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DATA_PATH = DATA_DIR / "curated_dataset.parquet"
-TRAIN_PATH = DATA_DIR / "curated_dataset_train.parquet"
-TEST_PATH = DATA_DIR / "curated_dataset_test.parquet"
+TRAIN_PATH = DATA_DIR / "train.parquet"
+TEST_PATH = DATA_DIR / "test.parquet"
 
 df = pl.scan_parquet(DATA_PATH)
 df_train = pl.scan_parquet(TRAIN_PATH)
@@ -41,9 +42,11 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 
 VECTORIZER_JSON_PATH = MODEL_DIR / "tfidf_vectorizer.json"
-VECTORIZER_BIN_PATH = MODEL_DIR / "tfidf_vectorizer.bin"
+VECTORIZER_BIN_PATH = MODEL_DIR / "tfidf_vectorizer.rkyv"
 MODEL_ONNX_PATH = MODEL_DIR / "slop-classifier.onnx"
 CLASSIFICATION_THRESHOLD_PATH = MODEL_DIR / "classification_threshold.txt"
+CHUNK_CLASSIFICATION_THRESHOLD_PATH = MODEL_DIR / "chunk_classification_threshold.txt"
+CHUNKER_CONFIG_PATH = MODEL_DIR / "token_chunker_config.json"
 
 
 class ProbabilisticClassifier(Protocol):
@@ -62,6 +65,8 @@ class LinearClassifier(ProbabilisticClassifier, Protocol):
 
 
 __all__ = [
+    "CHUNKER_CONFIG_PATH",
+    "CHUNK_CLASSIFICATION_THRESHOLD_PATH",
     "CLASSIFICATION_THRESHOLD_PATH",
     "DATA_PATH",
     "MODEL_DIR",

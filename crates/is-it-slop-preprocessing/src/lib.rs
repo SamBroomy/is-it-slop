@@ -35,9 +35,3 @@
 mod python;
 
 pub mod pre_processor;
-
-/// Internal constant for optimizing n-gram key storage.
-///
-/// Uses the default max n-gram size to set the inline capacity of `SmallVec` for n-gram keys.
-/// This avoids heap allocations for the common case where n-grams fit within the default range.
-pub(crate) const NGRAM_CONST_KEY: usize = pre_processor::DEFAULT_MAX_NGRAM;

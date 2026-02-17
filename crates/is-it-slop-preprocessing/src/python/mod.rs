@@ -1,18 +1,66 @@
+//! Python bindings for the preprocessing pipeline.
+//!
+//! This module exposes Rust preprocessing components to Python via PyO3.
+//! All Rust types are prefixed with `Rust*` (e.g., `RustTfidfVectorizer`), and
+//! Python wrappers remove the prefix (e.g., `TfidfVectorizer` in Python).
+//!
+//! # Exposed Components
+//!
+//! - **RustTfidfVectorizer**: TF-IDF vectorization with token n-grams
+//! - **RustTokenChunker**: Token-based text chunking
+//! - **RustTextCleaner**: Two-stage text cleaning (universal + dataset artifacts)
+//! - **RustVectorizerParams**: Configuration for vectorizers
+//!
+//! # Python Usage
+//!
+//! ```python
+//! from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
+//!
+//! # Create vectorizer
+//! params = VectorizerParams(min_df=10, max_df=0.9, sublinear_tf=True)
+//! vectorizer, X = TfidfVectorizer.fit_transform(texts, params)
+//!
+//! # Save to file
+//! vectorizer.save("vectorizer.rkyv")
+//! ```
+//!
+//! # CSR Matrix Format
+//!
+//! Sparse matrices are returned as tuples `(data, indices, indptr, shape)` compatible
+//! with `scipy.sparse.csr_matrix`:
+//! ```python
+//! from scipy.sparse import csr_matrix
+//! data, indices, indptr, shape = vectorizer.transform(texts)
+//! X = csr_matrix((data, indices, indptr), shape=shape)
+//! ```
+
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+use std::{fs, path::Path};
 
 use ahash::HashMap;
 use numpy::ToPyArray;
 use pyo3::{prelude::*, types::PyTuple};
 
-use crate::pre_processor::{TfidfVectorizer, VectorizerParams};
+use crate::pre_processor::{
+    DEFAULT_MAX_NGRAM, DEFAULT_MIN_NGRAM, TextCleaner, TfidfVectorizer, TokenChunker,
+    VectorizerParams, reverse_tokenize as reverse_tokenize_, text_cleaner_for_inference,
+    text_cleaner_for_training, tokenize as tokenize_,
+};
+
 #[allow(clippy::unsafe_derive_deserialize)]
-/// A wrapper struct for `VectorizerParams` to expose it to Python.
-#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+/// Python wrapper for [`VectorizerParams`].
+///
+/// Configuration parameters for TF-IDF vectorization exposed to Python.
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy)]
-#[pyclass]
+#[pyclass(from_py_object)]
 struct RustVectorizerParams {
     #[pyo3(get)]
     ngram_range: (usize, usize),
@@ -28,10 +76,10 @@ struct RustVectorizerParams {
 impl RustVectorizerParams {
     /// Creates a new `RustVectorizerParams` instance.
     #[new]
-    #[pyo3(signature = (ngram_range, min_df, max_df, sublinear_tf))]
-    fn new(ngram_range: (usize, usize), min_df: f32, max_df: f32, sublinear_tf: bool) -> Self {
+    #[pyo3(signature = (min_df, max_df, sublinear_tf))]
+    fn new(min_df: f32, max_df: f32, sublinear_tf: bool) -> Self {
         Self {
-            ngram_range,
+            ngram_range: (DEFAULT_MIN_NGRAM, DEFAULT_MAX_NGRAM),
             min_df,
             max_df,
             sublinear_tf,
@@ -66,7 +114,7 @@ impl Default for RustVectorizerParams {
 impl RustVectorizerParams {
     fn to_inner(self) -> VectorizerParams {
         VectorizerParams::new(
-            self.ngram_range.0..=self.ngram_range.1,
+            // self.ngram_range.0..=self.ngram_range.1,
             self.min_df,
             self.max_df,
             self.sublinear_tf,
@@ -86,10 +134,13 @@ impl From<&VectorizerParams> for RustVectorizerParams {
 }
 #[allow(clippy::unsafe_derive_deserialize)]
 /// A wrapper function around `TfidfVectorizer` to expose it to Python.
-#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 struct RustTfidfVectorizer {
     #[serde(flatten)]
     inner: TfidfVectorizer,
@@ -158,6 +209,27 @@ impl RustTfidfVectorizer {
         Ok((vectorizer, transform_result))
     }
 
+    /// Transform pre-tokenized sequences to TF-IDF matrix
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn vectorize_from_tokens<'py>(
+        &self,
+        py: Python<'py>,
+        token_sequences: Vec<Vec<u32>>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let tfidf_matrix = py.detach(|| self.inner.vectorize_from_tokens(&token_sequences));
+
+        let data = tfidf_matrix.data().to_pyarray(py);
+        let indices = tfidf_matrix.indices().to_pyarray(py);
+        let indptr = tfidf_matrix
+            .indptr()
+            .to_owned()
+            .into_raw_storage()
+            .to_pyarray(py);
+        let shape = (tfidf_matrix.rows(), tfidf_matrix.cols());
+
+        (shape, data, indices, indptr).into_pyobject(py)
+    }
+
     /// Getter for the number of features (vocabulary size).
     #[getter]
     pub fn num_features(&self) -> usize {
@@ -189,17 +261,22 @@ impl RustTfidfVectorizer {
         format!("{self:#?}")
     }
 
-    /// Serialize the vectorizer to bytes using bincode format.
+    /// Serialize the vectorizer to bytes using rkyv format.
     /// Returns a bytes object that can be saved to disk or passed to `from_bytes`.
     /// Return the inner vectorizer serialized as bytes so it is compatible with Rust side.
-    #[cfg(feature = "bincode")]
+    #[cfg(feature = "rkyv")]
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         py.detach(|| {
-            self.inner.to_bytes().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to serialize vectorizer: {e}"
-                ))
-            })
+            self.inner
+                .to_bytes()
+                // Converting the archived bytes to a Vec<u8> for Python compatibility, it allocates
+                // and you should use `save` method for large models to avoid this allocation.
+                .map(rkyv::util::AlignedVec::into_vec)
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to serialize vectorizer: {e}"
+                    ))
+                })
         })
     }
 
@@ -217,7 +294,67 @@ impl RustTfidfVectorizer {
         })
     }
 
-    /// Deserialize the vectorizer from bytes (bincode format).
+    /// Save the vectorizer to a path based on the file extension.
+    /// Supports .rkyv (rkyv) and .json (serde).
+    #[cfg(any(feature = "rkyv", feature = "serde"))]
+    fn save(&self, py: Python<'_>, path: &str) -> PyResult<()> {
+        let path = Path::new(path);
+        let extension = path.extension().and_then(|ext| ext.to_str());
+
+        py.detach(|| match extension {
+            Some("rkyv") => {
+                #[cfg(feature = "rkyv")]
+                {
+                    let bytes = self.inner.to_bytes().map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to serialize vectorizer: {e}"
+                        ))
+                    })?;
+                    fs::write(path, bytes.as_slice()).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to write vectorizer to {}: {e}",
+                            path.display()
+                        ))
+                    })
+                }
+                #[cfg(not(feature = "rkyv"))]
+                {
+                    let _ = path;
+                    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "rkyv serialization is not enabled",
+                    ))
+                }
+            }
+            Some("json") => {
+                #[cfg(feature = "serde")]
+                {
+                    let json = self.inner.to_json().map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to serialize vectorizer to JSON: {e}"
+                        ))
+                    })?;
+                    fs::write(path, json).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to write vectorizer to {}: {e}",
+                            path.display()
+                        ))
+                    })
+                }
+                #[cfg(not(feature = "serde"))]
+                {
+                    let _ = path;
+                    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "JSON serialization is not enabled",
+                    ))
+                }
+            }
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "File extension must be .rkyv or .json",
+            )),
+        })
+    }
+
+    /// Deserialize the vectorizer from bytes (rkyv format).
     ///
     /// Args:
     ///     bytes: A bytes object containing the serialized vectorizer
@@ -225,7 +362,7 @@ impl RustTfidfVectorizer {
     /// Returns:
     ///     A new `RustTfidfVectorizer` instance
     #[staticmethod]
-    #[cfg(feature = "bincode")]
+    #[cfg(feature = "rkyv")]
     fn from_bytes(py: Python<'_>, bytes: &[u8]) -> PyResult<Self> {
         py.detach(|| {
             let inner = TfidfVectorizer::from_bytes(bytes).map_err(|e| {
@@ -234,6 +371,93 @@ impl RustTfidfVectorizer {
                 ))
             })?;
             Ok(Self { inner })
+        })
+    }
+
+    /// Load a vectorizer from a path based on the file extension.
+    /// Supports .rkyv (rkyv) and .json (serde).
+    #[staticmethod]
+    #[cfg(any(feature = "rkyv", feature = "bincode", feature = "serde"))]
+    fn load(py: Python<'_>, path: &str) -> PyResult<Self> {
+        let path = Path::new(path);
+        let extension = path.extension().and_then(|ext| ext.to_str());
+
+        py.detach(|| match extension {
+            Some("rkyv") => {
+                #[cfg(feature = "rkyv")]
+                {
+                    let bytes = fs::read(path).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to read vectorizer from {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    let inner = TfidfVectorizer::from_bytes(&bytes).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to deserialize vectorizer from bytes: {e}"
+                        ))
+                    })?;
+                    Ok(Self { inner })
+                }
+                #[cfg(not(feature = "rkyv"))]
+                {
+                    let _ = path;
+                    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "rkyv serialization is not enabled",
+                    ))
+                }
+            }
+            Some("bin") => {
+                #[cfg(feature = "bincode")]
+                {
+                    let bytes = fs::read(path).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to read vectorizer from {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    let inner = TfidfVectorizer::from_bincode_bytes(&bytes).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to deserialize vectorizer from bincode bytes: {e}"
+                        ))
+                    })?;
+                    Ok(Self { inner })
+                }
+                #[cfg(not(feature = "bincode"))]
+                {
+                    let _ = path;
+                    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "bincode serialization is not enabled",
+                    ))
+                }
+            }
+            Some("json") => {
+                #[cfg(feature = "serde")]
+                {
+                    let json = fs::read_to_string(path).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to read vectorizer from {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    let inner = TfidfVectorizer::from_json(&json).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to deserialize vectorizer from JSON: {e}"
+                        ))
+                    })?;
+                    Ok(Self { inner })
+                }
+                #[cfg(not(feature = "serde"))]
+                {
+                    let _ = path;
+                    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "JSON serialization is not enabled",
+                    ))
+                }
+            }
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "File extension must be .rkyv, .bin, or .json",
+            )),
         })
     }
 
@@ -258,15 +482,127 @@ impl RustTfidfVectorizer {
     }
 }
 
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct RustTokenChunker {
+    inner: TokenChunker,
+}
+
+#[pymethods]
+impl RustTokenChunker {
+    #[new]
+    #[pyo3(signature = (chunk_size=150, overlap=15, min_chunk_size=30))]
+    fn new(chunk_size: usize, overlap: usize, min_chunk_size: usize) -> Self {
+        Self {
+            inner: TokenChunker {
+                chunk_size,
+                overlap,
+                min_chunk_size,
+            },
+        }
+    }
+
+    /// Chunk a single token sequence
+    #[allow(clippy::needless_pass_by_value)]
+    fn chunk(&self, tokens: Vec<u32>) -> Vec<Vec<u32>> {
+        self.inner.chunk(&tokens)
+    }
+
+    /// Chunk multiple token sequences in parallel
+    #[allow(clippy::needless_pass_by_value)]
+    fn chunk_batch(&self, py: Python<'_>, token_sequences: Vec<Vec<u32>>) -> Vec<Vec<Vec<u32>>> {
+        py.detach(|| self.inner.chunk_batch(&token_sequences))
+    }
+
+    fn to_dict(&self) -> std::collections::HashMap<String, usize> {
+        std::collections::HashMap::from([
+            ("chunk_size".to_string(), self.inner.chunk_size),
+            ("overlap".to_string(), self.inner.overlap),
+            ("min_chunk_size".to_string(), self.inner.min_chunk_size),
+        ])
+    }
+}
+
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub enum RustCleaningMode {
+    Training,
+    Inference,
+}
+
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct RustTextCleaner {
+    inner: TextCleaner,
+    mode: RustCleaningMode,
+}
+
+#[pymethods]
+impl RustTextCleaner {
+    #[new]
+    #[allow(clippy::needless_pass_by_value)]
+    fn new(mode: RustCleaningMode) -> Self {
+        let inner = match mode {
+            RustCleaningMode::Training => text_cleaner_for_training().clone(),
+            RustCleaningMode::Inference => text_cleaner_for_inference().clone(),
+        };
+
+        Self { inner, mode }
+    }
+
+    /// Clean a single text string
+    fn clean(&self, text: &str) -> String {
+        self.inner.clean(text).to_string()
+    }
+
+    /// Clean multiple texts in parallel
+    #[allow(clippy::needless_pass_by_value)]
+    fn clean_batch(&self, python: Python<'_>, texts: Vec<String>) -> Vec<String> {
+        python.detach(|| {
+            self.inner.clean_batch(&texts)
+            // texts
+            //     .into_par_iter()
+            //     .map(|text| self.inner.clean(text))
+            //     .collect()
+        })
+    }
+
+    pub fn is_training_mode(&self) -> bool {
+        matches!(self.mode, RustCleaningMode::Training)
+    }
+}
+
+/// Encode text into BPE token IDs
+/// This is a utility function to expose tokenization to Python.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn tokenize(py: Python<'_>, text: Vec<String>) -> Vec<Vec<u32>> {
+    py.detach(|| tokenize_(&text))
+}
+
+/// Decode BPE token IDs back to text
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn reverse_tokenize(py: Python<'_>, tokens: Vec<u32>) -> String {
+    py.detach(|| reverse_tokenize_(&tokens))
+}
+
 #[pymodule]
 #[pyo3(name = "_is_it_slop_preprocessing_rust_bindings")]
 fn is_it_slop_preprocessing(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Initialize Python logging for Rust components
-    pyo3_log::init();
+    // pyo3_log::init();
 
-    // Add version information
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<RustVectorizerParams>()?;
     m.add_class::<RustTfidfVectorizer>()?;
+
+    m.add_class::<RustTokenChunker>()?;
+
+    m.add_class::<RustCleaningMode>()?;
+    m.add_class::<RustTextCleaner>()?;
+
+    m.add_function(wrap_pyfunction!(tokenize, m)?)?;
+    m.add_function(wrap_pyfunction!(reverse_tokenize, m)?)?;
+
     Ok(())
 }

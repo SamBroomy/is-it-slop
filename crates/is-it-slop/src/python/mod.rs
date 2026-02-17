@@ -1,3 +1,32 @@
+//! Python bindings for AI text detection inference.
+//!
+//! This module exposes the inference pipeline to Python via PyO3.
+//!
+//! # Python API
+//!
+//! ```python
+//! from is_it_slop import is_this_slop, is_this_slop_batch
+//!
+//! # Single prediction
+//! result = is_this_slop("Some text to classify")
+//! print(f"{result.classification}: {result.ai_probability:.2%}")
+//!
+//! # Batch prediction
+//! results = is_this_slop_batch(["text 1", "text 2", "text 3"])
+//! for r in results:
+//!     print(f"{r.classification}: {r.ai_probability:.2%}")
+//!
+//! # Custom threshold
+//! result = is_this_slop("Text", threshold=0.6)
+//! ```
+//!
+//! # Return Type
+//!
+//! `PredictionResult` contains:
+//! - `human_probability`: P(Human) in [0.0, 1.0]
+//! - `ai_probability`: P(AI) in [0.0, 1.0]
+//! - `classification`: "Human" or "AI"
+
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -6,13 +35,13 @@ use pyo3::prelude::*;
 
 use crate::Prediction;
 
-/// Result of a prediction containing probabilities and classification.
+/// Python prediction result containing probabilities and classification.
 ///
 /// Attributes:
 ///     `human_probability` (float): Probability that the text is human-written (0.0 to 1.0)
 ///     `ai_probability` (float): Probability that the text is AI-generated (0.0 to 1.0)
 ///     classification (str): Classification label ("Human" or "AI")
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 struct PredictionResult {
     #[pyo3(get)]
@@ -71,8 +100,8 @@ fn is_this_slop(py: Python<'_>, text: &str, threshold: Option<f32>) -> PyResult<
         let classification = prediction.classification(predictor.threshold());
 
         Ok(PredictionResult {
-            human_probability: prediction.human_probability(),
-            ai_probability: prediction.ai_probability(),
+            human_probability: prediction.prediction.human_probability(),
+            ai_probability: prediction.prediction.ai_probability(),
             classification: classification.to_string(),
         })
     })
@@ -105,8 +134,8 @@ fn is_this_slop_batch(
             .map(|pred| {
                 let classification = pred.classification(predictor.threshold());
                 PredictionResult {
-                    human_probability: pred.human_probability(),
-                    ai_probability: pred.ai_probability(),
+                    human_probability: pred.prediction.human_probability(),
+                    ai_probability: pred.prediction.ai_probability(),
                     classification: classification.to_string(),
                 }
             })
@@ -119,7 +148,7 @@ fn is_this_slop_batch(
 #[pymodule]
 #[pyo3(name = "_is_it_slop_rust_bindings")]
 fn is_it_slop(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    pyo3_log::init();
+    // pyo3_log::init();
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("CLASSIFICATION_THRESHOLD", crate::CLASSIFICATION_THRESHOLD)?;

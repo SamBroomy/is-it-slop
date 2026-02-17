@@ -18,12 +18,12 @@ name = "is_it_slop"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-is-it-slop-preprocessing = { workspace = true }
+is-it-slop-preprocessing = { workspace = true, features = ["serde"] }
 
 anyhow = { workspace = true }
 ndarray = { workspace = true }
 ort = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, optional = true }
 sprs = { workspace = true }
 # CLI-only dependenciess
 clap = { workspace = true, optional = true }
@@ -31,16 +31,21 @@ serde_json = { workspace = true, optional = true }
 # Python bindings dependencies
 mimalloc = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
-pyo3-log = { workspace = true, optional = true }
+# pyo3-log = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
 
 [[bin]]
 name = "is-it-slop"
 required-features = ["cli"]
 
 [features]
-cli = ["dep:clap", "dep:serde_json", "mimalloc"]
-python = ["dep:pyo3", "dep:pyo3-log", "mimalloc"]
+default = ["cli"]
+python = ["dep:pyo3", "mimalloc"]
+cli = ["dep:clap", "serde", "dep:serde_json", "mimalloc"]
 mimalloc = ["dep:mimalloc"]
+serde = ["dep:serde"]
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
 

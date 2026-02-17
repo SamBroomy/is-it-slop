@@ -38,7 +38,7 @@ vectorizer, X_train = TfidfVectorizer.fit_transform(train_texts, params)
 X_test = vectorizer.transform(test_texts)
 
 # Save vectorizer for inference
-vectorizer.save("tfidf_vectorizer.bin")
+vectorizer.save("tfidf_vectorizer.rkyv")
 ```
 
 ## API Overview
@@ -59,8 +59,8 @@ Main vectorizer class:
 - `fit_transform(texts, params)`: Fit and transform in one pass (faster)
 - `fit(texts, params)`: Fit vocabulary only
 - `transform(texts)`: Transform to TF-IDF matrix
-- `save(path)`: Save to bincode format
-- `load(path)`: Load from bincode format
+- `save(path)`: Save to rkyv format
+- `load(path)`: Load from rkyv format
 
 ## Why Token N-grams?
 
