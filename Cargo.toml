@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing"]
 
 [workspace.package]
-version = "0.5.0-alpha.1"
+version = "0.5.0-beta.0"
 edition = "2024"
 # rust-version = "1.89"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
@@ -12,7 +12,12 @@ repository = "https://github.com/SamBroomy/is-it-slop"
 homepage = "https://github.com/SamBroomy/is-it-slop"
 readme = "README.md"
 description = "Detect AI-generated slop text using machine learning."
-categories = ["command-line-utilities", "science", "text-processing", "algorithms"]
+categories = [
+    "command-line-utilities",
+    "science",
+    "text-processing",
+    "algorithms",
+]
 keywords = [
     "AI-text-detector",
     "Machine-learning",
