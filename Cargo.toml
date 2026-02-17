@@ -23,8 +23,8 @@ keywords = [
 
 
 [workspace.dependencies]
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.5.0-alpha" }
-is-it-slop = { path = "crates/is-it-slop", version = "0.5.0-alpha" }
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.5.0-alpha.0" }
+is-it-slop = { path = "crates/is-it-slop", version = "0.5.0-alpha.0" }
 
 
 ahash = { version = "0.8.12", features = ["serde"] }
