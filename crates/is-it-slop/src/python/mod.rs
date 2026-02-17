@@ -1,6 +1,6 @@
 //! Python bindings for AI text detection inference.
 //!
-//! This module exposes the inference pipeline to Python via PyO3.
+//! This module exposes the inference pipeline to Python via `PyO3`.
 //!
 //! # Python API
 //!

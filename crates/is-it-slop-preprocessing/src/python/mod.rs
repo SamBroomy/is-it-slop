@@ -1,15 +1,15 @@
 //! Python bindings for the preprocessing pipeline.
 //!
-//! This module exposes Rust preprocessing components to Python via PyO3.
+//! This module exposes Rust preprocessing components to Python via `PyO3`.
 //! All Rust types are prefixed with `Rust*` (e.g., `RustTfidfVectorizer`), and
 //! Python wrappers remove the prefix (e.g., `TfidfVectorizer` in Python).
 //!
 //! # Exposed Components
 //!
-//! - **RustTfidfVectorizer**: TF-IDF vectorization with token n-grams
-//! - **RustTokenChunker**: Token-based text chunking
-//! - **RustTextCleaner**: Two-stage text cleaning (universal + dataset artifacts)
-//! - **RustVectorizerParams**: Configuration for vectorizers
+//! - **`RustTfidfVectorizer`**: TF-IDF vectorization with token n-grams
+//! - **`RustTokenChunker`**: Token-based text chunking
+//! - **`RustTextCleaner`**: Two-stage text cleaning (universal + dataset artifacts)
+//! - **`RustVectorizerParams`**: Configuration for vectorizers
 //!
 //! # Python Usage
 //!

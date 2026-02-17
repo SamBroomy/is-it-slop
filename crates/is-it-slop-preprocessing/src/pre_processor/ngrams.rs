@@ -42,6 +42,7 @@ pub trait NgramKeyTrait:
 {
     fn from_slice(tokens: &[u32]) -> Self;
     fn as_slice(&self) -> &[u32];
+    #[allow(dead_code)]
     fn to_vec(&self) -> Vec<u32>;
 }
 

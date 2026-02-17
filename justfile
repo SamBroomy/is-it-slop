@@ -509,6 +509,22 @@ check: rust-lint-fix
     cargo clippy --all-targets --workspace --features all-testable -- -D warnings
     cargo test --all-targets --workspace --features all-testable
 
+# Pre-release validation - run all checks before pushing
+[group('dev')]
+[group('release')]
+pre-release:
+    @echo "Running pre-release checks..."
+    cargo fmt --all --check
+    cargo clippy -p is-it-slop-preprocessing --no-default-features --features rkyv,serde,bincode,mimalloc --all-targets -- -D warnings
+    cargo clippy -p is-it-slop --no-default-features --features cli --all-targets -- -D warnings
+    cargo test -p is-it-slop-preprocessing --lib --no-default-features --features rkyv,serde,bincode,mimalloc
+    cargo test -p is-it-slop --lib --all-features
+    cargo test -p is-it-slop --doc --no-default-features --features cli
+    cargo test -p is-it-slop-preprocessing --doc --no-default-features --features rkyv,serde
+    cargo doc --workspace --no-deps --all-features
+    cargo package -p is-it-slop-preprocessing --no-verify --allow-dirty
+    @echo "✅ All checks passed!"
+
 # =============================================================================
 # CI & Linting
 # =============================================================================

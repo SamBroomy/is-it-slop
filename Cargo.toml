@@ -12,7 +12,7 @@ repository = "https://github.com/SamBroomy/is-it-slop"
 homepage = "https://github.com/SamBroomy/is-it-slop"
 readme = "README.md"
 description = "Detect AI-generated slop text using machine learning."
-categories = ["command-line-utilities", "science", "text-processing", "parser"]
+categories = ["command-line-utilities", "science", "text-processing", "algorithms"]
 keywords = [
     "AI-text-detector",
     "Machine-learning",
