@@ -45,7 +45,8 @@ jobs:
             target: x86_64-pc-windows-msvc
             manylinux: null
           # macOS runners
-          - runner: macos-13
+          # Note: macos-15-intel is the last x86_64 runner (available until Aug 2027)
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
             manylinux: null
           - runner: macos-14
