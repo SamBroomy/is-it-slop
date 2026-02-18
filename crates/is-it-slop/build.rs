@@ -1,4 +1,4 @@
-//! Build script for is-it-slop crate
+//! Build script for is-it-slop crate.
 //!
 //! This build script handles downloading and managing model artifacts required for runtime
 //! inference.
