@@ -63,6 +63,9 @@ tar = "0.4.44"
 tempfile = "3.23.0"
 ureq = "3.1.4"
 
+# TODO: remove  once native-tls 0.2.17 is yanked or fixed
+[patch.crates-io]
+native-tls = { git = "https://github.com/rust-native-tls/rust-native-tls", tag = "v0.2.16" }
 
 [workspace.lints.rust]
 # Standard Rust lints

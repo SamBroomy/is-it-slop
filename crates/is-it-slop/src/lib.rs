@@ -184,7 +184,6 @@ mod tests {
         let prediction = predictor
             .predict("This is a test text")
             .expect("Prediction should succeed");
-
         assert!(prediction.chunk_predictions.iter().all(|p| {
             p.human_probability() >= 0.0
                 && p.human_probability() <= 1.0
