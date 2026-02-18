@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-beta.7](https://github.com/SamBroomy/is-it-slop/compare/v0.5.0-beta.6...v0.5.0-beta.7) - 2026-02-18
+
+### Fixed
+
+- native-tls 0.2.17 breaks builds, pinning 0.2.16 for now
+
 ## [0.5.0-beta.6](https://github.com/SamBroomy/is-it-slop/compare/v0.5.0-beta.5...v0.5.0-beta.6) - 2026-02-18
 
 ### Other
