@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-beta.5](https://github.com/SamBroomy/is-it-slop/compare/v0.5.0-beta.4...v0.5.0-beta.5) - 2026-02-18
+
+### Other
+
+- fix PyPI metadata and comprehensive README updates
+
 ## [0.5.0-alpha.1](https://github.com/SamBroomy/is-it-slop/compare/v0.5.0-alpha.0...v0.5.0-alpha.1) - 2026-02-17
 
 ### Other
