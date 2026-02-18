@@ -2,6 +2,8 @@
 //!
 //! A fast and accurate AI text detector built with Rust.
 //!
+//! Supports multiple platforms including macOS (Intel and ARM), Linux, and Windows.
+//!
 //! This crate provides tools to classify whether text was written by AI or a human,
 //! using a machine learning model based on TF-IDF features and ONNX runtime inference.
 //!
