@@ -28,6 +28,7 @@
 !/plots/*.svg
 !/python/**/*.py
 !/python/**/py.typed
+!/python/**/LICENSE
 !/notebooks/__init__.py
 !/.cargo/config.toml
 !/python/**/README.md

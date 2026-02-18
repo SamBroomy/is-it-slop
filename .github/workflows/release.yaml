@@ -136,6 +136,8 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
     needs: [build-wheels, build-sdist]
+    environment:
+      name: pypi
     permissions:
       id-token: write
       contents: write
