@@ -43,8 +43,9 @@ classifiers = [
     "Topic :: Text Processing",
     "Typing :: Typed",
 ]
-license = "./../../LICENSE"
-readme = "./README.md"
+license = { file = "./../../LICENSE" }
+readme = { file = "./README.md", content-type = "text/markdown" }
+
 dependencies = []
 
 [project.urls]

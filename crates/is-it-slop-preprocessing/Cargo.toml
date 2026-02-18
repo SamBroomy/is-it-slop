@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 description = "Preprocessing step for is-it-slop package, providing fast TF-IDF vectorization."
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 

@@ -9,6 +9,7 @@
 !.gitignore
 !.gitattributes
 !/crates/**/*.rs
+!/crates/**/README.md
 !/crates/**/Cargo.toml
 !/Cargo.toml
 !/Cargo.lock

@@ -4,13 +4,16 @@ Fast TF-IDF text vectorization for training AI text detection models.
 
 Implementation in Rust with Python bindings.
 
-The python bindings allow us to use the same Rust-based text preprocessing at training and inference time.
+> **Note for inference users:** If you only want to use the AI text detection model for predictions, install [`is-it-slop`](https://pypi.org/project/is-it-slop/) instead. This preprocessing library is primarily for the training step or accessing the preprocessing pipeline directly.
+
+The Python bindings allow us to use the same Rust-based text preprocessing at training and inference time, ensuring consistency between model training and deployment.
 
 ## Features
 
 - **Token n-grams**: Uses tiktoken BPE token sequences (not characters/words)
 - **sklearn-compatible API**: Drop-in replacement for training pipelines
 - **Parallel processing**: Automatic multi-threading via Rust/rayon
+- **Multiple serialization formats**: rkyv (default), bincode, and JSON support
 
 ## Installation
 
@@ -23,9 +26,8 @@ pip install is-it-slop-preprocessing
 ```python
 from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
 
-# Configure vectorizer
+# Configure vectorizer (n-gram range is fixed at 2-4 tokens)
 params = VectorizerParams(
-    ngram_range=(3, 5),  # 3-5 token n-grams
     min_df=10,           # Ignore terms in < 10 docs
     max_df=0.8,          # Ignore terms in > 80% of docs
     sublinear_tf=True    # Apply log scaling to term frequencies
@@ -41,34 +43,13 @@ X_test = vectorizer.transform(test_texts)
 vectorizer.save("tfidf_vectorizer.rkyv")
 ```
 
-## API Overview
+## Platform Support
 
-### VectorizerParams
+Pre-built wheels available for:
 
-Configuration for text processing:
-
-- `ngram_range`: Tuple of (min_n, max_n) for token n-gram range
-- `min_df`: Minimum document frequency (proportion or count)
-- `max_df`: Maximum document frequency (proportion or count)
-- `sublinear_tf`: Apply `1 + log(tf)` scaling
-
-### TfidfVectorizer
-
-Main vectorizer class:
-
-- `fit_transform(texts, params)`: Fit and transform in one pass (faster)
-- `fit(texts, params)`: Fit vocabulary only
-- `transform(texts)`: Transform to TF-IDF matrix
-- `save(path)`: Save to rkyv format
-- `load(path)`: Load from rkyv format
-
-## Why Token N-grams?
-
-Unlike character n-grams or word n-grams, this uses **sequences of BPE tokens**:
-
-- With `ngram_range=(3,5)`, extracts 3-5 consecutive tiktoken tokens
-- Better captures AI patterns spanning multiple sub-word units
-- More compact vocabulary than character n-grams
+- **Linux**: x86_64, aarch64 (manylinux_2_28)
+- **macOS**: Apple Silicon (ARM64)
+- **Windows**: x86_64
 
 ## License
 
