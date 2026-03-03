@@ -4,7 +4,7 @@ Fast and accurate AI text detection using machine learning.
 
 Python bindings for the is-it-slop AI text detection library, powered by Rust and ONNX Runtime.
 
-> **This is the main inference library.** For most users, this is all you need. If you want to train custom models or access the preprocessing pipeline directly, see [`is-it-slop-preprocessing`](https://pypi.org/project/is-it-slop-preprocessing/).
+> **This is the main inference library.** For most users, this is all you need. If you want to access the preprocessing pipeline directly, see [`is-it-slop-preprocessing`](https://pypi.org/project/is-it-slop-preprocessing/).
 
 ## Features
 
@@ -155,18 +155,6 @@ print(f"Model version: {MODEL_VERSION}")
 6. **Aggregation**: Combines chunk predictions using weighted mean
 
 This pipeline ensures consistent preprocessing between training and inference.
-
-## Performance Characteristics
-
-- **Short texts** (< 150 tokens): Single chunk, instant inference
-- **Medium texts** (150-1000 tokens): ~2-7 chunks, efficient batch processing
-- **Long texts** (1000+ tokens): Automatically chunked and aggregated
-
-The Rust implementation provides significant speedup over pure Python:
-
-- 5-10x faster preprocessing (tokenization, vectorization)
-- Parallel batch processing
-- Zero-copy operations where possible
 
 ## Command-Line Interface
 
