@@ -38,6 +38,12 @@ Model artifacts (~22 MB) download automatically during build.
 ### Python
 
 ```bash
+uv add is-it-slop
+```
+
+or
+
+```bash
 pip install is-it-slop
 ```
 

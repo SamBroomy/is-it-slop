@@ -650,6 +650,18 @@ pred_onx = sess.run(None, {input_name: test_input.toarray()})
 # In[ ]:
 
 
+input_meta = sess.get_inputs()[0]
+
+
+# In[ ]:
+
+
+input_meta
+
+
+# In[ ]:
+
+
 model_pred = ensemble.predict_proba(test_input)
 model_pred
 

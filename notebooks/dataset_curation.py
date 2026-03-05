@@ -37,19 +37,23 @@ def clean_text_inner(series: pl.Series) -> pl.Series:
 def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
 
     return (
-        df.with_columns(pl.col(text_col).map_batches(clean_text_inner, return_dtype=pl.Utf8))
+        df
+        .with_columns(pl.col(text_col).map_batches(clean_text_inner, return_dtype=pl.Utf8))
         .filter(pl.col(text_col).is_not_null())
         .filter(pl.col(text_col).str.len_chars() > 0)
     )
 
     return (
-        df.with_columns(
-            pl.col(text_col)
+        df
+        .with_columns(
+            pl
+            .col(text_col)
             .str.replace_all(r"[\u200B-\u200D\uFEFF]", "")  # Zero-width spaces
             .str.replace_all(r"\u00A0", " ")  # Non-breaking space
         )
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             .str.replace_all(r"â€™", "'")  # Right single quote
             .str.replace_all(r"â€œ", '"')  # Left double quote
             .str.replace_all(r"â€", '"')  # Right double quote
@@ -58,7 +62,8 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
         )
         # Decode HTML entities
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             .str.replace_all(r"&#39;", "'")
             .str.replace_all(r"&quot;", '"')
             .str.replace_all(r"&amp;", "&")
@@ -72,13 +77,15 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
         )
         # Remove HTML tags
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             .str.replace_all(r"<br\s*/?>", " ")
             .str.replace_all(r"</?(p|div|span|strong|em|b|i|ul|ol|li|h[1-6])>", "")
         )
         # Remove citation markers (more aggressive)
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             # Remove [1], [2], [123] with optional trailing punctuation
             .str.replace_all(r"\[\d+\][\.,;:\)\]]?", "")  # [1], [2], [1].
             # Remove malformed citations: 1], 2].
@@ -91,7 +98,8 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
         )
         # Remove news wire attributions and datelines
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             # Remove news agencies in parentheses
             .str.replace_all(r"\s*\([A-Z]{2,}\)\s*", " ")  # (AP), (Reuters), (UPI)
             # Remove news agencies followed by dash
@@ -106,7 +114,8 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
         )
         # Remove news wire attributions and datelines
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             # News agencies in parentheses
             .str.replace_all(r"\s*\((?:AP|AFP|Reuters|UPI|Bloomberg)\)\s*", " ")
             # News agencies followed by dash
@@ -131,7 +140,8 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
         )
         # Remove academic/structured document section headers
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             .str.replace_all(
                 r"\b(?:ABSTRACT|BACKGROUND|OBJECTIVE|METHODS?|RESULTS?|CONCLUSIONS?|DISCUSSION|INTRODUCTION)[\s:]*", ""
             )
@@ -155,7 +165,8 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
         )
         # Remove timestamp/timezone markers (metadata artifacts)
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             # Timezone abbreviations with punctuation (EDT, EST, PST, etc.)
             .str.replace_all(r"\s+(?:EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC)[,\.]?\s+", " ")
             # "at HH:MM AM/PM EST" patterns
@@ -165,18 +176,21 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
         )
         # Remove academic prompt artifacts (sentence start only)
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             .str.replace_all(r"^(?:This (?:paper|study|article|abstract|research))\s+", "")
             .str.replace_all(r"\n(?:This (?:paper|study|article|abstract|research))\s+", "\n")
         )
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             .str.replace_all(r"^\d+\.\s+", "")  # Start of line
             .str.replace_all(r"\n\d+\.\s+", "\n")  # After newline
         )
         # Normalize whitespace
         .with_columns(
-            pl.col(text_col)
+            pl
+            .col(text_col)
             .str.replace_all(r"  +", " ")
             .str.replace_all(r"\n\n\n+", "\n\n")
             .str.replace_all(r" \n", "\n")
@@ -190,9 +204,11 @@ def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
     )
 
 
-def load_normal(dataset_name: str, rename: dict[str, str] | None = None, *, clean: bool = True) -> pl.LazyFrame:
-    ds = load_dataset(dataset_name)
-    dataset_name = dataset_name.rsplit("/", maxsplit=1)[-1]
+def load_normal(
+    dataset_name: str, rename: dict[str, str] | None = None, *, subset_name: str | None = None, clean: bool = True
+) -> pl.LazyFrame:
+    ds = load_dataset(dataset_name, name=subset_name)
+    dataset_name = dataset_name.rsplit("/", maxsplit=1)[-1] + (f"/{subset_name}" if subset_name else "")
     lf = pl.concat(
         ds[split].to_polars().lazy()  # type: ignore[attr-defined]
         for split in ds
@@ -1394,7 +1410,8 @@ abstracts_path = hf_hub_download(
 
 
 human_vs_machine = (
-    pl.concat([pl.scan_csv(wiki_path), pl.scan_csv(abstracts_path)])
+    pl
+    .concat([pl.scan_csv(wiki_path), pl.scan_csv(abstracts_path)])
     .with_columns(cs.by_dtype(pl.Utf8).str.strip_chars(), dataset=pl.lit("human_vs_machine"))
     .drop(["title", "word_count"])
     .pipe(clean_text)
@@ -1657,7 +1674,8 @@ def load_ai_vs_human_collection(dataset_name: str) -> pl.LazyFrame:
     ds = load_normal(dataset_name, clean=False)
     dataset_name = dataset_name.rsplit("/", maxsplit=1)[-1]
     return (
-        ds.rename({"ai": "1", "human": "0"})
+        ds
+        .rename({"ai": "1", "human": "0"})
         .select(["1", "0"])
         .unpivot()
         .rename({"variable": "label", "value": "text"})
@@ -2207,6 +2225,34 @@ logger.info("Loaded Human Preference 140k text")
 # human_preference_140k.head(5).collect()
 
 
+# # [Human Essays](https://huggingface.co/datasets/artfultom/human-essays)
+
+# In[ ]:
+
+
+human_essays = pl.concat([
+    load_normal("artfultom/human-essays", subset_name="asap2 essays"),
+    load_normal("artfultom/human-essays", subset_name="ivy panda essays"),
+    load_normal("artfultom/human-essays", subset_name="persuade essays"),
+]).with_columns(label=pl.lit(0, dtype=pl.Int8)).select(["text", "dataset", "label"])
+logger.info("Loaded human essays")
+human_essays.collect()
+
+
+# # [LLM Generated Essays](https://huggingface.co/datasets/artfultom/llm-generated-essays)
+# 
+# 37,488 records
+
+# In[ ]:
+
+
+llm_essays = pl.concat([
+    load_normal("artfultom/llm-generated-essays", subset_name="one prompt").select("text", "dataset", "model"),
+    load_normal("artfultom/llm-generated-essays", subset_name="two prompts").select("text", "dataset", "model"),
+]).with_columns(label=pl.lit(1, dtype=pl.Int8))
+logger.info("Loaded LLM-generated essays")
+
+
 # # [Raid Bench](https://huggingface.co/datasets/liamdugan/raid)
 
 # In[ ]:
@@ -2217,7 +2263,8 @@ from polars_splitters import sample
 df: pl.LazyFrame = load_dataset("liamdugan/raid")["train"].to_polars().lazy()  # type: ignore[reportAttributeAccessIssue]
 
 human, ai = (
-    df.select("model", "attack", "domain", "generation")
+    df
+    .select("model", "attack", "domain", "generation")
     .rename({"generation": "text"})
     .with_columns(pl.when(pl.col("model") == "human").then(0).otherwise(1).alias("label").cast(pl.Int8))
     .filter(pl.col("model").is_in(["human", "gpt4", "cohere-chat", "chatgpt", "gpt3", "llama-chat", "mistral-chat"]))
@@ -2415,14 +2462,16 @@ logger.info("Loaded Raid Bench text")
 
 def strat_sample(df: pl.LazyFrame, n_per_stratum: int, stratify_by: str = "label") -> pl.LazyFrame:
     sample_h = (
-        df.filter(pl.col(stratify_by) == 0)
+        df
+        .filter(pl.col(stratify_by) == 0)
         .unique(maintain_order=True)
         .collect()
         .sample(n=n_per_stratum, seed=SEED, shuffle=True)
         .lazy()
     )
     sample_a = (
-        df.filter(pl.col(stratify_by) == 1)
+        df
+        .filter(pl.col(stratify_by) == 1)
         .unique(maintain_order=True)
         .collect()
         .sample(n=n_per_stratum, seed=SEED, shuffle=True)
@@ -2440,7 +2489,8 @@ def sample(df: pl.LazyFrame, n: int) -> pl.LazyFrame:
 
 logger.info("Combining datasets...")
 df = (
-    pl.concat(
+    pl
+    .concat(
         [
             # AI vs Human datasets
             *[

@@ -636,6 +636,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
+ "csv",
  "directories",
  "flate2",
  "is-it-slop-preprocessing",
@@ -648,6 +649,8 @@ dependencies = [
  "sprs",
  "tar",
  "tempfile",
+ "tracing",
+ "tracing-subscriber",
  "ureq",
 ]
 

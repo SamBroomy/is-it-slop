@@ -8,8 +8,9 @@
 
 use bpe_openai::o200k_base;
 #[cfg(feature = "progress-bars")]
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use rayon::slice::ParallelSlice; // For par_chunks
 use tracing::{debug, instrument};
 
 /// Minimum number of texts before even considering parallelization.
@@ -42,15 +43,34 @@ fn progress_bar_setup(
 fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     debug!(num_texts = texts.len(), "Using parallel tokenization");
     let bpe = o200k_base();
+
+    // Use chunking to reduce thread synchronization overhead
+    // Process ~100-1000 chunks instead of creating millions of parallel tasks
+    let chunk_size = (texts.len() / 100).max(1000);
+
     #[cfg(feature = "progress-bars")]
     let pb = progress_bar_setup(texts.len(), "Tokenizing texts in parallel");
-    let result = texts.par_iter();
-    #[cfg(feature = "progress-bars")]
-    let result = result.progress_with(pb.clone());
-    let result = result.map(|text| bpe.encode(text)).collect();
+
+    let token_chunks: Vec<Vec<Vec<u32>>> = texts
+        .par_chunks(chunk_size)
+        .map(|chunk| {
+            chunk
+                .iter()
+                .map(|text| {
+                    let tokens = bpe.encode(text);
+                    #[cfg(feature = "progress-bars")]
+                    pb.inc(1);
+                    tokens
+                })
+                .collect()
+        })
+        .collect();
+
     #[cfg(feature = "progress-bars")]
     pb.finish_with_message("Parallel tokenization complete");
-    result
+
+    // Flatten chunks into single Vec
+    token_chunks.into_iter().flatten().collect()
 }
 
 #[instrument(level = "debug", skip(texts), fields(num_texts = texts.len()))]
@@ -533,6 +553,50 @@ mod tests {
             should_use_parallel(&eight_large),
             "8 texts with >= 1MB should parallelize"
         );
+    }
+
+    #[test]
+    fn test_chunked_tokenization_correctness() {
+        // Test that chunked parallel tokenization produces identical results to sequential
+        use rayon::prelude::*;
+
+        let texts: Vec<String> = (0..10000)
+            .map(|i| format!("Test document {i} with varied content"))
+            .collect();
+
+        // Sequential reference
+        let bpe = o200k_base();
+        let tokens_sequential: Vec<Vec<u32>> = texts.iter().map(|text| bpe.encode(text)).collect();
+
+        // Chunked parallel (mimics the actual implementation in tokenize_texts_par)
+        let chunk_size = (texts.len() / 100).max(1000);
+        let token_chunks: Vec<Vec<Vec<u32>>> = texts
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let bpe_local = o200k_base();
+                chunk.iter().map(|text| bpe_local.encode(text)).collect()
+            })
+            .collect();
+        let tokens_chunked: Vec<Vec<u32>> = token_chunks.into_iter().flatten().collect();
+
+        // Verify lengths match
+        assert_eq!(
+            tokens_sequential.len(),
+            tokens_chunked.len(),
+            "Chunked and sequential should produce same number of token sequences"
+        );
+
+        // Verify each document's tokens match exactly
+        for (i, (seq_tokens, chunked_tokens)) in tokens_sequential
+            .iter()
+            .zip(tokens_chunked.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                seq_tokens, chunked_tokens,
+                "Document {i}: token sequences don't match"
+            );
+        }
     }
 
     #[test]
