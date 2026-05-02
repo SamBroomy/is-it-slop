@@ -17,31 +17,45 @@
 
 Fast AI text detection using classic ML - TF-IDF and logistic regression.
 
+> Inspired by [Magika](https://github.com/google/magika) for serving a small, fast model via ONNX Runtime in Rust.
+
 ## Features
 
-- **Fast**: Rust based multi-threaded preprocessing and multi-threaded batch inference via ONNX inference.
-- **Small**: 14 MB model + 8 MB vectorizer — no transformers or GPU needed
-- **Portable**: Single 35 MB binary with embedded model, no Python runtime required
-- **Accurate**: 96%+ accuracy (F1 0.96, MCC 0.93) on diverse datasets
+- **Fast**: Rust-based multi-threaded preprocessing and batch inference via ONNX Runtime
+- **Small**: 4.7 MB model + 2.7 MB vectorizer (~7.4 MB total), no transformers or GPU needed
+- **Portable**: Single ~56 MB binary with embedded model, no Python runtime required
+- **Accurate**: 95%+ accuracy (F1 0.95, MCC 0.90) on diverse holdout test sets
 - **Chunk-aware**: Handles long documents via overlapping token chunks with aggregation
 
 ## Installation
 
 ### CLI
 
+**Option 1: Via Python package**:
+
+```bash
+pip install is-it-slop
+# or
+uv add is-it-slop
+# or run directly without installing:
+uvx is-it-slop "Your text here"
+```
+
+**Option 2: Standalone Rust binary**:
+
 ```bash
 cargo install is-it-slop --locked --features cli
 ```
 
-Model artifacts (~22 MB) download automatically during build.
+Model artifacts (~7.4 MB) download automatically during build and are embedded in the binary.
 
-### Python
+### Python Library
 
 ```bash
 uv add is-it-slop
 ```
 
-or
+or using pip:
 
 ```bash
 pip install is-it-slop
@@ -57,15 +71,23 @@ cargo add is-it-slop
 
 ### CLI
 
+Both Python and Rust installations provide the same `is-it-slop` command:
+
 ```bash
 is-it-slop "Your text here"
 # Output: 0.234 (AI probability)
 
 is-it-slop "Text" --format class
 # Output: Human (or AI)
+
+is-it-slop "Text" --format json
+# Output: {"class":"Human","probabilities":{"human":0.766,"ai":0.234},...}
+
+# Run directly with uvx (no installation needed):
+uvx is-it-slop "Your text here"
 ```
 
-### Python
+### Python Library
 
 ```python
 from is_it_slop import is_this_slop
@@ -142,11 +164,12 @@ notebooks/                    # Dataset curation + training
 
 ### Dataset Curation
 
-Training uses **15+ diverse datasets** spanning multiple domains and AI models to prevent overfitting:
+Training uses **25+ diverse datasets** spanning multiple domains and AI models to prevent overfitting:
 
-- Human text: News articles, scientific papers, creative writing, social media
-- AI text: GPT-3.5/4, Claude, Llama, Gemini, and other models
-- Balanced split: ~50% human, ~50% AI across domains
+- **Total samples**: ~687K (train: 474K, test: 118K, validation: 95K)
+- **Human sources**: News (newswire, ag_news, imdb), essays (ivy panda, asap2, persuade), quotes, reviews
+- **AI sources**: GPT-3.5/4, Claude, Llama 3.1/3.2, Gemini 2, SmolLM2, Qwen 2.5, and other models
+- **Class balance**: ~48% human, ~52% AI (test set matches training distribution)
 
 **Data quality caveat:** Model performance depends on dataset label accuracy. We assume training data labels are correct (human text is genuinely human-written, AI text is genuinely AI-generated), but mislabeled examples may exist.
 
@@ -162,17 +185,17 @@ See [`notebooks/train.ipynb`](notebooks/train.ipynb) for the complete training p
 
 The classifier is a **stacked ensemble** of calibrated linear models trained on token n-gram TF-IDF features:
 
-1. **Base models** (5 classifiers):
-   - Logistic Regression (30% weight)
-   - Calibrated Linear SVC (40% weight)
-   - SGD Classifier (15% weight)
-   - Naive Bayes (15% weight)
+1. **Base models** (4 classifiers):
+   - SGD Classifier (stochastic gradient descent)
+   - Logistic Regression
+   - Calibrated Linear SVC (with probability calibration)
+   - Multinomial Naive Bayes
 
-2. **Meta-learner**: Logistic regression combines base model predictions
+2. **Meta-learner**: Logistic Regression combines base model predictions via 5-fold stacking
 
 3. **Feature extraction**: Token n-grams (2-4 tokens) → TF-IDF vectors
    - Uses tiktoken's `o200k_base` BPE encoding
-   - Captures subword patterns across ~210k features
+   - Captures subword patterns across ~68k features (min_df=0.1%, max_df=70%)
 
 **Why this works:** AI-generated text exhibits predictable token sequence patterns. By combining multiple linear models with different learning characteristics, the ensemble captures these patterns robustly across diverse writing styles.
 

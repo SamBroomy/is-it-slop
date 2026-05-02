@@ -52,6 +52,18 @@ pub struct CountVectorizer {
 }
 
 impl CountVectorizer {
+    /// Create vectorizer from pre-built vocabulary.
+    ///
+    /// Used by `TfidfVectorizerBuilder` after incremental vocabulary construction.
+    ///
+    /// # Arguments
+    /// * `vocab` - Pre-built vocabulary mapping n-grams to feature indices
+    /// * `params` - Vectorizer parameters
+    #[must_use]
+    pub fn from_vocab(vocab: HashMap<NgramKey, usize>, params: VectorizerParams) -> Self {
+        Self { params, vocab }
+    }
+
     /// Fit vectorizer on training texts.
     ///
     /// # Arguments
@@ -65,15 +77,16 @@ impl CountVectorizer {
         Self::fit_from_tokenized(&tokenized_texts, params, None)
     }
 
-    /// Internal method to fit from pre-tokenized texts.
-    /// Used by `fit_transform` to avoid double tokenization.
+    /// Fit vectorizer from pre-tokenized texts.
+    ///
+    /// Public method to support memory-efficient workflows that manage tokenization separately.
     ///
     /// # Arguments
     /// * `tokenized_texts` - Pre-tokenized documents
     /// * `params` - Vectorizer parameters
     /// * `precomputed_ngrams` - Optional pre-computed n-grams to avoid recomputation
     #[instrument(level = "debug", skip(tokenized_texts, precomputed_ngrams), fields(num_texts = tokenized_texts.len(), has_precomputed = precomputed_ngrams.is_some()))]
-    fn fit_from_tokenized(
+    pub fn fit_from_tokenized(
         tokenized_texts: &[Vec<u32>],
         params: VectorizerParams,
         precomputed_ngrams: Option<&[HashMap<NgramKey, usize>]>,
@@ -484,7 +497,7 @@ impl CountVectorizer {
     ) -> (Self, CsMat<f32>) {
         debug!(
             num_texts = texts.len(),
-            "Optimized fit_transform: tokenizing and computing n-grams once"
+            "fit_transform: computing n-grams once"
         );
 
         // Step 1: Tokenize once
@@ -524,8 +537,8 @@ impl CountVectorizer {
         // Skip expensive drop of millions of HashMaps - not needed since we're done with them.
         // For large datasets (millions of docs), sequential HashMap deallocation dominates runtime.
         // The OS will reclaim this memory when appropriate.
-        std::mem::forget(ngram_maps);
-        std::mem::forget(tokenized_texts); // Also skip dropping Vec<Vec<u32>>
+        // std::mem::forget(ngram_maps);
+        // std::mem::forget(tokenized_texts); // Also skip dropping Vec<Vec<u32>>
 
         debug!("fit_transform complete with single n-gram computation");
         (vectorizer, transformed)
@@ -572,6 +585,14 @@ impl CountVectorizer {
     #[must_use]
     pub fn params(&self) -> &VectorizerParams {
         &self.params
+    }
+
+    /// Get reference to the internal vocabulary `HashMap`.
+    ///
+    /// Maps n-gram keys to feature indices. Useful for streaming IDF computation.
+    #[must_use]
+    pub fn vocab_map(&self) -> &HashMap<NgramKey, usize> {
+        &self.vocab
     }
 
     /// Convert a pre-computed n-gram map into sorted `(col_idx, count)` pairs.

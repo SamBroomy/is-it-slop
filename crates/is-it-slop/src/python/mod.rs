@@ -145,6 +145,44 @@ fn is_this_slop_batch(
     })
 }
 
+/// CLI entry point for Python console scripts.
+///
+/// Parses arguments from env::args() and runs the CLI.
+/// Handles errors cleanly without Python tracebacks.
+///
+/// **Note:** GIL is automatically released for the entire function since we don't
+/// take `py: Python<'_>` parameter. This allows optimal rayon parallelization.
+#[cfg(feature = "cli")]
+#[pyfunction]
+fn cli_main() -> PyResult<()> {
+    use clap::Parser;
+
+    use crate::cli::{Cli, run};
+
+    // Get argv from env::args(), skipping the Python interpreter path
+    // env::args() = ["/path/to/python", "/path/to/is-it-slop", "arg1", ...]
+    // skip(1)     = ["/path/to/is-it-slop", "arg1", ...]
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+
+    // Parse CLI arguments - clap will use argv[0] as program name
+    let cli = Cli::try_parse_from(&argv).map_err(|e| {
+        // Print the error/help message (try_parse_from doesn't auto-print)
+        let _ = e.print();
+        // Exit with clap's exit code (0 for help, 2 for parse errors)
+        PyErr::new::<pyo3::exceptions::PySystemExit, _>(e.exit_code())
+    })?;
+
+    // Run CLI (GIL already released automatically)
+    if let Err(e) = run(&cli) {
+        // Print error to stderr (like native Rust CLI does)
+        eprintln!("Error: {e}");
+        // Exit with code 1 (standard for runtime errors)
+        return Err(PyErr::new::<pyo3::exceptions::PySystemExit, _>(1));
+    }
+
+    Ok(())
+}
+
 #[pymodule]
 #[pyo3(name = "_is_it_slop_rust_bindings")]
 fn is_it_slop(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -157,6 +195,9 @@ fn is_it_slop(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PredictionResult>()?;
     m.add_function(wrap_pyfunction!(is_this_slop, m)?)?;
     m.add_function(wrap_pyfunction!(is_this_slop_batch, m)?)?;
+
+    #[cfg(feature = "cli")]
+    m.add_function(wrap_pyfunction!(cli_main, m)?)?;
 
     Ok(())
 }

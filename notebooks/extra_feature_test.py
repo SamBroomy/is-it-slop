@@ -14,8 +14,8 @@ import mlflow
 import numpy as np
 import polars as pl
 import seaborn as sns
-from __init__ import RETRAINED_MODEL_VERSION, SEED, VECTORIZER_BIN_PATH, df_test, df_train
-from is_it_slop_preprocessing import TfidfVectorizer, TokenChunker, VectorizerParams, __version__, tokenize
+from __init__ import RETRAINED_MODEL_VERSION, SEED, VECTORIZER_BIN_PATH, df_train
+from is_it_slop_preprocessing import __version__
 from loguru import logger
 
 # Python random
@@ -48,37 +48,35 @@ print("Vectorizer exists:", VECTORIZER_BIN_PATH.exists())
 # In[ ]:
 
 
-import numpy as np
-import polars as pl
-from dataclasses import dataclass
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import nltk
+import numpy as np
+import seaborn as sns
 from nltk.tokenize import sent_tokenize, word_tokenize
 from scipy import stats
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
 
 # Download required NLTK data
 try:
-    nltk.data.find('tokenizers/punkt')
+    nltk.data.find("tokenizers/punkt")
 except LookupError:
-    nltk.download('punkt')
+    nltk.download("punkt")
 
 try:
-    nltk.data.find('tokenizers/punkt_tab')
+    nltk.data.find("tokenizers/punkt_tab")
 except LookupError:
-    nltk.download('punkt_tab')
+    nltk.download("punkt_tab")
 
 
 # In[ ]:
 
 
-import nltk.langnames as lgn
 from new_dale_chall_readability import cloze_score, reading_level
 from nltk.classify.textcat import TextCat
 
-
 tc = TextCat()
+
 
 def process_words(text: str) -> dict[str, int | float | str]:
         # Language detection with fallback
@@ -95,8 +93,8 @@ def process_words(text: str) -> dict[str, int | float | str]:
     #     words = word_tokenize(text.lower(), language=lang)
     # except LookupError:
         # Fallback to English if language not supported
-    sentences = sent_tokenize(text, language='english')
-    words = word_tokenize(text.lower(), language='english')
+    sentences = sent_tokenize(text, language="english")
+    words = word_tokenize(text.lower(), language="english")
 
     words = [w for w in words if w.isalpha()]  # Only alphabetic tokens
 
@@ -127,7 +125,7 @@ def process_words(text: str) -> dict[str, int | float | str]:
     # try:
     #     sentence_lengths = [len(word_tokenize(s, language=lang)) for s in sentences]
     # except LookupError:
-    sentence_lengths = [len(word_tokenize(s, language='english')) for s in sentences]
+    sentence_lengths = [len(word_tokenize(s, language="english")) for s in sentences]
     avg_sentence_length = np.mean(sentence_lengths) if sentence_lengths else 0.0
     sentence_length_variance = np.var(sentence_lengths) if sentence_lengths else 0.0
     sentence_length_std = np.std(sentence_lengths) if sentence_lengths else 0.0
@@ -156,6 +154,8 @@ def process_words(text: str) -> dict[str, int | float | str]:
         "dale_chall_reading_level": dale_chall_reading_level,
         "num_paragraphs": num_paragraphs,
     }
+
+
 process_words(
     "This is a sample text. It contains several sentences. The purpose is to test the text processing function."
 )
@@ -191,7 +191,7 @@ df_exp
 
 
 def cohen_d(group1: np.ndarray, group2: np.ndarray) -> float:
-    """Compute Cohen's d effect size"""
+    """Compute Cohen's d effect size."""
     n1, n2 = len(group1), len(group2)
     var1, var2 = np.var(group1, ddof=1), np.var(group2, ddof=1)
     pooled_std = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
@@ -245,13 +245,13 @@ def analyze_feature_discrimination(
 
         # Store results
         results[feature] = {
-            'human_mean': float(np.mean(human_values)),
-            'human_std': float(np.std(human_values)),
-            'ai_mean': float(np.mean(ai_values)),
-            'ai_std': float(np.std(ai_values)),
-            'p_value': float(p_value),
-            'cohens_d': float(effect_size),
-            't_statistic': float(t_stat),
+            "human_mean": float(np.mean(human_values)),
+            "human_std": float(np.std(human_values)),
+            "ai_mean": float(np.mean(ai_values)),
+            "ai_std": float(np.std(ai_values)),
+            "p_value": float(p_value),
+            "cohens_d": float(effect_size),
+            "t_statistic": float(t_stat),
         }
 
         # Print results
@@ -287,13 +287,13 @@ def analyze_feature_discrimination(
 
         # Discriminative power
         if p_value < 0.01 and abs_d > 0.3:
-            print(f"  ✅ DISCRIMINATIVE FEATURE")
+            print("  ✅ DISCRIMINATIVE FEATURE")
         else:
-            print(f"  ❌ Not discriminative")
+            print("  ❌ Not discriminative")
 
         print()
 
-    print("="*80)
+    print("=" * 80)
     print("\nLEGEND:")
     print("  *** p < 0.001 (highly significant)")
     print("  **  p < 0.01  (significant)")
@@ -304,7 +304,7 @@ def analyze_feature_discrimination(
     print("  0.5-0.8: medium effect")
     print("  > 0.8: large effect")
     print("\n✅ = Discriminative (p < 0.01 AND |d| > 0.3)")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
 
 # In[ ]:

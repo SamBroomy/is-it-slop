@@ -17,7 +17,7 @@ use crate::{
 /// Command-line arguments structure
 #[derive(Parser)]
 #[command(name = "is-it-slop")]
-#[command(about = "Detect AI-generated text", long_about = None)]
+#[command(version, about = "Detect AI-generated text", long_about = None)]
 pub struct Cli {
     /// Text to analyze (if not provided, reads from stdin)
     #[arg(value_name = "TEXT")]
@@ -69,12 +69,13 @@ pub struct Cli {
 }
 
 /// Aggregation strategy for combining chunk predictions
-#[derive(ValueEnum, Clone, Copy)]
+#[derive(ValueEnum, Clone, Copy, Default)]
 pub enum AggregationStrategy {
     /// Average all chunk probabilities
     Mean,
     /// Use maximum chunk probability
     Max,
+    #[default]
     /// Confidence-weighted average
     Weighted,
 }

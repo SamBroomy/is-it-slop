@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-"""
-Post-training visualization script.
+"""Post-training visualization script.
 
 Generates additional analysis plots using trained model artifacts:
 1. Top predictive n-grams
@@ -13,9 +12,13 @@ Run after training to regenerate visualizations without retraining.
 """
 
 import json
+import pathlib
 import time
 
 import numpy as np
+
+# Import ONNX runtime
+import onnxruntime as ort
 from __init__ import (
     CHUNK_CLASSIFICATION_THRESHOLD_PATH,
     CHUNKER_CONFIG_PATH,
@@ -35,9 +38,6 @@ from plots import (
 )
 from sklearn.metrics import accuracy_score
 
-# Import ONNX runtime
-import onnxruntime as ort
-
 
 def load_artifacts():
     """Load trained model artifacts."""
@@ -48,7 +48,7 @@ def load_artifacts():
     logger.info(f"Loaded vectorizer with {len(vectorizer.vocabulary)} features")
 
     # Load chunker config
-    with open(CHUNKER_CONFIG_PATH) as f:
+    with pathlib.Path(CHUNKER_CONFIG_PATH).open(encoding="utf-8") as f:
         chunker_config = json.load(f)
     chunker = TokenChunker(
         chunk_size=chunker_config["chunk_size"],
@@ -62,9 +62,9 @@ def load_artifacts():
     logger.info("Loaded ONNX model")
 
     # Load thresholds
-    with open(CLASSIFICATION_THRESHOLD_PATH) as f:
+    with pathlib.Path(CLASSIFICATION_THRESHOLD_PATH).open(encoding="utf-8") as f:
         doc_threshold = float(f.read().strip())
-    with open(CHUNK_CLASSIFICATION_THRESHOLD_PATH) as f:
+    with pathlib.Path(CHUNK_CLASSIFICATION_THRESHOLD_PATH).open(encoding="utf-8") as f:
         chunk_threshold = float(f.read().strip())
 
     logger.info(f"Document threshold: {doc_threshold:.4f}")
@@ -150,7 +150,7 @@ def aggregate_predictions(chunk_probs: np.ndarray, chunk_to_doc: np.ndarray, n_d
     return doc_probs
 
 
-def main():
+def main() -> None:
     """Main execution function."""
     logger.info("=" * 80)
     logger.info("Generating extra visualizations from trained model")
@@ -160,7 +160,7 @@ def main():
     vectorizer, chunker, onnx_session, doc_threshold, chunk_threshold = load_artifacts()
 
     # Prepare test data
-    test_texts, test_tokens, test_chunked, y_test, X_test_chunks, chunk_to_doc = prepare_test_data(vectorizer, chunker)
+    _test_texts, _test_tokens, test_chunked, y_test, X_test_chunks, chunk_to_doc = prepare_test_data(vectorizer, chunker)
 
     # Run inference
     chunk_probs = run_inference(onnx_session, X_test_chunks)

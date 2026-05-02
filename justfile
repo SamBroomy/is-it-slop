@@ -4,31 +4,17 @@
 default:
     @just --list
 
+# Setup: install dependencies and pre-commit hooks
+[group('setup')]
 bootstrap: && install-pre-commit
     uv sync --dev --all-extras --all-groups
 
-# Install Git hooks using prefligit
+# Install pre-commit hooks
 [group('git-hooks')]
+[group('setup')]
 install-pre-commit:
-    #!/usr/bin/env sh
-    if ! command -v prek &> /dev/null; then
-        echo "Installing prefligit..."
-        cargo install --locked prek --force
-    else
-        echo "prek is already installed"
-    fi
-    prek install
-    prek run --all-files
-
-# Run the pre-commit hooks
-[group('git-hooks')]
-run-pre-commit:
-    prefligit run --all-files
-
-# Run the pre-push hooks
-[group('git-hooks')]
-run-pre-push:
-    prefligit run --hook-stage pre-push
+    uv run prek install
+    uv run prek run --all-files
 
 # =============================================================================
 # Development Pipeline
@@ -41,10 +27,10 @@ build-pre-processing-bindings:
     uv run --directory python/is-it-slop-preprocessing maturin develop --release --uv
 
 dataset-curation: sync-notebooks
-    uv run python notebooks/dataset_curation.py --force-retrain-vectorizer #--bump-major
+    uv run python notebooks/dataset_curation.py --force-retrain-vectorizer --bump-major
 
 training-pipeline: sync-notebooks
-    uv run python notebooks/train.py --force-retrain-vectorizer #--bump-major
+    uv run python notebooks/train.py --force-retrain-vectorizer --bump-major
 
 # Generate additional visualizations from trained model
 generate-extra-plots: sync-notebooks
@@ -126,6 +112,7 @@ package-artifacts:
         "tfidf_vectorizer.rkyv"
         "chunk_classification_threshold.txt"
         "token_chunker_config.json"
+        "model_metadata.json"
     )
 
     # Verify required files exist
@@ -221,28 +208,32 @@ package-training-data:
         exit 1
     fi
 
+    # Required files for dataset release
+    REQUIRED_FILES=(
+        "train.parquet"
+        "test.parquet"
+        "validation.parquet"
+        "dataset_metadata.json"
+    )
+
     # Verify required files exist
-    TRAIN_FILE="${DATA_DIR}/train.parquet"
-    TEST_FILE="${DATA_DIR}/test.parquet"
-    if [ ! -f "${TRAIN_FILE}" ]; then
-        echo "Missing required file: ${TRAIN_FILE}"
-        exit 1
-    fi
-    if [ ! -f "${TEST_FILE}" ]; then
-        echo "Missing required file: ${TEST_FILE}"
-        exit 1
-    fi
+    for f in "${REQUIRED_FILES[@]}"; do
+        if [ ! -f "${DATA_DIR}/${f}" ]; then
+            echo "❌ Missing required file: ${DATA_DIR}/${f}"
+            exit 1
+        fi
+    done
 
     # Calculate total size
     echo ""
     echo "📊 Training data contents:"
     echo "----------------------------------------"
     TOTAL_SIZE=0
-    for f in "${TRAIN_FILE}" "${TEST_FILE}"; do
-        SIZE=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null)
-        SIZE_HUMAN=$(du -h "$f" | cut -f1)
-        FILENAME=$(basename "$f")
-        printf "  %-35s %10s\n" "$FILENAME" "$SIZE_HUMAN"
+    for f in "${REQUIRED_FILES[@]}"; do
+        FILEPATH="${DATA_DIR}/${f}"
+        SIZE=$(stat -f%z "$FILEPATH" 2>/dev/null || stat -c%s "$FILEPATH" 2>/dev/null)
+        SIZE_HUMAN=$(du -h "$FILEPATH" | cut -f1)
+        printf "  %-35s %10s\n" "$f" "$SIZE_HUMAN"
         TOTAL_SIZE=$((TOTAL_SIZE + SIZE))
     done
     echo "----------------------------------------"
@@ -265,7 +256,9 @@ package-training-data:
     trap "rm -rf ${TEMP_DIR}" EXIT
 
     mkdir -p "${TEMP_DIR}/${MODEL_VERSION}"
-    cp "${TRAIN_FILE}" "${TEST_FILE}" "${TEMP_DIR}/${MODEL_VERSION}/"
+    for f in "${REQUIRED_FILES[@]}"; do
+        cp "${DATA_DIR}/${f}" "${TEMP_DIR}/${MODEL_VERSION}/"
+    done
 
     # Use COPYFILE_DISABLE to prevent macOS from adding resource forks
     COPYFILE_DISABLE=1 tar -cf "${TAR_PATH}" -C "${TEMP_DIR}" "${MODEL_VERSION}"

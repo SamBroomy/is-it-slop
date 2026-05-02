@@ -124,17 +124,24 @@ pub fn tokenize<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
         tokenize_texts(texts)
     }
 }
+
+/// Attempt to decode token IDs back to text, returning None on failure.
+///
+/// Used for vocabulary inspection that can tolerate decode failures without panicking.
+#[must_use]
+pub fn attempt_reverse_tokenize(tokens: &[u32]) -> Option<String> {
+    if tokens.is_empty() {
+        return Some(String::new());
+    }
+    let bpe = o200k_base();
+    bpe.decode(tokens)
+}
 /// Decode token IDs back to text.
 ///
-/// Used for vocabulary inspection. Not called during training/inference.
+/// Used for vocabulary inspection.
 #[must_use]
 pub fn reverse_tokenize(tokens: &[u32]) -> String {
-    if tokens.is_empty() {
-        return String::new();
-    }
-
-    let bpe = o200k_base();
-    bpe.decode(tokens).unwrap_or_else(|| {
+    attempt_reverse_tokenize(tokens).unwrap_or_else(|| {
         // Log the error with token IDs for debugging
         tracing::warn!(
             tokens = ?tokens,
@@ -612,5 +619,62 @@ mod tests {
         let result = reverse_tokenize(&tokens);
         assert!(!result.is_empty());
         assert!(!result.contains("!!"));
+    }
+
+    #[test]
+    fn test_attempt_reverse_tokenize_success() {
+        // Test successful decode path
+        let text = "Hello world";
+        let tokens = tokenize(&[text]);
+        let result = attempt_reverse_tokenize(&tokens[0]);
+
+        // Should successfully decode
+        assert!(result.is_some());
+        let decoded = result.unwrap();
+        assert!(!decoded.is_empty());
+    }
+
+    #[test]
+    fn test_attempt_reverse_tokenize_empty() {
+        // Empty tokens should return empty string
+        let result = attempt_reverse_tokenize(&[]);
+        assert_eq!(result, Some(String::new()));
+    }
+
+    #[test]
+    fn test_chunked_reverse_tokenization_preserves_content() {
+        use std::collections::HashSet;
+
+        use crate::pre_processor::TokenChunker;
+
+        let text = "Photosynthesis utilizes chlorophyll molecules.";
+        let tokens = tokenize(&[text])[0].clone();
+
+        let chunker = TokenChunker::default();
+        let chunks = chunker.chunk(&tokens);
+
+        // Decode each chunk
+        let chunk_texts: Vec<String> = chunks.iter().map(|chunk| reverse_tokenize(chunk)).collect();
+
+        // Verify: all words from original appear in at least one chunk
+        let original_words: HashSet<_> = text
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        let reconstructed_text = chunk_texts.join(" ");
+        let reconstructed_words: HashSet<_> = reconstructed_text
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        for word in &original_words {
+            assert!(
+                reconstructed_words.contains(word),
+                "Word '{word}' lost during chunking. Original: '{text}', Reconstructed: '{reconstructed_text}'"
+            );
+        }
     }
 }

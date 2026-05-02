@@ -1,7 +1,7 @@
 line-length = 120
 show-fixes = true
 src = ["python/"]
-extend-include = ["notebooks/*.ipynb"]
+extend-include = ["notebooks/*.ipynb", "notebooks/*.py"]
 exclude = ["python/**/tests/**", "python/**/test_*.py"]
 
 [lint]

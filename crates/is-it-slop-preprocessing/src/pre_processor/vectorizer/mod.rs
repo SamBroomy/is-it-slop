@@ -35,4 +35,4 @@ mod tfidf_vectorizer;
 
 pub use count_vectorizer::CountVectorizer;
 pub use params::{DEFAULT_MAX_NGRAM, DEFAULT_MIN_NGRAM, VectorizerParams};
-pub use tfidf_vectorizer::TfidfVectorizer;
+pub use tfidf_vectorizer::{TfidfVectorizer, TfidfVectorizerBuilder};

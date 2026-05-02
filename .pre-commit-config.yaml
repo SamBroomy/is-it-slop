@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.2
+    rev: 0.9.0
     hooks:
       - id: nbstripout
 
@@ -73,7 +73,7 @@ repos:
       - id: cargo-machete
         name: cargo machete
         description: Find unused dependencies
-        entry: just cargo-machete
+        entry: cargo machete --with-metadata --fix
         language: system
         files: '^Cargo\.toml$'
         types: [toml]
@@ -82,7 +82,7 @@ repos:
       - id: cargo-audit
         name: cargo audit
         description: Audit for security vulnerabilities
-        entry: just cargo-audit
+        entry: cargo audit --deny unsound --deny yanked
         language: system
         files: '^Cargo\.lock$'
         types: [toml]
@@ -92,7 +92,7 @@ repos:
       - id: cargo-clippy
         name: cargo clippy
         description: Run cargo clippy with fixes (multiple feature sets)
-        entry: just rust-lint-fix
+        entry: cargo clippy --fix --allow-staged --all-targets --workspace -- -D warnings
         language: system
         files: '(\.rs$|Cargo\.toml$|Cargo\.lock$)'
         types_or: [rust, toml]
@@ -110,19 +110,9 @@ repos:
       - id: cargo-doc
         name: cargo doc
         description: Check documentation builds
-        entry: just cargo-docs
+        entry: cargo doc --all-features --workspace --no-deps
         language: system
         files: '(Cargo\.toml|crates/*/Cargo\.toml|crates/*/src/.*\.rs)$'
         types: [rust, toml]
         stages: [pre-commit]
         pass_filenames: false
-      # Maturin build check (Python bindings)
-      - id: maturin-check
-        name: maturin check
-        description: Verify Python bindings can build
-        entry: just maturin-check
-        language: system
-        files: '^(pyproject\.toml|Cargo\.toml|crates/*/Cargo\.toml|crates/*/src/.*\.rs|crates/*/build\.rs)$'
-        types_or: [rust, toml]
-        pass_filenames: false
-        stages: [pre-push]

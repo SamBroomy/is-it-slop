@@ -939,7 +939,7 @@ mod tests {
 
             // Generate a longer text with multiple issues
             let input = (0..100).fold(String::new(), |mut output, i| {
-                let _ = write!(output, "Sentence {i}[{i}] with &quot;quotes&quot; here. ",);
+                let _ = write!(output, "Sentence {i}[{i}] with &quot;quotes&quot; here. ");
                 output
             });
 

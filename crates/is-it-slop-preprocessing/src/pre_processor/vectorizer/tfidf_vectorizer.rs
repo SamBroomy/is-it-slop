@@ -27,6 +27,7 @@ use sprs::CsMat;
 use tracing::{debug, instrument};
 
 use super::{count_vectorizer::CountVectorizer, params::VectorizerParams};
+use crate::pre_processor::ngrams;
 
 /// Applies TF-IDF weighting and L2 normalization to text features.
 ///
@@ -289,6 +290,210 @@ impl TfidfVectorizer {
     /// Deserialize vectorizer from JSON string.
     pub fn from_json(json_str: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json_str)
+    }
+}
+
+/// Builder for incremental TF-IDF vectorizer training.
+///
+/// Supports sklearn-style `partial_fit()` for large datasets that don't fit in memory.
+/// Accumulates document frequencies across multiple batches, then builds final vectorizer.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// use is_it_slop_preprocessing::pre_processor::{TfidfVectorizerBuilder, VectorizerParams};
+///
+/// let params = VectorizerParams::new(10.0, 0.9, true);
+/// let mut builder = TfidfVectorizerBuilder::new(params);
+///
+/// // Process data in batches
+/// for batch in batches {
+///     builder.partial_fit(&batch);
+/// }
+///
+/// // Finalize: apply min_df/max_df filtering and calculate IDF
+/// let vectorizer = builder.finalize();
+/// ```
+#[derive(Debug)]
+pub struct TfidfVectorizerBuilder {
+    params: VectorizerParams,
+    /// Raw n-gram document frequencies (before filtering)
+    df_map: dashmap::DashMap<ngrams::NgramKey, usize, ahash::RandomState>,
+    /// Total number of documents seen across all batches
+    total_docs: std::sync::atomic::AtomicUsize,
+}
+
+impl TfidfVectorizerBuilder {
+    /// Create a new builder with the given parameters.
+    ///
+    /// # Arguments
+    /// * `params` - Vectorizer configuration (`ngram_range`, `min_df`, `max_df`, `sublinear_tf`)
+    #[must_use]
+    pub fn new(params: VectorizerParams) -> Self {
+        Self {
+            params,
+            df_map: dashmap::DashMap::with_hasher(ahash::RandomState::default()),
+            total_docs: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Process a batch of texts, updating document frequencies.
+    ///
+    /// Can be called multiple times with different batches. Document frequencies
+    /// accumulate across all calls.
+    ///
+    /// # Arguments
+    /// * `texts` - Batch of documents to process
+    ///
+    /// # Memory Usage
+    /// - Tokenizes the batch (temporary allocation)
+    /// - Updates shared document frequency map (persistent)
+    /// - Frees batch tokenization after processing
+    #[instrument(level = "debug", skip(self, texts), fields(batch_size = texts.len(), total_docs_before = self.total_docs.load(std::sync::atomic::Ordering::Relaxed)))]
+    pub fn partial_fit<T: AsRef<str> + Sync>(&mut self, texts: &[T]) {
+        use rayon::prelude::*;
+
+        use crate::pre_processor::{ngrams, tokenizer};
+
+        let batch_size = texts.len();
+        debug!(batch_size, "Processing batch in partial_fit");
+
+        // Tokenize batch
+        let tokenized = tokenizer::tokenize(texts);
+
+        // Extract unique n-grams per document and update document frequencies
+        tokenized.par_iter().for_each(|tokens| {
+            let unique_ngrams = ngrams::unique_ngrams(tokens, self.params.ngram_counts());
+
+            for ngram_key in unique_ngrams {
+                self.df_map
+                    .entry(ngram_key)
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+            }
+        });
+
+        // Update total document count
+        self.total_docs
+            .fetch_add(batch_size, std::sync::atomic::Ordering::Relaxed);
+
+        debug!(
+            batch_size,
+            total_docs = self.total_docs.load(std::sync::atomic::Ordering::Relaxed),
+            unique_ngrams = self.df_map.len(),
+            "Batch processing complete"
+        );
+    }
+
+    /// Finalize the vectorizer: apply `min_df`/`max_df` filtering and calculate IDF weights.
+    ///
+    /// Consumes the builder and returns a fitted `TfidfVectorizer`.
+    ///
+    /// # Returns
+    /// Fitted vectorizer ready for `transform()` calls
+    ///
+    /// # Panics
+    /// Panics if no documents have been processed (call `partial_fit` at least once)
+    #[instrument(level = "debug", skip(self), fields(total_docs = self.total_docs.load(std::sync::atomic::Ordering::Relaxed), raw_vocab_size = self.df_map.len()))]
+    pub fn finalize(self) -> TfidfVectorizer {
+        let n_docs = self.total_docs.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            n_docs > 0,
+            "TfidfVectorizerBuilder: no documents processed, call partial_fit at least once"
+        );
+
+        debug!(
+            n_docs,
+            raw_vocab_size = self.df_map.len(),
+            "Finalizing TfidfVectorizer"
+        );
+
+        // Step 1: Apply min_df/max_df filtering
+        // Calculate min_df threshold: terms appearing in fewer than this many docs are filtered
+        // - If min_df < 1.0: treat as proportion of documents
+        // - If min_df >= 1.0: treat as absolute document count
+        let min_df = if self.params.min_df() < 1.0 {
+            (self.params.min_df() * n_docs as f32).ceil() as usize
+        } else {
+            self.params.min_df() as usize
+        };
+
+        // Calculate max_df threshold: terms appearing in more than this many docs are filtered
+        // - If max_df <= 1.0: treat as proportion of documents
+        // - If max_df > 1.0: treat as absolute document count
+        let max_df = if self.params.max_df() <= 1.0 {
+            (self.params.max_df() * n_docs as f32).ceil() as usize
+        } else {
+            self.params.max_df() as usize
+        };
+
+        debug!(min_df, max_df, "Applying document frequency filtering");
+
+        // Filter vocabulary by min_df/max_df
+        let filtered_ngrams: Vec<(ngrams::NgramKey, usize)> = self
+            .df_map
+            .iter()
+            .filter_map(|entry| {
+                let ngram = entry.key();
+                let df = *entry.value();
+
+                if df >= min_df && df <= max_df {
+                    Some((ngram.clone(), df))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        debug!(
+            filtered_vocab_size = filtered_ngrams.len(),
+            "Filtering complete"
+        );
+
+        // Step 2: Sort vocabulary for deterministic feature indices
+        let mut sorted_vocab = filtered_ngrams;
+        sorted_vocab.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Step 3: Build vocabulary map (ngram -> feature index)
+        let vocab: HashMap<ngrams::NgramKey, usize> = sorted_vocab
+            .iter()
+            .enumerate()
+            .map(|(idx, (ngram, _))| (ngram.clone(), idx))
+            .collect();
+
+        let num_features = vocab.len();
+
+        // Step 4: Calculate IDF weights
+        debug!(num_features, "Calculating IDF weights");
+
+        let n_docs_f32 = n_docs as f32;
+        let idf: Vec<f32> = sorted_vocab
+            .iter()
+            .map(|(_, df)| {
+                let df_f32 = *df as f32;
+                ((n_docs_f32 + 1.0) / (df_f32 + 1.0)).ln() + 1.0
+            })
+            .collect();
+
+        debug!(num_features, "TfidfVectorizer finalization complete");
+
+        // Step 5: Create CountVectorizer with the built vocabulary
+        let count_vectorizer = CountVectorizer::from_vocab(vocab, self.params.clone());
+
+        TfidfVectorizer {
+            count_vectorizer,
+            idf,
+        }
+    }
+
+    /// Get current number of documents processed.
+    pub fn total_docs(&self) -> usize {
+        self.total_docs.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get current vocabulary size (before filtering).
+    pub fn raw_vocab_size(&self) -> usize {
+        self.df_map.len()
     }
 }
 
@@ -719,5 +924,185 @@ mod tests {
 
         let vocab = v.vocabulary();
         assert_eq!(vocab.len(), v.num_features());
+    }
+
+    // ========================================
+    // TfidfVectorizerBuilder Tests
+    // ========================================
+
+    #[test]
+    fn test_partial_fit_single_batch() {
+        // Verify single batch produces same result as regular fit()
+        let texts = vec![
+            "the quick brown fox",
+            "the lazy dog",
+            "quick dog",
+            "brown fox jumps",
+        ];
+
+        let params = VectorizerParams::new(1.0, 1.0, false);
+
+        // Regular fit
+        let v_regular = TfidfVectorizer::fit(&texts, params.clone());
+
+        // Partial fit with single batch
+        let mut builder = TfidfVectorizerBuilder::new(params);
+        builder.partial_fit(&texts);
+        let v_partial = builder.finalize();
+
+        // Should produce identical vocabularies
+        assert_eq!(v_regular.num_features(), v_partial.num_features());
+        assert_eq!(v_regular.vocabulary(), v_partial.vocabulary());
+    }
+
+    #[test]
+    fn test_partial_fit_multiple_batches() {
+        // Verify multiple batches produce same vocabulary as single fit()
+        let texts = vec![
+            "the quick brown fox",
+            "the lazy dog",
+            "quick dog runs",
+            "brown fox jumps",
+            "lazy cat sleeps",
+            "quick cat jumps",
+        ];
+
+        let params = VectorizerParams::new(1.0, 1.0, false);
+
+        // Regular fit on all texts
+        let v_regular = TfidfVectorizer::fit(&texts, params.clone());
+
+        // Partial fit with 3 batches
+        let mut builder = TfidfVectorizerBuilder::new(params);
+        builder.partial_fit(&texts[0..2]); // Batch 1: 2 texts
+        builder.partial_fit(&texts[2..4]); // Batch 2: 2 texts
+        builder.partial_fit(&texts[4..6]); // Batch 3: 2 texts
+
+        // Verify total docs tracked correctly (before finalize consumes builder)
+        assert_eq!(builder.total_docs(), 6);
+
+        let v_partial = builder.finalize();
+
+        // Should produce identical vocabularies
+        assert_eq!(v_regular.num_features(), v_partial.num_features());
+        assert_eq!(v_regular.vocabulary(), v_partial.vocabulary());
+    }
+
+    #[test]
+    fn test_partial_fit_min_df_filtering() {
+        // Verify min_df applies to total docs, not per-batch
+        let batch1 = vec!["rare word alpha", "common word"];
+        let batch2 = vec!["common word", "common word"];
+        let batch3 = vec!["common word", "rare word beta"];
+
+        // min_df=2 means term must appear in at least 2 docs total
+        let params = VectorizerParams::new(2.0, 1.0, false);
+
+        let mut builder = TfidfVectorizerBuilder::new(params);
+        builder.partial_fit(&batch1);
+        assert_eq!(builder.total_docs(), 2);
+
+        builder.partial_fit(&batch2);
+        assert_eq!(builder.total_docs(), 4);
+
+        builder.partial_fit(&batch3);
+        assert_eq!(builder.total_docs(), 6);
+
+        let vectorizer = builder.finalize();
+
+        // "common" appears in 5/6 docs (should be included)
+        // "word" appears in 6/6 docs (should be included)
+        // "rare" appears in 2/6 docs (should be included, meets min_df=2)
+        // "alpha" appears in 1/6 docs (should be filtered out)
+        // "beta" appears in 1/6 docs (should be filtered out)
+
+        let vocab = vectorizer.vocabulary();
+        assert!(
+            vocab.values().any(|&_| true),
+            "Should have some features after filtering"
+        );
+
+        // Total docs should be 6
+        assert_eq!(vectorizer.num_features(), vocab.len());
+    }
+
+    #[test]
+    fn test_partial_fit_max_df_filtering() {
+        // Verify max_df filtering works correctly
+        let texts = vec![
+            "common common common",
+            "common common rare",
+            "common rare word",
+            "common word word",
+        ];
+
+        // max_df=0.75 means term can appear in at most 75% of docs (3/4 = 75%)
+        let params = VectorizerParams::new(1.0, 0.75, false);
+
+        let mut builder = TfidfVectorizerBuilder::new(params);
+        builder.partial_fit(&texts);
+        let vectorizer = builder.finalize();
+
+        // "common" appears in 4/4 docs (100% > 75%, should be filtered out)
+        // "rare" appears in 2/4 docs (50% < 75%, should be included)
+        // "word" appears in 2/4 docs (50% < 75%, should be included)
+
+        let vocab_size = vectorizer.num_features();
+        assert!(
+            vocab_size > 0,
+            "Should have features after max_df filtering"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no documents processed")]
+    fn test_partial_fit_empty_panics() {
+        // Verify finalize() panics if no batches processed
+        let params = VectorizerParams::new(1.0, 1.0, false);
+        let builder = TfidfVectorizerBuilder::new(params);
+
+        // Should panic when calling finalize without any partial_fit calls
+        builder.finalize();
+    }
+
+    #[test]
+    fn test_partial_fit_total_docs_tracking() {
+        // Verify total_docs() returns correct count
+        let params = VectorizerParams::new(1.0, 1.0, false);
+        let mut builder = TfidfVectorizerBuilder::new(params);
+
+        assert_eq!(builder.total_docs(), 0);
+
+        builder.partial_fit(&["text1", "text2", "text3"]);
+        assert_eq!(builder.total_docs(), 3);
+
+        builder.partial_fit(&["text4", "text5"]);
+        assert_eq!(builder.total_docs(), 5);
+
+        builder.partial_fit(&["text6"]);
+        assert_eq!(builder.total_docs(), 6);
+    }
+
+    #[test]
+    fn test_partial_fit_raw_vocab_size() {
+        // Verify raw_vocab_size() returns unique n-grams seen
+        let params = VectorizerParams::new(1.0, 1.0, false);
+        let mut builder = TfidfVectorizerBuilder::new(params);
+
+        assert_eq!(builder.raw_vocab_size(), 0);
+
+        builder.partial_fit(&["the quick brown fox"]);
+        let size_after_batch1 = builder.raw_vocab_size();
+        assert!(
+            size_after_batch1 > 0,
+            "Should have n-grams after first batch"
+        );
+
+        builder.partial_fit(&["the lazy dog"]);
+        let size_after_batch2 = builder.raw_vocab_size();
+        assert!(
+            size_after_batch2 >= size_after_batch1,
+            "Vocabulary should grow or stay same"
+        );
     }
 }

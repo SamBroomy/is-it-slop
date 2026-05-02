@@ -153,6 +153,7 @@ fn validate_chunking(predictor: &Predictor, texts: &[String]) -> f64 {
 // ── Timing helper ─────────────────────────────────────────────────────────────
 
 struct TextStats {
+    #[allow(dead_code)]
     total: usize,
     min: usize,
     max: usize,

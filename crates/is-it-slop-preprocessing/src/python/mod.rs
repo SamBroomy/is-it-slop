@@ -45,9 +45,9 @@ use numpy::ToPyArray;
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::pre_processor::{
-    DEFAULT_MAX_NGRAM, DEFAULT_MIN_NGRAM, TextCleaner, TfidfVectorizer, TokenChunker,
-    VectorizerParams, reverse_tokenize as reverse_tokenize_, text_cleaner_for_inference,
-    text_cleaner_for_training, tokenize as tokenize_,
+    DEFAULT_MAX_NGRAM, DEFAULT_MIN_NGRAM, TextCleaner, TfidfVectorizer, TfidfVectorizerBuilder,
+    TokenChunker, VectorizerParams, reverse_tokenize as reverse_tokenize_,
+    text_cleaner_for_inference, text_cleaner_for_training, tokenize as tokenize_,
 };
 
 #[allow(clippy::unsafe_derive_deserialize)]
@@ -195,7 +195,7 @@ impl RustTfidfVectorizer {
         params: RustVectorizerParams,
     ) -> PyResult<(Self, Bound<'_, PyTuple>)> {
         let (vectorizer, transform_result) =
-            TfidfVectorizer::fit_transform(texts.as_slice(), params.to_inner());
+            py.detach(|| TfidfVectorizer::fit_transform(texts.as_slice(), params.to_inner()));
         let vectorizer = Self { inner: vectorizer };
         let data = transform_result.data().to_pyarray(py);
         let indices = transform_result.indices().to_pyarray(py);
@@ -483,7 +483,7 @@ impl RustTfidfVectorizer {
 }
 
 #[pyclass(from_py_object)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RustTokenChunker {
     inner: TokenChunker,
 }
@@ -572,6 +572,128 @@ impl RustTextCleaner {
     }
 }
 
+/// Python wrapper for [`TfidfVectorizerBuilder`].
+///
+/// Supports sklearn-style incremental training with `partial_fit()` for large datasets.
+#[pyclass]
+#[derive(Debug)]
+pub struct RustTfidfVectorizerBuilder {
+    inner: Option<TfidfVectorizerBuilder>,
+}
+
+#[pymethods]
+impl RustTfidfVectorizerBuilder {
+    /// Create a new builder with the given parameters.
+    #[new]
+    fn new(params: RustVectorizerParams) -> Self {
+        Self {
+            inner: Some(TfidfVectorizerBuilder::new(params.to_inner())),
+        }
+    }
+
+    /// Process a batch of texts, updating document frequencies.
+    ///
+    /// Can be called multiple times with different batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RuntimeError` if called after `finalize()`.
+    #[allow(clippy::needless_pass_by_value)]
+    fn partial_fit(&mut self, py: Python<'_>, texts: Vec<String>) -> PyResult<()> {
+        let builder = self.inner.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Builder has been finalized. Create a new TfidfVectorizerBuilder to process more data.",
+            )
+        })?;
+
+        py.detach(|| {
+            builder.partial_fit(&texts);
+        });
+        Ok(())
+    }
+
+    /// Finalize the vectorizer and return a fitted TfidfVectorizer.
+    ///
+    /// After calling this method, the builder is consumed and cannot be used again.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RuntimeError` if called more than once.
+    fn finalize(&mut self, py: Python<'_>) -> PyResult<RustTfidfVectorizer> {
+        let builder = self.inner.take().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Builder has already been finalized. Each builder can only be finalized once.",
+            )
+        })?;
+
+        let vectorizer = py.detach(|| RustTfidfVectorizer {
+            inner: builder.finalize(),
+        });
+
+        Ok(vectorizer)
+    }
+
+    /// Get current number of documents processed.
+    #[getter]
+    fn total_docs(&self) -> usize {
+        self.inner.as_ref().map(|b| b.total_docs()).unwrap_or(0)
+    }
+
+    /// Get current vocabulary size (before filtering).
+    #[getter]
+    fn raw_vocab_size(&self) -> usize {
+        self.inner.as_ref().map(|b| b.raw_vocab_size()).unwrap_or(0)
+    }
+
+    /// Return a string representation.
+    fn __repr__(&self) -> String {
+        if let Some(builder) = &self.inner {
+            format!(
+                "RustTfidfVectorizerBuilder(total_docs={}, raw_vocab_size={})",
+                builder.total_docs(),
+                builder.raw_vocab_size()
+            )
+        } else {
+            "RustTfidfVectorizerBuilder(finalized)".to_string()
+        }
+    }
+}
+
+/// Extract combined features (document + chunk) for a batch of documents.
+///
+/// # Arguments
+/// * `full_texts` - List of full document texts
+/// * `chunk_tokens_batch` - List of chunked token sequences (list of list of list of tokens)
+///
+/// # Returns
+/// Numpy array of shape (total_chunks, 9) with combined features
+///
+/// # Example
+/// ```python
+/// from is_it_slop_preprocessing import extract_combined_batch, tokenize
+///
+/// texts = ["First document", "Second document"]
+/// tokens = [tokenize(t) for t in texts]
+/// # Assume we have chunks for each document
+/// features = extract_combined_batch(texts, chunks)
+/// ```
+#[cfg(feature = "statistical-features")]
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn rust_extract_combined_batch<'py>(
+    py: Python<'py>,
+    full_texts: Vec<String>,
+    chunk_tokens_batch: Vec<Vec<Vec<u32>>>,
+) -> Bound<'py, numpy::PyArray2<f32>> {
+    use crate::pre_processor::extract_combined_batch;
+
+    // Release GIL during computation
+    let features = py.detach(|| extract_combined_batch(&full_texts, &chunk_tokens_batch));
+
+    // Convert to numpy array with GIL
+    features.to_pyarray(py)
+}
+
 /// Encode text into BPE token IDs
 /// This is a utility function to expose tokenization to Python.
 #[pyfunction]
@@ -590,11 +712,14 @@ fn reverse_tokenize(py: Python<'_>, tokens: Vec<u32>) -> String {
 #[pymodule]
 #[pyo3(name = "_is_it_slop_preprocessing_rust_bindings")]
 fn is_it_slop_preprocessing(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // pyo3_log::init();
+    // Initialize pyo3_log to bridge Rust tracing to Python logging
+    // This respects Python's logging level configuration
+    let _ = pyo3_log::try_init();
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<RustVectorizerParams>()?;
     m.add_class::<RustTfidfVectorizer>()?;
+    m.add_class::<RustTfidfVectorizerBuilder>()?;
 
     m.add_class::<RustTokenChunker>()?;
 
@@ -603,6 +728,8 @@ fn is_it_slop_preprocessing(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(reverse_tokenize, m)?)?;
+    #[cfg(feature = "statistical-features")]
+    m.add_function(wrap_pyfunction!(rust_extract_combined_batch, m)?)?;
 
     Ok(())
 }

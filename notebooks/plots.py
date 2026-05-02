@@ -557,6 +557,7 @@ def embedding_visualization(
     # ============================================================
     ax = axes[0, 1]
 
+    dataset_sample = np.where(dataset_sample == None, "unknown", dataset_sample)  # noqa: E711
     unique_datasets = np.unique(dataset_sample)
     n_datasets = len(unique_datasets)
     colors_ds = plt.cm.tab20(np.linspace(0, 1, n_datasets))  # type: ignore[AttributeAccessIssue]
@@ -667,12 +668,17 @@ def embedding_visualization(
     ax = axes[2, 0]
 
     # Calculate sparsity (proportion of zeros) for each sample
-    if hasattr(X_sample, "toarray"):
-        # Sparse matrix
-        sparsity_per_sample = 1 - (X_sample.getnnz(axis=1) / X_sample.shape[1])
-    else:
-        # Dense matrix
-        sparsity_per_sample = (X_sample == 0).mean(axis=1)
+    sparsity_per_sample = (
+        1 - (X_sample.getnnz(axis=1) / X_sample.shape[1])
+        if hasattr(X_sample, "toarray")
+        else (X_sample == 0).mean(axis=1)
+    )
+    # if hasattr(X_sample, "toarray"):
+    #     # Sparse matrix
+    #     sparsity_per_sample = 1 - (X_sample.getnnz(axis=1) / X_sample.shape[1])
+    # else:
+    #     # Dense matrix
+    #     sparsity_per_sample = (X_sample == 0).mean(axis=1)
 
     # Plot histogram split by class
     ax.hist(
@@ -1047,8 +1053,7 @@ def per_dataset_accuracy_analysis(X_test_tfidf: csr_matrix, model: Probabilistic
 
 
 def top_ngrams_visualization(vectorizer: TfidfVectorizer, model_coef: np.ndarray, top_n: int = 20) -> None:
-    """
-    Visualize top predictive n-grams for Human and AI classes.
+    """Visualize top predictive n-grams for Human and AI classes.
 
     Shows token n-grams with highest absolute coefficients (most discriminative features).
     N-grams are already decoded in the vocabulary.
@@ -1057,6 +1062,7 @@ def top_ngrams_visualization(vectorizer: TfidfVectorizer, model_coef: np.ndarray
         vectorizer: Fitted TfidfVectorizer with vocabulary
         model_coef: Model coefficients (shape: n_features,)
         top_n: Number of top n-grams to display per class
+
     """
     logger.info("Generating top n-grams visualization...")
 
@@ -1094,7 +1100,7 @@ def top_ngrams_visualization(vectorizer: TfidfVectorizer, model_coef: np.ndarray
             top_ai_coefs.append(coef[idx])
 
     # Create figure
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    _fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
 
     # Human-indicative n-grams (negative coefficients)
     y_pos = np.arange(len(top_human_ngrams))
@@ -1131,8 +1137,7 @@ def chunk_agreement_analysis(
     chunk_threshold: float,
     n_docs: int,
 ) -> None:
-    """
-    Analyze chunk agreement patterns within documents.
+    """Analyze chunk agreement patterns within documents.
 
     Visualizes:
     1. Distribution of chunk agreement scores
@@ -1146,6 +1151,7 @@ def chunk_agreement_analysis(
         y_pred: Predicted document labels
         chunk_threshold: Threshold for chunk classification
         n_docs: Total number of documents
+
     """
     logger.info("Generating chunk agreement analysis...")
 
@@ -1225,7 +1231,7 @@ def chunk_agreement_analysis(
         f"Avg agreement (incorrect): {avg_incorrect_agreement:.3f}",
         transform=ax2.transAxes,
         verticalalignment="top",
-        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
     )
 
     # Subplot 3: Agreement by document length
@@ -1270,8 +1276,7 @@ def aggregation_comparison(
     doc_threshold: float,
     n_docs: int,
 ) -> None:
-    """
-    Compare three aggregation methods: Mean, Max, WeightedMean.
+    """Compare three aggregation methods: Mean, Max, WeightedMean.
 
     Visualizes:
     1. Confusion matrices for each method
@@ -1285,10 +1290,11 @@ def aggregation_comparison(
         chunk_threshold: Threshold for chunk-level classification
         doc_threshold: Threshold for document-level classification
         n_docs: Total number of documents
+
     """
     logger.info("Generating aggregation method comparison...")
 
-    from sklearn.metrics import ConfusionMatrixDisplay, roc_curve, auc
+    from sklearn.metrics import ConfusionMatrixDisplay, auc, roc_curve
 
     # Define aggregation methods
     def aggregate_mean(chunk_probs, chunk_to_doc_idx, n_docs):
@@ -1314,7 +1320,11 @@ def aggregation_comparison(
             if mask.any():
                 doc_chunk_probs = chunk_probs[mask]
                 weights = np.abs(doc_chunk_probs - threshold)
-                doc_probs[doc_idx] = np.average(doc_chunk_probs, weights=weights)
+                # Handle edge case: if all weights are zero, fall back to mean
+                if weights.sum() > 1e-10:
+                    doc_probs[doc_idx] = np.average(doc_chunk_probs, weights=weights)
+                else:
+                    doc_probs[doc_idx] = doc_chunk_probs.mean()
         return doc_probs
 
     # Compute predictions for each method
@@ -1362,7 +1372,7 @@ def aggregation_comparison(
     bins = np.linspace(0, 1, 50)
     colors = ["#3498db", "#e74c3c", "#2ecc71"]
 
-    for (name, probs), color in zip(methods.items(), colors):
+    for (name, probs), color in zip(methods.items(), colors, strict=False):
         ax_dist.hist(probs, bins=bins, alpha=0.5, label=name, color=color, edgecolor="black")
 
     ax_dist.axvline(doc_threshold, color="black", linestyle="--", label=f"Threshold ({doc_threshold:.3f})")
@@ -1404,7 +1414,7 @@ WeightedMean for best F1 score.
         verticalalignment="top",
         fontsize=10,
         family="monospace",
-        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.3),
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.3},
     )
 
     plt.tight_layout()
@@ -1417,8 +1427,7 @@ WeightedMean for best F1 score.
 def chunking_behavior_analysis(
     chunk_to_doc_idx: np.ndarray, chunked_tokens: list[list[list[int]]], n_docs: int
 ) -> None:
-    """
-    Analyze chunking behavior on real documents.
+    """Analyze chunking behavior on real documents.
 
     Visualizes:
     1. Distribution of chunk counts per document
@@ -1429,6 +1438,7 @@ def chunking_behavior_analysis(
         chunk_to_doc_idx: Mapping from chunk index to document index
         chunked_tokens: List of documents, each containing list of token chunks
         n_docs: Total number of documents
+
     """
     logger.info("Generating chunking behavior analysis...")
 
@@ -1445,8 +1455,7 @@ def chunking_behavior_analysis(
             total_tokens = sum(len(chunk) for chunk in chunks)
             doc_total_tokens.append(total_tokens)
 
-            for chunk in chunks:
-                all_chunk_sizes.append(len(chunk))
+            all_chunk_sizes.extend(len(chunk) for chunk in chunks)
 
     doc_num_chunks = np.array(doc_num_chunks)
     doc_total_tokens = np.array(doc_total_tokens)
@@ -1509,7 +1518,7 @@ def chunking_behavior_analysis(
         transform=ax3.transAxes,
         verticalalignment="top",
         horizontalalignment="right",
-        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
         fontsize=9,
     )
 
@@ -1528,8 +1537,7 @@ def chunking_behavior_analysis(
 def confidence_correctness_analysis(
     y_probs: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray, threshold: float
 ) -> None:
-    """
-    Analyze relationship between prediction confidence and correctness.
+    """Analyze relationship between prediction confidence and correctness.
 
     Visualizes:
     1. Scatter: confidence vs correctness
@@ -1541,6 +1549,7 @@ def confidence_correctness_analysis(
         y_true: True labels
         y_pred: Predicted labels
         threshold: Classification threshold
+
     """
     logger.info("Generating confidence vs correctness analysis...")
 
@@ -1578,7 +1587,7 @@ def confidence_correctness_analysis(
         f"Correlation: {corr:.3f} (p={p_value:.3e})",
         transform=ax1.transAxes,
         verticalalignment="top",
-        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
     )
 
     # Subplot 2: Accuracy by confidence bins
@@ -1605,7 +1614,7 @@ def confidence_correctness_analysis(
     bars = ax2.bar(bin_labels, accuracies, color="#3498db", alpha=0.7, edgecolor="black")
 
     # Add count labels on bars
-    for bar, count in zip(bars, counts):
+    for bar, count in zip(bars, counts, strict=False):
         height = bar.get_height()
         ax2.text(bar.get_x() + bar.get_width() / 2, height, f"n={count}", ha="center", va="bottom", fontsize=8)
 
@@ -1657,7 +1666,7 @@ def confidence_correctness_analysis(
         transform=ax3.transAxes,
         verticalalignment="top",
         horizontalalignment="right",
-        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
     )
 
     plt.tight_layout()
