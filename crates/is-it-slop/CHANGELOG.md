@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0-alpha.0](https://github.com/SamBroomy/is-it-slop/compare/v0.5.0...v0.6.0-alpha.0) - 2026-05-04
+
+### Fixed
+
+- fixed tests
+
+### Other
+
+- readme update
+- artifacts released
+- v0.6
+- profiled code and uses batch pre-processing
+
 ## [0.5.0-beta.7](https://github.com/SamBroomy/is-it-slop/compare/v0.5.0-beta.6...v0.5.0-beta.7) - 2026-02-18
 
 ### Fixed
