@@ -40,7 +40,6 @@ clap = { version = "4.5.53", features = ["derive"] }
 dashmap = "6.1.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
 itertools = "0.14.0"
-mimalloc = { version = "0.1.48" }
 ndarray = "0.17"
 numpy = "0.28"
 # ONNX Runtime with pure Rust tract backend for smaller binary size

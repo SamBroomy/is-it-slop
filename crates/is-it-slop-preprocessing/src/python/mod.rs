@@ -34,10 +34,6 @@
 //! X = csr_matrix((data, indices, indptr), shape=shape)
 //! ```
 
-#[cfg(feature = "mimalloc")]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use std::{fs, path::Path};
 
 use ahash::HashMap;

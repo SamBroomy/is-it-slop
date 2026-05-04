@@ -27,10 +27,6 @@
 //! - `ai_probability`: P(AI) in [0.0, 1.0]
 //! - `classification`: "Human" or "AI"
 
-// #[cfg(feature = "mimalloc")]
-// #[global_allocator]
-// static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use pyo3::prelude::*;
 
 use crate::{Threshold, pipeline::PipelineError};

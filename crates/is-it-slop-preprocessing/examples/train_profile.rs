@@ -9,9 +9,6 @@
 //!
 //! Run with: cargo flamegraph --profile profiling --example `train_profile`
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use std::{path::PathBuf, time::Instant};
 
 use is_it_slop_preprocessing::pre_processor::{

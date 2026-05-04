@@ -27,7 +27,6 @@ This crate provides the preprocessing pipeline for the is-it-slop AI text detect
 - `serde`: Alternative JSON/bincode serialization
 - `bincode`: Legacy bincode serialization support
 - `progress-bars`: Progress indicators for long-running operations
-- `mimalloc`: Use mimalloc as the global allocator
 
 ## Quick Start
 

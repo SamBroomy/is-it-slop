@@ -23,7 +23,6 @@ bpe-openai = { workspace = true }
 dashmap = { workspace = true, features = ["rayon"] }
 indicatif = { workspace = true, optional = true }
 itertools = { workspace = true, optional = true }
-mimalloc = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
@@ -40,7 +39,6 @@ tracing = { workspace = true }
 default = ["rkyv"]
 python = [
     "bincode",
-    "mimalloc",
     "numpy",
     "progress-bars",
     "pyo3",
@@ -49,7 +47,6 @@ python = [
     "serde",
 ]
 bincode = ["dep:bincode"]
-mimalloc = ["dep:mimalloc"]
 progress-bars = ["dep:indicatif"]
 rkyv = ["dep:rkyv"]
 serde = ["dep:serde", "dep:serde_json"]
@@ -60,7 +57,6 @@ all-testable = ["serde", "rkyv", "bincode"]
 
 [dev-dependencies]
 csv = { workspace = true }
-mimalloc = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [lints]

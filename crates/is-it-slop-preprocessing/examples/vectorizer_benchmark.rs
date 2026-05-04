@@ -1,7 +1,4 @@
 //! Vectorizer benchmark example
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use std::{path::PathBuf, time::Instant};
 
 use is_it_slop_preprocessing::pre_processor::{TfidfVectorizer, VectorizerParams};

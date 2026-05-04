@@ -502,7 +502,7 @@ test: test-rust test-python
 [group('dev')]
 test-rust:
     @echo "Testing preprocessing crate (unit tests)..."
-    cargo test --lib -p is-it-slop-preprocessing --no-default-features --features rkyv,serde,bincode,mimalloc
+    cargo test --lib -p is-it-slop-preprocessing --no-default-features --features rkyv,serde,bincode
     @echo ""
     @echo "Testing main crate (unit tests)..."
     cargo test --lib -p is-it-slop --all-features
@@ -532,9 +532,9 @@ check: rust-lint-fix
 pre-release:
     @echo "Running pre-release checks..."
     cargo fmt --all --check
-    cargo clippy -p is-it-slop-preprocessing --no-default-features --features rkyv,serde,bincode,mimalloc --all-targets -- -D warnings
+    cargo clippy -p is-it-slop-preprocessing --no-default-features --features rkyv,serde,bincode --all-targets -- -D warnings
     cargo clippy -p is-it-slop --no-default-features --features cli --all-targets -- -D warnings
-    cargo test -p is-it-slop-preprocessing --lib --no-default-features --features rkyv,serde,bincode,mimalloc
+    cargo test -p is-it-slop-preprocessing --lib --no-default-features --features rkyv,serde,bincode
     cargo test -p is-it-slop --lib --all-features
     cargo test -p is-it-slop --doc --no-default-features --features cli
     cargo test -p is-it-slop-preprocessing --doc --no-default-features --features rkyv,serde

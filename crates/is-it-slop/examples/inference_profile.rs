@@ -30,10 +30,6 @@ use is_it_slop::Predictor;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[cfg(feature = "mimalloc")]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 // ── Text-length buckets ───────────────────────────────────────────────────────
 // Char-count thresholds — cheap proxy for token count, fine for bucketing.
 const SHORT_MAX_CHARS: usize = 500;
