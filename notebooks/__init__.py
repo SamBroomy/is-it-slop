@@ -9,7 +9,7 @@ import polars as pl
 from semver import Version
 
 SEED: Final[int] = 42
-MODEL_VERSION = "2.1.0"
+MODEL_VERSION = "3.0.0"
 RETRAINED_MODEL_VERSION = Version.parse(MODEL_VERSION)
 
 # Get from command line argument or set to True to force retraining

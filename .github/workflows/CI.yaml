@@ -67,8 +67,8 @@ jobs:
 
       - name: Inference bindings
         working-directory: python/is-it-slop
-        env:
-          RUSTFLAGS: "-C tls-model=global-dynamic"
+        # env:
+        #   RUSTFLAGS: "-C tls-model=global-dynamic"
         run: |
           uv sync --dev --no-install-project -q
           uv run maturin develop --uv -q
