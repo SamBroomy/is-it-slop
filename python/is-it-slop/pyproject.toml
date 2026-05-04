@@ -51,7 +51,7 @@ readme = { file = "./README.md", content-type = "text/markdown" }
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=9.0.1", "ruff>=0.15.12"]
+dev = ["maturin>=1.13.1", "pytest>=9.0.1", "ruff>=0.15.12"]
 
 [project.scripts]
 is-it-slop = "is_it_slop._is_it_slop_rust_bindings:cli_main"

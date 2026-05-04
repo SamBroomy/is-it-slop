@@ -1313,6 +1313,7 @@ source = { editable = "python/is-it-slop" }
 
 [package.dev-dependencies]
 dev = [
+    { name = "maturin" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -1321,6 +1322,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "maturin", specifier = ">=1.13.1" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "ruff", specifier = ">=0.15.12" },
 ]
@@ -1414,6 +1416,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "maturin" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -1426,6 +1429,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "maturin", specifier = ">=1.13.1" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "ruff", specifier = ">=0.15.12" },
 ]
