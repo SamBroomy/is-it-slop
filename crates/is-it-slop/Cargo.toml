@@ -47,10 +47,7 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-python = [
-    "pyo3",
-    #"mimalloc"
-]
+python = ["pyo3", "mimalloc"]
 pyo3 = ["dep:pyo3"]
 cli = ["dep:clap", "serde", "mimalloc", "dep:anyhow"]
 mimalloc = ["dep:mimalloc"]
