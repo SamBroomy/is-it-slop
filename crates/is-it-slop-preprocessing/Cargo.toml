@@ -40,7 +40,7 @@ tracing = { workspace = true }
 default = ["rkyv"]
 python = [
     "bincode",
-    "mimalloc",
+    # "mimalloc",
     "numpy",
     "progress-bars",
     "pyo3",
