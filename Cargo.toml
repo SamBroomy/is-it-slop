@@ -47,7 +47,7 @@ numpy = "0.28"
 ort = { version = "=2.0.0-rc.12", default-features = false, features = [
     "download-binaries",
     "ndarray",
-    "tls-rustls",
+    "tls-native",
     "tracing",
 ] }
 pyo3 = { version = "0.28", default-features = false, features = [
