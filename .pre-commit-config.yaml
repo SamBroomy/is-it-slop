@@ -120,7 +120,7 @@ repos:
         description: Check documentation builds
         entry: cargo doc --all-features --workspace --no-deps
         language: system
-        files: '(Cargo\.toml|crates/*/Cargo\.toml|crates/*/src/.*\.rs)$'
+        files: '(\.rs$|Cargo\.toml$|Cargo\.lock$)'
         types: [rust, toml]
         stages: [pre-commit]
         pass_filenames: false
