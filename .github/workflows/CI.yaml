@@ -3,6 +3,12 @@ name: CI
 on:
   push:
     branches: [main, master]
+    paths:
+      - "python/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/CI.yaml"
   pull_request:
 
 permissions:
@@ -33,3 +39,34 @@ jobs:
         run: cargo test --all-targets --workspace --features all-testable --locked
       - name: Run docs build
         run: cargo doc --all-features --workspace --no-deps
+
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.9.1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Preprocessing bindings
+        working-directory: python/is-it-slop-preprocessing
+        run: |
+          uv run maturin develop --uv -q
+          uv sync --dev -q
+          uv run ruff check
+          uv run pytest tests/ -q
+
+      - name: Test inference bindings
+        working-directory: python/is-it-slop
+        run: |
+          uv run maturin develop --uv -q
+          uv sync --dev -q
+          uv run ruff check
+          uv run pytest tests/ -q

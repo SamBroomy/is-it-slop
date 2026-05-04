@@ -51,7 +51,7 @@ readme = { file = "./README.md", content-type = "text/markdown" }
 dependencies = ["numpy>=2.0", "scipy>=1.14"]
 
 [dependency-groups]
-dev = ["pytest>=9.0.1"]
+dev = ["pytest>=9.0.1", "ruff>=0.15.12"]
 
 
 [project.urls]

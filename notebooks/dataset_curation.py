@@ -2,9 +2,9 @@
 # coding: utf-8
 
 # # Text Curation
-# 
+#
 # Here we are trying to document and curate a really good collection of texts that represent human and AI generated texts.
-# 
+#
 # ## Labels
 # 0 - Human generated texts
 # 1 - AI generated texts
@@ -94,12 +94,12 @@ print(output_value_counts(english_quotes))
 
 
 # # [Newswire dataset](https://huggingface.co/datasets/dell-research-harvard/newswire)
-# 
+#
 # Number of rows: 1,440,010
 # Likes: 85
 # Downloads last month: 8,719
-# 
-# 
+#
+#
 # >Assertion: Using newswire articles would provide a rich source of human-generated text.
 
 # In[ ]:
@@ -116,14 +116,14 @@ print(output_value_counts(newswire))
 
 
 # # [rotten_tomatoes dataset](https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes)
-# 
+#
 # Number of rows 10,662
 # Likes: 93
 # Downloads last month: 60,583
-# 
+#
 # > Assertion: Using movie reviews would provide a rich source of human-generated text (may be help with shorter texts)
 # > Assumption: Movie reviews are more likely to be human generated than AI generated.
-# 
+#
 
 # In[ ]:
 
@@ -135,7 +135,7 @@ print(output_value_counts(rt))
 
 
 # # [ag_news](https://huggingface.co/datasets/fancyzhx/ag_news)
-# 
+#
 # Number of rows: 127,600
 # Likes: 177
 # Downloads last month: 84,165
@@ -149,7 +149,7 @@ print(output_value_counts(ag))
 
 
 # # [Imdb dataset](https://huggingface.co/datasets/stanfordnlp/imdb)
-# 
+#
 # Number of rows: 100,000
 # Likes: 352
 # Downloads last month: 171,036
@@ -163,7 +163,7 @@ print(output_value_counts(imdb))
 
 
 # # [AI-human-text](https://huggingface.co/datasets/andythetechnerd03/AI-human-text)
-# 
+#
 # Number of rows: 487,235
 # Likes: 8
 # Downloads last month: 365
@@ -177,7 +177,7 @@ print(output_value_counts(ai_human))
 
 
 # # [Human vs Machine](https://huggingface.co/datasets/NicolaiSivesind/human-vs-machine)
-# 
+#
 # Number of rows: 320,000
 # Likes: 19
 # Downloads last month: 188
@@ -208,7 +208,7 @@ print(output_value_counts(human_vs_machine))
 
 
 # # [AI-and-Human-Generated-Text](https://huggingface.co/datasets/Ateeqq/AI-and-Human-Generated-Text)
-# 
+#
 # Number of rows: 28,662
 # Likes: 19
 # Downloads last month: 486
@@ -224,11 +224,11 @@ print(output_value_counts(ai_and_human))
 
 
 # # [AI generated movie reviews](https://huggingface.co/datasets/Milkyway-islander/AI_Human_generated_movie_reviews)
-# 
+#
 # Number of rows: 10,460
 # Likes: 3
 # Downloads last month: 29
-# 
+#
 # There are a good verity of AI models used to generate these texts.
 
 # In[ ]:
@@ -245,7 +245,7 @@ print(output_value_counts(ai_movie_reviews))
 
 
 # # [Human vs AI Sentences](https://huggingface.co/datasets/shahxeebhassan/human_vs_ai_sentences)
-# 
+#
 # Number of rows: 105,000
 # Likes: 9
 # Downloads last month: 151
@@ -259,11 +259,11 @@ print(output_value_counts(human_vs_ai_sentences))
 
 
 # # [Human Raid](https://huggingface.co/datasets/charisgao/human-raid)
-# 
+#
 # Number of rows: 948,371
 # Likes: 1
 # Downloads last month: 10
-# 
+#
 # Unsure about this one as it seems to be data taken from diffrent sources `reddit`, `recipes`, `reviews` which could quite easily be AI generated
 
 # In[ ]:
@@ -280,7 +280,7 @@ print(output_value_counts(human_vs_ai_sentences))
 
 
 # # [AI-vs-human collection](https://huggingface.co/collections/zcamz/ai-vs-human)
-# 
+#
 # Number of rows: 5,000 (but  its ai-human cols so its 10,000 rows when expanded)
 # Likes: 1
 # Downloads last month: 5
@@ -305,11 +305,11 @@ def load_ai_vs_human_collection(dataset_name: str) -> pl.LazyFrame:
 
 
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
-# 
+#
 # ## Dataset Description
 # This dataset contains pairs of original articles and their AI-generated completions.
-# 
-# 
+#
+#
 
 # In[ ]:
 
@@ -319,9 +319,9 @@ logger.info("Loaded AI vs Human GPT-3.5-Turbo text")
 print(output_value_counts(ai_vs_human_gpt35t))
 
 
-# 
+#
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
-# 
+#
 
 # In[ ]:
 
@@ -331,9 +331,9 @@ logger.info("Loaded AI vs Human SmolLM2 text")
 print(output_value_counts(ai_vs_human_smolLM2))
 
 
-# 
+#
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
-# 
+#
 
 # In[ ]:
 
@@ -343,9 +343,9 @@ logger.info("Loaded AI vs Human SmolLM2 1.7B text")
 print(output_value_counts(ai_vs_human_smolLM2_1_7B))
 
 
-# 
+#
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
-# 
+#
 
 # In[ ]:
 
@@ -355,9 +355,9 @@ logger.info("Loaded AI vs Human Qwen text")
 print(output_value_counts(ai_vs_human_qwen))
 
 
-# 
+#
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
-# 
+#
 
 # In[ ]:
 
@@ -367,9 +367,9 @@ logger.info("Loaded AI vs Human Gemma text")
 print(output_value_counts(ai_vs_human_gemma))
 
 
-# 
+#
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
-# 
+#
 
 # In[ ]:
 
@@ -379,9 +379,9 @@ logger.info("Loaded AI vs Human Llama text")
 print(output_value_counts(ai_vs_human_llama))
 
 
-# 
+#
 # # AI vs Human dataset on the [OpenWebTxt](https://huggingface.co/datasets/stas/openwebtext-10k)
-# 
+#
 
 # In[ ]:
 
@@ -392,7 +392,7 @@ print(output_value_counts(ai_vs_human_llama_8B))
 
 
 # ## [LM Arena Search](https://huggingface.co/datasets/lmarena-ai/search-arena-24k)
-# 
+#
 
 # In[ ]:
 
@@ -637,8 +637,8 @@ expert_arena = (
 
 
 # ## [LM Arena human prefrence](https://huggingface.co/datasets/lmarena-ai/arena-human-preference-140k)
-# 
-# 
+#
+#
 
 # In[ ]:
 
@@ -677,7 +677,7 @@ print(output_value_counts(human_essays))
 
 
 # # [LLM Generated Essays](https://huggingface.co/datasets/artfultom/llm-generated-essays)
-# 
+#
 # 37,488 records
 
 # In[ ]:
@@ -750,113 +750,113 @@ print(output_value_counts(raid))
 
 
 # ## AI vs Human
-# 
+#
 # 7 datasets containing 10,000 samples, 5,000 human-written and 5,000 AI-generated.
-# 
+#
 # This equates to a total of 70,000 samples.
-# 
-# 
+#
+#
 # ## Human Raid
-# 
+#
 # I worry about the quality of this dataset so will ignore.
-# 
+#
 # ## AI-vs-Human Sentences
-# 
+#
 # This contains 105,000 sentences where half are human written and half are AI generated.
-# 
+#
 # ## AI generated movie reviews
-# 
+#
 # 5.23k AI generated movie reviews and 5.23k human written reviews from the Stanford IMDB dataset.
-# 
+#
 # ## AI-and-Human-Generated-Text
-# 
+#
 # 28,662 samples of abstracts and titles, half generated by AI (using GPT-3) and half original.
-# 
+#
 # ## Human vs Machine
-# 
+#
 # Older but contains 320,000 samples of human produced and machine generated text from Wikipedia introductions and scientific research abstracts.
 # 50/50 split.
-# 
+#
 # ## AI-human-text
-# 
+#
 # 0	305797
 # 1	181438
-# 
+#
 # Imbalanced dataset with around 65% human written and 35% AI generated text.
-# 
+#
 # ## IMDB
-# 
+#
 # 100000 samples all human written movie reviews.
-# 
+#
 # ## AG News
-# 
+#
 # 127600 samples of news articles in 4 topics all human written.
-# 
+#
 # ## Rotten Tomatoes Movie Reviews
-# 
+#
 # 10,662 samples all human written movie reviews.
-# 
+#
 # ## Newswire
-# 
+#
 # Contains 2.7 million unique public domain U.S. news wire articles, written between 1878 and 1977.
-# 
+#
 # ## English Quote
-# 
+#
 # 2,508 rows of human written quotes.
-# 
-# 
+#
+#
 # ## LM Arena Datasets
-# 
+#
 # ### Search Arena 24k
-# 
+#
 # 24,069 samples (x2 for both columns) of AI generated data. This is recent and contains data from more current models.
-# 
+#
 # ### Arena Expert 5k
-# 
+#
 # 5,128 samples (x2 for both columns) of AI generated data. (outputs from 'expert' level problems in LM Arena).
-# 
+#
 # ### Arena Human Preference 140k
-# 
-# 135,634 samples (x2 for both columns) of AI generated data. 
-# 
+#
+# 135,634 samples (x2 for both columns) of AI generated data.
+#
 # ### Raid Bench Summary
-# 
+#
 # 320_916 (160452 human, 160464 AI) samples of AI vs Human text
 
 # # Dataset curation v2.3.0
-# 
+#
 # Two-dataset approach for better model validation:
-# 
+#
 # ## Dataset 1: Primary Curated (train.parquet + test.parquet)
 # Target: 500k samples (250k human / 250k AI)
 # - Carefully balanced across datasets and genres
 # - No single dataset > 30% of total
 # - Train/Test split: 80/20
-# 
+#
 # ### Allocation Strategy:
-# 
+#
 # **RAID Bench:** 75,000 per class (30% of total)
 # - Benchmark dataset with adversarial attacks
 # - Increased from v2.2.0 (was 85k = 42.8%)
-# 
+#
 # **Essays (NEW):**
 # - Human essays: 40,000 (academic writing, avoid topic overfitting)
 # - LLM essays: 37,488 (all available)
 # - DAIGT v2 student essays: 25,000 human + 17,497 AI (all available)
 # - Total essays: ~120k (24% of dataset)
-# 
+#
 # **News:**
 # - Newswire: 50,000 (historical, 1878-1977)
 # - AG News: 20,000 (modern news)
-# 
+#
 # **Arena datasets (recent models):**
 # - Human Preference 140k: 50,000
 # - Search Arena 24k: 30,000
 # - Expert Arena 5k: ~10,000 (all available)
-# 
+#
 # **AI vs Human Collection (CNN DailyMail):**
 # - 7 datasets × ~5-10k each = ~69k total
-# 
+#
 # **Other datasets:**
 # - Human vs Machine: 15,000 per class
 # - Human vs AI Sentences: 7,500 per class
@@ -866,19 +866,19 @@ print(output_value_counts(raid))
 # - Rotten Tomatoes: 7,500
 # - English Quotes: 2,508 (at limit)
 # - General Knowledge: 10,000 (NEW, limited to avoid formulaic style)
-# 
+#
 # ## Dataset 2: Secondary Validation (validation.parquet)
 # Target: ~96k samples from leftovers
 # - Built from remaining samples after primary curation
 # - Tests generalization to "more of the same"
 # - Less carefully curated, minor imbalance OK
-# 
+#
 # ### Composition:
 # - RAID leftovers: 30k per class
 # - Human vs Machine leftovers: 12k per class
 # - Arena leftovers: 20k (AI only)
 # - AI vs Human Collection: ~12k (whatever remains)
-# 
+#
 # **Purpose:** If model performs similarly on both test sets, it generalizes well beyond the curated distribution.
 
 # In[ ]:
@@ -1324,4 +1324,3 @@ logger.info(
     f"validation={len(dataset_composition['validation'])}"
 )
 logger.info("=" * 80 + "\n")
-

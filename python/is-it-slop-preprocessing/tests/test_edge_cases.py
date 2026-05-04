@@ -52,4 +52,4 @@ def test_oov_handling() -> None:
 
 def test_invalid_input() -> None:
     with pytest.raises(TypeError):
-        TfidfVectorizer.fit(["not a list"], VectorizerParams(1.0, 1.0))  # type: ignore[list-item]
+        TfidfVectorizer.fit(["not a list"], VectorizerParams(min_df=1.0, max_df=1.0))
