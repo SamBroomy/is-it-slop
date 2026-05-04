@@ -47,6 +47,7 @@ mod prediction;
 use std::sync::Mutex;
 
 pub use classification::Classification;
+pub use error::{PipelineError, Result};
 use is_it_slop_preprocessing::pre_processor::{text_cleaner_for_inference, tokenize};
 use ndarray::Ix2;
 use ort::{
@@ -64,9 +65,7 @@ fn prepare_input_for_inference(
     let dense = input_vector.to_dense();
     let shape = dense.shape().to_vec();
     let data = dense.into_raw_vec_and_offset().0.into_boxed_slice();
-
-    let input = Tensor::from_array((shape, data))?;
-    Ok(input)
+    Tensor::from_array((shape, data))
 }
 
 fn run_model_inference(
@@ -77,18 +76,6 @@ fn run_model_inference(
     let inputs = ort::inputs![input_name => input];
     model.run(inputs)
 }
-
-// /// Extracts class probabilities from model outputs
-// fn parse_model_outputs(outputs: &ort::session::SessionOutputs<'_>) -> ort::Result<Prediction> {
-//     // Second output: class probabilities (e.g., [{0: ..., 1: ...}])
-//     let probs_array = outputs[1]
-//         .try_extract_array::<f32>()?
-//         .into_dimensionality::<Ix2>()
-//         .expect("valid 2d array");
-
-//     let first_row = probs_array.row(0);
-//     Ok([first_row[0], first_row[1]].into())
-// }
 
 fn parse_model_outputs_batch(
     outputs: &ort::session::SessionOutputs<'_>,
@@ -103,14 +90,6 @@ fn parse_model_outputs_batch(
         .map(|row| [row[0], row[1]].into())
         .collect())
 }
-
-// fn run_inference_single(
-//     session: &mut Session,
-//     input: Value<ort::value::TensorValueType<f32>>,
-// ) -> ort::Result<Prediction> {
-//     let outputs = run_model_inference(session, input)?;
-//     parse_model_outputs(&outputs)
-// }
 
 fn run_inference_batch(
     model: &mut Session,
@@ -137,10 +116,10 @@ fn run_inference_batch(
 ///
 /// # Example
 ///
-/// ```rust,no_run
+/// ```rust
 /// use is_it_slop::{
 ///     model::MODEL,
-///     pipeline::{AggregationMethod, predict},
+///     pipeline::{AggregationMethod, PipelineError, predict},
 /// };
 ///
 /// let result = predict(&MODEL, "Some text", AggregationMethod::default())?;
@@ -148,20 +127,23 @@ fn run_inference_batch(
 ///     "AI probability: {:.2}%",
 ///     result.prediction.ai_probability() * 100.0
 /// );
-/// # Ok::<(), ort::Error>(())
+/// # Ok::<(), PipelineError>(())
 /// ```
-pub fn predict<T: AsRef<str> + Sync>(
+pub fn predict(
     session: &Mutex<Session>,
-    input: T,
+    input: &str,
     agg_method: AggregationMethod,
-) -> ort::Result<UnifiedPrediction> {
-    // Clean
-    let input = text_cleaner_for_inference().clean(input.as_ref());
-    // Tokenize
+) -> Result<UnifiedPrediction> {
+    if input.trim().is_empty() {
+        return Err(PipelineError::EmptyInput);
+    }
+    let input = text_cleaner_for_inference().clean(input);
+    if input.trim().is_empty() {
+        return Err(PipelineError::EmptyInput);
+    }
     let tokens = tokenize(&[input]);
     let tokens = tokens[0].as_ref();
 
-    // Chunk
     let chunks = TOKEN_CHUNKER.chunk(tokens);
 
     let chunk_features = PRE_PROCESSOR.vectorize_from_tokens(&chunks);
@@ -169,8 +151,8 @@ pub fn predict<T: AsRef<str> + Sync>(
 
     let output = {
         let mut model = session.lock().unwrap();
-        run_inference_batch(&mut model, input_tensor)?
-    };
+        run_inference_batch(&mut model, input_tensor)
+    }?;
 
     Ok(UnifiedPrediction::new(output, agg_method))
 }
@@ -192,10 +174,10 @@ pub fn predict<T: AsRef<str> + Sync>(
 ///
 /// # Example
 ///
-/// ```rust,no_run
+/// ```rust
 /// use is_it_slop::{
 ///     model::MODEL,
-///     pipeline::{AggregationMethod, predict_batch},
+///     pipeline::{AggregationMethod, PipelineError, predict_batch},
 /// };
 ///
 /// let texts = vec!["Text 1", "Text 2", "Text 3"];
@@ -208,29 +190,36 @@ pub fn predict<T: AsRef<str> + Sync>(
 ///         result.prediction.ai_probability() * 100.0
 ///     );
 /// }
-/// # Ok::<(), ort::Error>(())
+/// # Ok::<(), PipelineError>(())
 /// ```
-pub fn predict_batch<T: AsRef<str> + Sync>(
+pub fn predict_batch(
     session: &Mutex<Session>,
-    inputs: &[T],
+    inputs: &[&str],
     agg_method: AggregationMethod,
-) -> ort::Result<Vec<UnifiedPrediction>> {
+) -> Result<Vec<UnifiedPrediction>> {
+    if inputs.is_empty() {
+        return Err(PipelineError::EmptyInput);
+    }
+    // This should really check for any input is empty and we should return a
+    // Vec<Result<UnifiedPrediction>> instead of failing the whole batch, but for simplicity we'll
+    // just check if all are empty and return a single error if so.
+    if inputs.iter().all(|i| i.trim().is_empty()) {
+        return Err(PipelineError::EmptyInput);
+    }
     let text_cleaner = text_cleaner_for_inference();
     let a = inputs
         .iter()
-        .map(|i| text_cleaner.clean(i.as_ref()))
+        .map(|i| text_cleaner.clean(i))
         .collect::<Vec<_>>();
     let tokens = tokenize(&a);
 
-    let chunked_inputs = tokens
-        .iter()
-        .map(|tks| TOKEN_CHUNKER.chunk(tks))
-        .collect::<Vec<_>>();
+    let chunked_inputs = TOKEN_CHUNKER.chunk_batch(&tokens);
 
-    // Flatten to process all chunks at once
-    // Keep track of chunk counts per input for later aggregation
+    // Flatten to process all chunks at once.
+    // Keep track of chunk counts per input for later aggregation.
+    let total_chunks: usize = chunked_inputs.iter().map(Vec::len).sum();
     let mut chunk_counts = Vec::with_capacity(chunked_inputs.len());
-    let mut all_chunks = Vec::new();
+    let mut all_chunks = Vec::with_capacity(total_chunks);
     for chunks in &chunked_inputs {
         chunk_counts.push(chunks.len());
         all_chunks.extend_from_slice(chunks);
@@ -239,29 +228,107 @@ pub fn predict_batch<T: AsRef<str> + Sync>(
     let chunk_features = PRE_PROCESSOR.vectorize_from_tokens(&all_chunks);
     let input_tensor = prepare_input_for_inference(&chunk_features)?;
 
-    let mut output = {
+    let output = {
         let mut session = session.lock().unwrap();
-        run_inference_batch(&mut session, input_tensor)?
+        run_inference_batch(&mut session, input_tensor)
+    }?;
+
+    // Aggregate predictions back to original inputs.
+    // Use index-based slicing instead of drain() to avoid shifting elements.
+    let results: Vec<UnifiedPrediction> = {
+        let mut offset = 0;
+        chunk_counts
+            .iter()
+            .map(|&count| {
+                let chunk_preds = output[offset..offset + count].to_vec();
+                offset += count;
+                UnifiedPrediction::new(chunk_preds, agg_method)
+            })
+            .collect()
     };
 
-    // Aggregate predictions back to original inputs
-    let results = chunk_counts
-        .iter()
-        .map(|&count| {
-            let chunk_preds = output.drain(..count).collect();
-            UnifiedPrediction::new(chunk_preds, agg_method)
-        })
-        .collect();
-
     Ok(results)
+}
+
+mod error {
+    use thiserror::Error;
+
+    /// Result type for the prediction pipeline.
+    pub type Result<T> = std::result::Result<T, PipelineError>;
+
+    /// Errors that can occur during the prediction pipeline.
+    #[derive(Debug, Error)]
+    pub enum PipelineError {
+        /// The input text is empty or reduces to nothing after cleaning.
+        ///
+        /// This covers both a literally empty/whitespace-only string and text
+        /// that contains only cleaning artifacts (HTML entities, encoding noise,
+        /// etc.) with no real content left after the universal cleaning step.
+        #[error("Input text must be non-empty")]
+        EmptyInput,
+        /// An error occurred during ONNX model inference.
+        #[error("Inference error: {0}")]
+        InferenceError(#[from] ort::Error),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::MODEL;
 
-    // Tests validate pipeline components that don't require ONNX execution.
-    // Full end-to-end tests with model artifacts should be added as integration tests.
+    #[test]
+    fn test_predict_end_to_end() {
+        let result = predict(
+            &MODEL,
+            "This is a test sentence for the full pipeline.",
+            AggregationMethod::default(),
+        )
+        .expect("End-to-end predict should succeed");
+
+        assert!(result.prediction.human_probability() >= 0.0);
+        assert!(result.prediction.human_probability() <= 1.0);
+        assert!(result.prediction.ai_probability() >= 0.0);
+        assert!(result.prediction.ai_probability() <= 1.0);
+        assert!(
+            (result.prediction.human_probability() + result.prediction.ai_probability() - 1.0)
+                .abs()
+                < 1e-5
+        );
+        assert!(!result.chunk_predictions.is_empty());
+    }
+
+    #[test]
+    fn test_predict_batch_end_to_end() {
+        let texts = vec![
+            "First test sentence.",
+            "Second test sentence here.",
+            "Third example of text.",
+        ];
+        let results = predict_batch(&MODEL, &texts, AggregationMethod::default())
+            .expect("Batch predict should succeed");
+
+        assert_eq!(results.len(), 3);
+        for result in &results {
+            assert!(result.prediction.human_probability() >= 0.0);
+            assert!(result.prediction.ai_probability() <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_predict_rejects_empty() {
+        assert!(predict(&MODEL, "", AggregationMethod::default()).is_err());
+        assert!(predict(&MODEL, "   \n\t  ", AggregationMethod::default()).is_err());
+    }
+
+    #[test]
+    fn test_predict_batch_rejects_empty() {
+        let empty: &[&str] = &[];
+        assert!(predict_batch(&MODEL, empty, AggregationMethod::default()).is_err());
+
+        let all_whitespace = vec!["   ", "\t\t", "\n\n"];
+        assert!(predict_batch(&MODEL, &all_whitespace, AggregationMethod::default()).is_err());
+    }
 
     #[test]
     fn test_prepare_input_for_inference_shape() {
@@ -325,7 +392,7 @@ mod tests {
         assert!(!cleaned.is_empty(), "Cleaning should not panic");
 
         // Encoding artifacts - verify cleaning doesn't panic
-        let _ = cleaner.clean("Ã©Ã®Ã±");
+        let _ = cleaner.clean("\u{c3}\u{a9}\u{c3}\u{ae}\u{c3}\u{b1}");
     }
 
     #[test]
@@ -352,7 +419,7 @@ mod tests {
         assert!(matches!(default_agg, AggregationMethod::WeightedMean(_)));
 
         if let AggregationMethod::WeightedMean(threshold) = default_agg {
-            assert!(threshold > 0.0 && threshold < 1.0);
+            assert!(*threshold > 0.0 && *threshold < 1.0);
         }
     }
 

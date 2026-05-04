@@ -1491,4 +1491,54 @@ mod tests {
             assert_eq!(idx1, *idx2, "Feature index mismatch for n-gram {ngram:?}");
         }
     }
+
+    #[test]
+    fn test_vectorize_from_tokens_equivalence_with_transform() {
+        let texts = vec![
+            "the quick brown fox jumps",
+            "over the lazy dog",
+            "quick brown fox runs",
+        ];
+        let params = VectorizerParams::new(1.0, 1.0, false);
+
+        let (vectorizer, _) = CountVectorizer::fit_transform(&texts, params);
+
+        let tokenized = tokenizer::tokenize(&texts);
+
+        let from_tokens = vectorizer.vectorize_from_tokens(&tokenized);
+        let from_texts = vectorizer.transform(&texts);
+
+        assert_eq!(from_tokens.rows(), from_texts.rows());
+        assert_eq!(from_tokens.cols(), from_texts.cols());
+        assert_eq!(from_tokens.data(), from_texts.data());
+        assert_eq!(from_tokens.indices(), from_texts.indices());
+        let indptr_a = from_tokens.indptr();
+        let indptr_b = from_texts.indptr();
+        assert_eq!(indptr_a.raw_storage(), indptr_b.raw_storage());
+    }
+
+    #[test]
+    fn test_from_vocab_preserves_indices() {
+        let texts = vec!["hello world test", "hello world sample"];
+        let params = VectorizerParams::new(1.0, 1.0, false);
+
+        let trained = CountVectorizer::fit(&texts, params);
+        let original_vocab = trained.vocab.clone();
+        let original_num = trained.num_features();
+
+        let rebuilt = CountVectorizer::from_vocab(
+            original_vocab.clone(),
+            VectorizerParams::new(1.0, 1.0, false),
+        );
+        assert_eq!(rebuilt.num_features(), original_num);
+
+        for (ngram_key, &idx) in &original_vocab {
+            assert_eq!(rebuilt.vocab.get(ngram_key), Some(&idx));
+        }
+
+        let test_texts = vec!["hello world"];
+        let x_trained = trained.transform(&test_texts);
+        let x_rebuilt = rebuilt.transform(&test_texts);
+        assert_eq!(x_trained.data(), x_rebuilt.data());
+    }
 }

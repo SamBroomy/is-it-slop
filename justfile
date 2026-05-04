@@ -40,38 +40,35 @@ build-bindings:
     uv run --directory python/is-it-slop maturin develop --release --uv
 
 build-cli-release:
-    cargo build --release --features cli --bin is-it-slop
+    cargo build --profile dist --features cli --bin is-it-slop
 
 # Run CLI with different output formats and options
 run-cli:
-    @echo "=== Running slop-cli examples ==="
+    @echo "=== Running is-it-slop examples ==="
     @echo ""
-    @echo "1. Default output (AI probability as float 0-1):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text to check if it's AI generated."
+    @echo "1. Default output (human-readable):"
+    cargo run --release --features cli --bin is-it-slop -- "This is a test text to check if it's AI generated."
     @echo ""
-    @echo "2. Class format (just 0 or 1):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format class
+    @echo "2. Classification label only:"
+    cargo run --release --features cli --bin is-it-slop -- --label "This is a test text."
     @echo ""
-    @echo "3. JSON format (detailed output):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format json
+    @echo "3. Label with score:"
+    cargo run --release --features cli --bin is-it-slop -- --label --score "This is a test text."
     @echo ""
-    @echo "4. Human-readable format:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format human
+    @echo "4. JSON format:"
+    cargo run --release --features cli --bin is-it-slop -- --json "This is a test text."
     @echo ""
-    @echo "5. Verbose mode (shows timing):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --verbose
+    @echo "5. JSONL format (streaming):"
+    cargo run --release --features cli --bin is-it-slop -- --jsonl "This is a test text."
     @echo ""
-    @echo "6. Custom labels with JSON:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --labels real fake --format json
+    @echo "6. Bare score for scripting:"
+    cargo run --release --features cli --bin is-it-slop -- --score "This is a test text."
     @echo ""
-    @echo "7. Quiet mode with class output:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --quiet --format class
-    @echo ""
-    @echo "=== All examples complete ==="
+    @echo "=== Examples complete ==="
 
-# Build the CLI in release mode
+# Build the CLI in dist mode (optimized for distribution)
 build-cli:
-    cargo build --release --features cli --bin is-it-slop
+    cargo build --profile dist --features cli --bin is-it-slop
 
 # Run a quick test with custom text
 test-cli TEXT:
@@ -457,6 +454,33 @@ build-python-wheels:
 [group('dev')]
 install-cli:
     cargo install --path crates/is-it-slop --features cli --force
+
+# Test binary packaging locally (without uploading)
+[group('dev')]
+test-binary-package TARGET:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building for target: {{ TARGET }}"
+    cargo build --profile dist --features cli --target {{ TARGET }}
+
+    # Determine binary name (add .exe for Windows)
+    # Note: dist profile outputs to target/{TARGET}/dist/ not release/
+    if [[ "{{ TARGET }}" == *"windows"* ]]; then
+        BINARY="is-it-slop.exe"
+        ARCHIVE="is-it-slop-{{ TARGET }}.zip"
+        echo "Creating zip archive..."
+        cd target/{{ TARGET }}/dist
+        zip "../../../${ARCHIVE}" "${BINARY}"
+        cd ../../..
+    else
+        BINARY="is-it-slop"
+        ARCHIVE="is-it-slop-{{ TARGET }}.tar.gz"
+        echo "Creating tar.gz archive..."
+        tar -czf "target/${ARCHIVE}" -C "target/{{ TARGET }}/dist" "${BINARY}"
+    fi
+
+    SIZE=$(du -h "target/${ARCHIVE}" | cut -f1)
+    echo "✅ Test package created: target/${ARCHIVE} (${SIZE})"
 
 # Show current version across all packages
 [group('dev')]

@@ -64,24 +64,35 @@ for text, result in zip(texts, results):
 The package includes a CLI that can be used after installation:
 
 ```bash
-# Basic usage (outputs AI probability)
+# Default: human-readable with probabilities and confidence metrics
 is-it-slop "Your text here"
-# Output: 0.234
 
-# Different output formats
-is-it-slop "Text" --format class   # Output: Human or AI
-is-it-slop "Text" --format json    # Output: Full JSON with probabilities
-is-it-slop "Text" --format human   # Output: Human-readable with confidence
+# Classification label only
+is-it-slop "Text" --label
+# Output: Human
 
-# Batch processing
-is-it-slop --batch texts.txt          # One text per line
-is-it-slop --batch-json texts.json    # JSON array of texts
+# Label with score
+is-it-slop "Text" --label --score
+# Output: Human (0.2340)
+
+# Bare AI probability for scripting
+is-it-slop "Text" --score
+# Output: 0.2340
+
+# Full JSON output
+is-it-slop "Text" --json
+
+# JSON lines (one object per line, useful for streaming)
+is-it-slop "Text" --jsonl
+
+# Batch processing (auto-detects .json vs line-delimited)
+is-it-slop -b texts.txt
 
 # Custom threshold
 is-it-slop "Text" --threshold 0.7
 
 # Read from stdin
-echo "Your text" | is-it-slop --format class
+echo "Your text" | is-it-slop
 
 # Get help
 is-it-slop --help
@@ -146,6 +157,8 @@ Result object with classification and probabilities:
 - `classification` (str): Either `"Human"` or `"AI"`
 - `human_probability` (float): Probability of human-written text (0.0-1.0)
 - `ai_probability` (float): Probability of AI-generated text (0.0-1.0)
+- `num_chunks` (int): Number of text chunks processed (1 for short texts, more for long)
+- `chunk_agreement` (float): Agreement across chunks (0.5-1.0). 1.0 = all chunks agree
 
 **Note:** `human_probability + ai_probability == 1.0`
 

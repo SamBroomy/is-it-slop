@@ -38,3 +38,4 @@
 !release-plz.toml
 !/crates/**/CHANGELOG.md
 /notebooks/raid_bench.*
+!taplo.toml

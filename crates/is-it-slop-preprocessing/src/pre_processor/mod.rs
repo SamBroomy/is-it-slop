@@ -13,7 +13,7 @@ mod chunker;
 mod cleaner;
 #[cfg(feature = "statistical-features")]
 pub mod features;
-mod ngrams;
+pub mod ngrams;
 mod tokenizer;
 mod vectorizer;
 pub use chunker::TokenChunker;

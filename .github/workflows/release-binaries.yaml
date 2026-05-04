@@ -1,0 +1,66 @@
+name: Release Binaries
+
+permissions: {}
+
+on:
+  release:
+    types: [published]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  upload-assets:
+    name: ${{ matrix.target }}
+    if: github.repository_owner == 'SamBroomy'
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-22.04
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-22.04
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: taiki-e/checkout-action@v1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - run: echo "RUSTFLAGS=${RUSTFLAGS} -C target-feature=+crt-static -C link-self-contained=yes" >>"${GITHUB_ENV}"
+        if: contains(matrix.target, '-linux-musl')
+
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: is-it-slop
+          target: ${{ matrix.target }}
+          tar: all
+          zip: windows
+          features: cli
+          profile: dist
+          token: ${{ secrets.GITHUB_TOKEN }}

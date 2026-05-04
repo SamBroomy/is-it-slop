@@ -15,23 +15,34 @@
 
 # is-it-slop
 
-Fast AI text detection using classic ML - TF-IDF and logistic regression.
+***Unsure if the article you just read was AI generated slop?***
+
+`is-it-slop` is a small, fast, and accurate text classification tool that detects AI-generated.
+
+Fast AI text detection using classic ML - TF-IDF and logistic regression on token n-grams.
 
 > Inspired by [Magika](https://github.com/google/magika) for serving a small, fast model via ONNX Runtime in Rust.
 
 ## Features
 
 - **Fast**: Rust-based multi-threaded preprocessing and batch inference via ONNX Runtime
-- **Small**: 4.7 MB model + 2.7 MB vectorizer (~7.4 MB total), no transformers or GPU needed
-- **Portable**: Single ~56 MB binary with embedded model, no Python runtime required
-- **Accurate**: 95%+ accuracy (F1 0.95, MCC 0.90) on diverse holdout test sets
+- **Small**: 7.2 MB model + 4.2 MB vectorizer (~11.4 MB total), no transformers or GPU needed
+- **Portable**: Single ~60 MB binary with embedded model, no Python runtime required
+- **Accurate**: 95.6% accuracy (F1 0.96, MCC 0.91) on diverse holdout test sets
 - **Chunk-aware**: Handles long documents via overlapping token chunks with aggregation
 
 ## Installation
 
 ### CLI
 
-**Option 1: Via Python package**:
+**Option 1: Pre-built binaries** (fastest, no build required):
+
+```bash
+# Using cargo-binstall (recommended for Rust users)
+cargo binstall is-it-slop
+```
+
+**Option 2: Via Python package**:
 
 ```bash
 pip install is-it-slop
@@ -41,7 +52,7 @@ uv add is-it-slop
 uvx is-it-slop "Your text here"
 ```
 
-**Option 2: Standalone Rust binary**:
+**Option 3: Build from source**:
 
 ```bash
 cargo install is-it-slop --locked --features cli
@@ -74,14 +85,22 @@ cargo add is-it-slop
 Both Python and Rust installations provide the same `is-it-slop` command:
 
 ```bash
+# Default: human-readable with probabilities and confidence metrics
 is-it-slop "Your text here"
-# Output: 0.234 (AI probability)
 
-is-it-slop "Text" --format class
+# Classification label only
+is-it-slop "Text" --label
 # Output: Human (or AI)
 
-is-it-slop "Text" --format json
-# Output: {"class":"Human","probabilities":{"human":0.766,"ai":0.234},...}
+# Full JSON output
+is-it-slop "Text" --json
+
+# Bare AI probability score for scripting
+is-it-slop "Text" --score
+# Output: 0.2340
+
+# Batch from file (auto-detects .json vs line-delimited)
+is-it-slop -b texts.txt
 
 # Run directly with uvx (no installation needed):
 uvx is-it-slop "Your text here"

@@ -5,13 +5,14 @@ description = "Detect AI-generated slop text using machine learning."
 authors = [
     { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 keywords = [
     "AI-text-detector",
     "ML",
     "TF-IDF",
     "Tokenization",
     "ai-detection",
+    "ai-slop-detector",
     "machine-learning",
     "onnx",
     "pyo3",
@@ -30,6 +31,7 @@ classifiers = [
     "Operating System :: Unix",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -71,4 +73,4 @@ features = ["python", "cli"]
 python-source = "src"
 manifest-path = "../../crates/is-it-slop/Cargo.toml"
 module-name = "is_it_slop._is_it_slop_rust_bindings"
-# strip = true
+profile = "dist"

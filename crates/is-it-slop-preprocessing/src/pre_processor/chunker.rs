@@ -536,4 +536,60 @@ mod tests {
             assert_eq!(*chunks.last().unwrap().last().unwrap(), 299);
         }
     }
+
+    #[test]
+    fn test_chunk_batch_equivalence() {
+        let chunker = TokenChunker::default();
+        let token_sequences: Vec<Vec<u32>> = (0..10)
+            .map(|i| (i * 100..i * 100 + 250).collect())
+            .collect();
+
+        let batched = chunker.chunk_batch(&token_sequences);
+        let sequential: Vec<Vec<Vec<u32>>> = token_sequences
+            .iter()
+            .map(|tokens| chunker.chunk(tokens))
+            .collect();
+
+        assert_eq!(batched.len(), sequential.len());
+        for (i, (batch_chunks, seq_chunks)) in batched.iter().zip(sequential.iter()).enumerate() {
+            assert_eq!(
+                batch_chunks, seq_chunks,
+                "chunk_batch and chunk disagree at index {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunk_empty_input() {
+        let chunker = TokenChunker::default();
+        let result = chunker.chunk(&[]);
+        assert_eq!(result, vec![Vec::<u32>::new()]);
+
+        let batch_result = chunker.chunk_batch(&[Vec::new(), Vec::new()]);
+        assert_eq!(batch_result.len(), 2);
+        assert_eq!(batch_result[0], vec![Vec::<u32>::new()]);
+        assert_eq!(batch_result[1], vec![Vec::<u32>::new()]);
+    }
+
+    #[test]
+    fn test_chunk_exact_boundaries() {
+        let chunker = TokenChunker {
+            chunk_size: 100,
+            overlap: 10,
+            min_chunk_size: 30,
+        };
+
+        let tokens_exact: Vec<u32> = (0..100).collect();
+        let chunks = chunker.chunk(&tokens_exact);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 100);
+
+        let tokens_two_chunks: Vec<u32> = (0..200).collect();
+        let chunks = chunker.chunk(&tokens_two_chunks);
+        assert!(
+            chunks.len() >= 2,
+            "200 tokens should produce at least 2 chunks"
+        );
+        assert_eq!(*chunks.last().unwrap().last().unwrap(), 199);
+    }
 }

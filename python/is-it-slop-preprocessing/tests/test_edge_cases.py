@@ -47,9 +47,9 @@ def test_oov_handling() -> None:
     X = vectorizer.transform(test)
 
     # Should not crash, may have sparse/zero rows
-    assert X.shape[0] == 1
+    assert X.shape[0] == 1  # type: ignore[union-attr]
 
 
 def test_invalid_input() -> None:
     with pytest.raises(TypeError):
-        TfidfVectorizer.fit("not a list", VectorizerParams(1.0, 1.0))
+        TfidfVectorizer.fit(["not a list"], VectorizerParams(1.0, 1.0))  # type: ignore[list-item]

@@ -28,9 +28,10 @@ Quick Start (CLI)
 After installation, use the `is-it-slop` command:
 
     $ is-it-slop "Your text here"
-    0.1523
+    Classification: AI
+    ...
 
-    $ is-it-slop "Your text" --format class
+    $ is-it-slop "Your text" --label
     Human
 
 Or run directly without installing:
@@ -48,6 +49,8 @@ from ._internal import (
     __version__,
     is_this_slop,
     is_this_slop_batch,
+    predict,
+    predict_batch,
 )
 
 __all__ = [
@@ -57,4 +60,6 @@ __all__ = [
     "__version__",
     "is_this_slop",
     "is_this_slop_batch",
+    "predict",
+    "predict_batch",
 ]

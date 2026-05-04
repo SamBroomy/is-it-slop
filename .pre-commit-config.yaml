@@ -69,11 +69,11 @@ repos:
         files: ^justfile$
         stages: [pre-commit]
         pass_filenames: false
-      # Cargo machete (only when Cargo.toml changes)
-      - id: cargo-machete
-        name: cargo machete
+      # Cargo shear (only when Cargo.toml changes)
+      - id: cargo-shear
+        name: cargo shear
         description: Find unused dependencies
-        entry: cargo machete --with-metadata --fix
+        entry: cargo shear --deny-warnings --fix
         language: system
         files: '^Cargo\.toml$'
         types: [toml]
@@ -105,6 +105,14 @@ repos:
         language: system
         files: '\.rs$'
         types: [rust]
+        pass_filenames: false
+      - id: taplo-fmt
+        name: taplo fmt
+        description: Format TOML files with taplo
+        entry: taplo format
+        language: system
+        files: '\.toml$'
+        types: [toml]
         pass_filenames: false
       # Cargo doc (documentation check)
       - id: cargo-doc

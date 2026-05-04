@@ -5,13 +5,14 @@ description = "Fast TF-IDF vectorization. Preprocessing step for `is-it-slop` pa
 authors = [
     { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 keywords = [
     "AI-text-detector",
     "ML",
     "TF-IDF",
     "Tokenization",
     "ai-detection",
+    "ai-slop-detector",
     "machine-learning",
     "onnx",
     "pyo3",
@@ -30,6 +31,7 @@ classifiers = [
     "Operating System :: Unix",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -48,6 +50,10 @@ readme = { file = "./README.md", content-type = "text/markdown" }
 
 dependencies = ["numpy>=2.0", "scipy>=1.14"]
 
+[dependency-groups]
+dev = ["pytest>=9.0.1"]
+
+
 [project.urls]
 Homepage = "https://github.com/SamBroomy/is-it-slop/blob/main/python/is-it-slop-preprocessing/README.md"
 Documentation = "https://github.com/SamBroomy/is-it-slop/blob/main/README.md"
@@ -65,3 +71,4 @@ features = ["python"]
 python-source = "src"
 manifest-path = "../../crates/is-it-slop-preprocessing/Cargo.toml"
 module-name = "is_it_slop_preprocessing._is_it_slop_preprocessing_rust_bindings"
+profile = "dist"

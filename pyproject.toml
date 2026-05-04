@@ -95,8 +95,8 @@ Issues = "https://github.com/SamBroomy/is-it-slop/issues"
 package = false
 
 [tool.uv.workspace]
-members = ["python/is-it-slop-preprocessing", "python/is-it-slop"]
+members = ["python/is-it-slop", "python/is-it-slop-preprocessing"]
 
 [tool.uv.sources]
-is-it-slop-preprocessing = { workspace = true }
 is-it-slop = { workspace = true }
+is-it-slop-preprocessing = { workspace = true }

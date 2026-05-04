@@ -176,7 +176,7 @@ if RETRAIN_VECTORIZER or not VECTORIZER_BIN_PATH.exists():
     # Scaled for full dataset (473K texts)
     # min_df=0.001 → min 473 docs (0.1% of corpus) - filters rare n-grams
     # Previous v2.1.0: 30% sampling (142K texts), min_df=100 (0.07%)
-    params = VectorizerParams(min_df=0.001, max_df=0.7)
+    params = VectorizerParams(min_df=0.0007, max_df=0.7)
 
     # Log vectorizer params
     mlflow.log_param("ngram_range", f"{params.ngram_range}")

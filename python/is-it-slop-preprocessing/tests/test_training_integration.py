@@ -9,6 +9,7 @@ Tests the complete pipeline from Python training to Rust inference:
 - CSR matrix structure validation
 """
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -47,11 +48,11 @@ class TestTrainingWorkflow:
 
         # 4. Verify output structure
         assert issparse(X_train)
-        assert X_train.shape[0] == len(cleaned_texts)
+        assert X_train.shape[0] == len(cleaned_texts)  # type: ignore[union-attr]
         assert vectorizer.num_features > 0
 
         # 5. Verify L2 normalization
-        norms = np.sqrt((X_train.multiply(X_train)).sum(axis=1)).A1
+        norms = np.sqrt((X_train.multiply(X_train)).sum(axis=1)).A1  # type: ignore[union-attr]
         np.testing.assert_array_almost_equal(norms, np.ones(len(cleaned_texts)))
 
     def test_vectorizer_save_load_roundtrip(self) -> None:
@@ -118,19 +119,19 @@ class TestPyO3BindingCorrectness:
         # Verify structure
         assert len(X.data) > 0
         assert len(X.indices) == len(X.data)
-        assert len(X.indptr) == X.shape[0] + 1
+        assert len(X.indptr) == X.shape[0] + 1  # type: ignore[union-attr]
         assert X.indptr[0] == 0
         assert X.indptr[-1] == len(X.data)
 
         # Verify indices are sorted within each row
-        for i in range(X.shape[0]):
+        for i in range(X.shape[0]):  # type: ignore[union-attr]
             row_start = X.indptr[i]
             row_end = X.indptr[i + 1]
             row_indices = X.indices[row_start:row_end]
             assert np.all(row_indices[:-1] <= row_indices[1:]), "Indices should be sorted"
 
         # Verify no duplicate indices in rows
-        for i in range(X.shape[0]):
+        for i in range(X.shape[0]):  # type: ignore[union-attr]
             row_start = X.indptr[i]
             row_end = X.indptr[i + 1]
             row_indices = X.indices[row_start:row_end]
@@ -204,12 +205,10 @@ class TestArtifactExport:
 
             # Transformation should work
             X = loaded.transform(texts)
-            assert X.shape[0] == len(texts)
+            assert X.shape[0] == len(texts)  # type: ignore[union-attr]
 
     def test_chunker_config_json_format(self) -> None:
         """Test TokenChunker JSON configuration format."""
-        import json
-
         # Document the expected JSON format for Rust compatibility
         config = {"chunk_size": 100, "overlap": 10, "min_chunk_size": 25}
 
@@ -250,7 +249,7 @@ class TestEdgeCases:
         _vectorizer, X = TfidfVectorizer.fit_transform(texts, params)
 
         # Should produce valid matrix
-        assert X.shape[0] == len(texts)
+        assert X.shape[0] == len(texts)  # type: ignore[union-attr]
 
         # Empty text row should be zero vector
         empty_row = X[1].toarray().flatten()
@@ -263,7 +262,7 @@ class TestEdgeCases:
         params = VectorizerParams(min_df=1.0, max_df=1.0)
         _vectorizer, X = TfidfVectorizer.fit_transform(texts, params)
 
-        assert X.shape[0] == 1
+        assert X.shape[0] == 1  # type: ignore[union-attr]
         # With ngram_range=(2,4), may have features if text is long enough
         # If no features, that's also valid (all filtered out)
 
@@ -275,7 +274,7 @@ class TestEdgeCases:
         _vectorizer, X = TfidfVectorizer.fit_transform(texts, params)
 
         # Should handle gracefully (may produce sparse matrix with few features)
-        assert X.shape[0] == len(texts)
+        assert X.shape[0] == len(texts)  # type: ignore[union-attr]
 
     def test_duplicate_texts_training(self) -> None:
         """Test training on duplicate texts."""
