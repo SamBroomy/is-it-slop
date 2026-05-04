@@ -1,176 +1,110 @@
 //! CLI module for the is-it-slop text classification tool.
 //!
-//! This module provides command-line interface functionality for detecting
-//! AI-generated text. It handles argument parsing, input processing, and
-//! formatted output.
+//! Detects AI-generated text from positional arguments, files, or stdin.
+//!
+//! # Examples
+//!
+//! ```bash
+//! is-it-slop "some text"
+//! is-it-slop --label "some text"
+//! is-it-slop --score "some text"      # bare float for scripting
+//! is-it-slop --label --score "text"   # "Human 0.2340"
+//! is-it-slop --json "some text"       # full JSON
+//! is-it-slop --jsonl "some text"      # JSON line (for streaming)
+//! echo "text" | is-it-slop
+//! is-it-slop -f document.txt
+//! is-it-slop -b texts.txt             # one per line
+//! is-it-slop -b texts.json            # JSON array (auto-detected)
+//! is-it-slop --jsonl -b texts.txt     # streaming JSONL batch
+//! ```
 
-use std::{collections::HashMap, io::Read, path::PathBuf, time::Instant};
+use std::{io::Read, path::PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 
-use crate::{
-    AggregationMethod, CHUNK_CLASSIFICATION_THRESHOLD, CLASSIFICATION_THRESHOLD, Predictor,
-    UnifiedPrediction,
-};
+use crate::{Predictor, Threshold, UnifiedPrediction};
 
-/// Command-line arguments structure
+fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
+    s.try_into()
+}
+
+/// Command-line arguments for the is-it-slop text classifier
 #[derive(Parser)]
 #[command(name = "is-it-slop")]
-#[command(about = "Detect AI-generated text", long_about = None)]
+#[command(version, about = "Detect AI-generated text", long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
-    /// Text to analyze (if not provided, reads from stdin)
+    /// Text to analyze (reads from stdin if not provided, or use "-")
     #[arg(value_name = "TEXT")]
-    pub text: Option<String>,
+    pub text: Vec<String>,
 
     /// Read text from file
-    #[arg(short, long, value_name = "PATH", conflicts_with = "text")]
+    #[arg(short, long, value_name = "PATH", conflicts_with_all = ["text", "batch"])]
     pub file: Option<PathBuf>,
 
-    /// Aggregation strategy for chunk predictions
-    #[arg(long, value_enum, default_value = "weighted")]
-    pub aggregation: AggregationStrategy,
-
-    /// Batch process texts (one per line)
+    /// Batch process texts from file (one per line, or .json for JSON array)
     #[arg(short, long, value_name = "PATH", conflicts_with_all = ["text", "file"])]
     pub batch: Option<PathBuf>,
 
-    /// Batch process from JSON array
-    #[arg(long, value_name = "PATH", conflicts_with_all = ["text", "file", "batch"])]
-    pub batch_json: Option<PathBuf>,
+    /// Output as JSON
+    #[arg(long, conflicts_with_all = ["label", "score", "jsonl"])]
+    pub json: bool,
 
-    /// Output format
-    #[arg(short = 'o', long, value_enum, default_value = "probability")]
-    pub format: OutputFormat,
+    /// Output as JSON lines (one JSON object per line)
+    #[arg(long, conflicts_with_all = ["json", "label", "score"])]
+    pub jsonl: bool,
 
-    /// Quiet mode (minimal output)
-    #[arg(short, long)]
-    pub quiet: bool,
+    /// Output only the classification label (Human or AI)
+    #[arg(long, conflicts_with = "json")]
+    pub label: bool,
 
-    /// Verbose mode (detailed output)
-    #[arg(short, long, conflicts_with = "quiet")]
-    pub verbose: bool,
+    /// Output only the AI probability score (0.0-1.0)
+    #[arg(long, conflicts_with = "json")]
+    pub score: bool,
 
-    /// Classification threshold
-    #[arg(short = 't', long, default_value_t = CLASSIFICATION_THRESHOLD)]
-    pub threshold: f32,
-
-    /// Chunk classification threshold (for weighted aggregation)
-    #[arg(long, default_value_t = CHUNK_CLASSIFICATION_THRESHOLD, required_if_eq("aggregation", "weighted"))]
-    pub chunk_threshold: f32,
-
-    /// Custom class labels (comma-separated: label0,label1)
-    #[arg(long, value_delimiter = ',', num_args = 2, default_values = ["human", "ai"])]
-    pub labels: Vec<String>,
-
-    /// Disable colored output
-    #[arg(long)]
-    pub no_color: bool,
+    /// Classification threshold [default: model default]
+    #[arg(
+        short = 't',
+        long,
+        default_value_t = Threshold::classification_threshold(),
+        value_parser = parse_threshold
+    )]
+    pub threshold: Threshold,
 }
 
-/// Aggregation strategy for combining chunk predictions
-#[derive(ValueEnum, Clone, Copy)]
-pub enum AggregationStrategy {
-    /// Average all chunk probabilities
-    Mean,
-    /// Use maximum chunk probability
-    Max,
-    /// Confidence-weighted average
-    Weighted,
-}
-
-/// Output format options
-#[derive(ValueEnum, Clone, Copy)]
-pub enum OutputFormat {
-    /// Output just the class label (0 or 1)
-    Class,
-    /// Output AI probability as a float 0-1 (default)
-    Probability,
-    /// Output Confidence scores
-    Json,
-    /// Human-readable output with confidence
-    Human,
-}
-
-/// Verbosity level
-#[derive(Clone, Copy)]
-enum Verbosity {
-    Quiet,
-    Normal,
-    Verbose,
-}
-
-/// Input source type
-enum InputSource {
-    Single(String),
-    Batch(Vec<String>),
-}
-
-/// Structured prediction result
-struct PredictionResult {
-    pub label_names: Vec<String>,
-    pub unified_prediction: UnifiedPrediction,
-}
-
-/// Main entry point for CLI execution.
-///
-/// This function orchestrates the entire CLI workflow:
-/// 1. Determines input source (arg, file, batch, stdin)
-/// 2. Processes input (single or batch)
-/// 3. Outputs results in the requested format
-pub fn run(cli: &Cli) -> Result<()> {
-    // Determine input source
-    let input_source = determine_input_source(cli)?;
-
-    // Determine verbosity
-    let verbosity = match (cli.quiet, cli.verbose) {
-        (true, _) => Verbosity::Quiet,
-        (_, true) => Verbosity::Verbose,
-        _ => Verbosity::Normal,
-    };
-
-    // Process input
-    match input_source {
-        InputSource::Single(text) => {
-            let result = process_single(&text, cli, verbosity)?;
-            output_result(&result, cli)?;
-        }
-        InputSource::Batch(texts) => {
-            let results = process_batch(&texts, cli, verbosity)?;
-            output_batch_results(&results, cli)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Determine input source from CLI args.
-///
-/// Priority: text arg > file > batch > `batch_json` > stdin
-fn determine_input_source(cli: &Cli) -> Result<InputSource> {
-    if let Some(text) = &cli.text {
-        return Ok(InputSource::Single(text.clone()));
+fn read_inputs(cli: &Cli) -> Result<Vec<String>> {
+    if !cli.text.is_empty() {
+        return Ok(cli.text.clone());
     }
 
     if let Some(path) = &cli.file {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
-        return Ok(InputSource::Single(text));
+        return Ok(vec![text]);
     }
 
     if let Some(path) = &cli.batch {
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read batch file: {}", path.display()))?;
-        let texts: Vec<String> = contents.lines().map(String::from).collect();
-        return Ok(InputSource::Batch(texts));
-    }
 
-    if let Some(path) = &cli.batch_json {
-        let contents = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read JSON batch file: {}", path.display()))?;
-        let texts: Vec<String> =
-            serde_json::from_str(&contents).with_context(|| "Failed to parse JSON array")?;
-        return Ok(InputSource::Batch(texts));
+        let is_json = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+
+        if is_json {
+            let texts: Vec<String> =
+                serde_json::from_str(&contents).context("Failed to parse JSON array")?;
+            return Ok(texts);
+        }
+
+        let texts: Vec<String> = contents
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        return Ok(texts);
     }
 
     // Read from stdin
@@ -178,180 +112,148 @@ fn determine_input_source(cli: &Cli) -> Result<InputSource> {
     std::io::stdin()
         .read_to_string(&mut buffer)
         .context("Failed to read from stdin")?;
-    Ok(InputSource::Single(buffer))
+    Ok(vec![buffer])
 }
 
-/// Process a single text and return prediction result.
-fn process_single(text: &str, cli: &Cli, verbosity: Verbosity) -> Result<PredictionResult> {
-    let start = matches!(verbosity, Verbosity::Verbose).then(Instant::now);
+/// Run the CLI with the given arguments.
+///
+/// Prints results to stdout. Errors are returned to the caller for display.
+pub fn run(cli: &Cli) -> Result<()> {
+    let texts = read_inputs(cli)?;
 
-    let agg_strategy = match cli.aggregation {
-        AggregationStrategy::Mean => AggregationMethod::Mean,
-        AggregationStrategy::Max => AggregationMethod::Max,
-        AggregationStrategy::Weighted => AggregationMethod::WeightedMean(cli.chunk_threshold),
-    };
-
-    let predictor = Predictor::new()
-        .with_threshold(cli.threshold)
-        .with_aggregation_method(agg_strategy);
-    let prediction = predictor.predict(text)?;
-    // let class = prediction.classification(cli.threshold);
-    // let confidence = prediction.confidence_percent(cli.threshold);
-
-    if let Some(start_time) = start {
-        eprintln!("Inference time: {:?}", start_time.elapsed());
+    if texts.is_empty() {
+        anyhow::bail!(
+            "No input text provided. Use positional arguments, --file, --batch, or pipe text to stdin."
+        );
     }
 
-    Ok(PredictionResult {
-        label_names: cli.labels.clone(),
-        unified_prediction: prediction,
+    let predictor = Predictor::default().with_threshold(cli.threshold);
+
+    if texts.len() == 1 {
+        let prediction = predictor.predict(&texts[0])?;
+        output_single(&prediction, cli, 0)?;
+        return Ok(());
+    }
+
+    eprintln!("Processing {} texts...", texts.len());
+    let predictions = predictor.predict_batch(&texts)?;
+    eprintln!("Done.");
+
+    if cli.json {
+        output_batch_json(&predictions, cli.threshold)?;
+    } else if cli.jsonl {
+        output_batch_jsonl(&predictions, cli.threshold)?;
+    } else {
+        for (i, pred) in predictions.iter().enumerate() {
+            if cli.label || cli.score {
+                output_single(pred, cli, i)?;
+            } else {
+                println!("--- [{}/{}] ---", i + 1, predictions.len());
+                output_single(pred, cli, i)?;
+                println!();
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn prediction_json(prediction: &UnifiedPrediction, threshold: Threshold) -> serde_json::Value {
+    let class = prediction.classification(threshold);
+    serde_json::json!({
+        "status": "ok",
+        "class": class,
+        "class_label": class.to_string(),
+        "probabilities": {
+            "human": prediction.prediction.human_probability(),
+            "ai": prediction.prediction.ai_probability(),
+        },
+        "confidence": prediction.confidence_metrics(threshold),
+        "chunk_info": prediction.chunk_info(),
+        "chunk_predictions": prediction.chunk_predictions.iter().map(|p| {
+            (p.human_probability(), p.ai_probability())
+        }).collect::<Vec<_>>(),
     })
 }
 
-/// Process multiple texts and return batch results.
-fn process_batch(
-    texts: &[String],
-    cli: &Cli,
-    verbosity: Verbosity,
-) -> Result<Vec<PredictionResult>> {
-    let show_progress = matches!(verbosity, Verbosity::Normal | Verbosity::Verbose)
-        && texts.len() > 10
-        && !matches!(cli.format, OutputFormat::Json);
-
-    let mut results = Vec::with_capacity(texts.len());
-
-    for (i, text) in texts.iter().enumerate() {
-        if show_progress && i % 10 == 0 {
-            eprintln!("Processing {}/{}", i + 1, texts.len());
-        }
-        results.push(process_single(text, cli, verbosity)?);
+fn output_single(prediction: &UnifiedPrediction, cli: &Cli, index: usize) -> Result<()> {
+    if cli.json || cli.jsonl {
+        println!(
+            "{}",
+            serde_json::to_string(&prediction_json(prediction, cli.threshold))?
+        );
+        return Ok(());
     }
 
-    if show_progress {
-        eprintln!("Completed processing {} texts", texts.len());
-    }
+    let prefix = if index > 0 || cli.batch.is_some() {
+        format!("[{}] ", index + 1)
+    } else {
+        String::new()
+    };
 
-    Ok(results)
-}
+    if cli.label && cli.score {
+        println!(
+            "{}{} ({:.4})",
+            prefix,
+            prediction.classification(cli.threshold),
+            prediction.prediction.ai_probability()
+        );
+    } else if cli.label {
+        println!("{}{}", prefix, prediction.classification(cli.threshold));
+    } else if cli.score {
+        println!("{}{:.4}", prefix, prediction.prediction.ai_probability());
+    } else {
+        // Human-readable (default)
+        let ai_prob = prediction.prediction.ai_probability();
+        let human_prob = prediction.prediction.human_probability();
+        let metrics = prediction.confidence_metrics(cli.threshold);
+        let class = prediction.classification(cli.threshold);
 
-/// Output single result based on format.
-fn output_result(result: &PredictionResult, cli: &Cli) -> Result<()> {
-    match cli.format {
-        OutputFormat::Class => {
-            println!(
-                "{}",
-                result.unified_prediction.classification(cli.threshold)
-            );
-        }
-        OutputFormat::Probability => {
-            // Output just the AI probability (class 1) as a float for pipeline automation
-            let ai_prob = result.unified_prediction.prediction.ai_probability();
-            println!("{ai_prob:.4}");
-        }
-        OutputFormat::Json => {
-            let class = result.unified_prediction.classification(cli.threshold);
-            let class_label = cli
-                .labels
-                .get(class as usize)
-                .cloned()
-                .unwrap_or_else(|| class.to_string());
-            let json_output = serde_json::json!({
-                "class": class,
-                "class_label": class_label,
-                "probabilities": result.label_names.iter()
-                    .zip(&result.unified_prediction.prediction.probabilities())
-                    .map(|(label, prob)| (label.clone(), prob))
-                    .collect::<HashMap<_, _>>(),
-                "confidence": result.unified_prediction.confidence_metrics(cli.threshold),
-                "chunk_info": result.unified_prediction.chunk_info(),
-                "chunk_predictions": result.unified_prediction.chunk_predictions.iter().map(|p| {
-                    (p.human_probability(), p.ai_probability())
-                })
-                .collect::<Vec<_>>(),
-            });
-            println!("{}", serde_json::to_string(&json_output)?);
-        }
-        OutputFormat::Human => {
-            let ai_prob = result.unified_prediction.prediction.ai_probability();
-            let human_prob = result.unified_prediction.prediction.human_probability();
-            let metrics = &result.unified_prediction.confidence_metrics(cli.threshold);
-            let class = result.unified_prediction.classification(cli.threshold);
-            let class_label = cli
-                .labels
-                .get(class as usize)
-                .cloned()
-                .unwrap_or_else(|| class.to_string());
+        println!("Classification: {class}");
+        println!("Probabilities:");
+        println!("  Human: {:.1}%", human_prob * 100.0);
+        println!("  AI:    {:.1}%", ai_prob * 100.0);
+        println!();
+        println!("Confidence Metrics:");
+        println!("  Model:     {:.1}%", metrics.model_confidence * 100.0);
+        println!("  Threshold: {:.1}%", metrics.threshold_distance * 100.0);
+        println!("  Entropy:   {:.1}%", metrics.entropy_confidence * 100.0);
+        println!("  Overall:   {:.1}%", metrics.overall * 100.0);
 
-            println!("Classification: {class_label}");
-            println!("Probabilities:");
-            println!("  Human: {:.1}%", human_prob * 100.0);
-            println!("  AI:    {:.1}%", ai_prob * 100.0);
+        if prediction.chunk_predictions.len() > 1 {
+            let chunk_info = prediction.chunk_info();
             println!();
-            println!("Confidence Metrics:");
-            println!("  Model:     {:.1}%", metrics.model_confidence * 100.0);
-            println!("  Threshold: {:.1}%", metrics.threshold_distance * 100.0);
-            println!("  Entropy:   {:.1}%", metrics.entropy_confidence * 100.0);
-            println!("  Overall:   {:.1}%", metrics.overall * 100.0);
-
-            if result.unified_prediction.chunk_predictions.len() > 1 {
-                let chunk_info = result.unified_prediction.chunk_info();
-                println!();
-                println!("Chunk Analysis:");
-                println!("  Chunks:    {}", chunk_info.num_chunks);
-                println!("  Agreement: {:.1}%", chunk_info.chunk_agreement * 100.0);
-                if chunk_info.chunk_agreement < 0.7 {
-                    println!("⚠️  Chunks disagree - mixed content detected");
-                }
+            println!("Chunk Analysis:");
+            println!("  Chunks:    {}", chunk_info.num_chunks);
+            println!("  Agreement: {:.1}%", chunk_info.chunk_agreement * 100.0);
+            if chunk_info.chunk_agreement < 0.7 {
+                println!("  ⚠️  Chunks disagree - mixed content detected");
             }
+        }
 
-            // Warnings
-            if metrics.overall < 0.6 {
-                println!();
-                println!("⚠️  Low confidence - prediction uncertain");
-            }
+        if metrics.overall < 0.6 {
+            println!();
+            println!("⚠️  Low confidence - prediction uncertain");
         }
     }
     Ok(())
 }
 
-/// Output batch results based on format.
-fn output_batch_results(results: &[PredictionResult], cli: &Cli) -> Result<()> {
-    match cli.format {
-        OutputFormat::Json => {
-            // Output as JSON array for batch mode
-            let json_array: Vec<_> = results
-                .iter()
-                .map(|result| {
-                    let class = result.unified_prediction.classification(cli.threshold);
-                    let class_label = cli
-                        .labels
-                        .get(class as usize)
-                        .cloned()
-                        .unwrap_or_else(|| class.to_string());
-                    serde_json::json!({
-                        "class": class,
-                        "class_label": class_label,
-                        "probabilities": result.label_names.iter()
-                            .zip(&result.unified_prediction.prediction.probabilities())
-                            .map(|(label, prob)| (label.clone(), prob))
-                            .collect::<HashMap<_, _>>(),
-                        "confidence": result.unified_prediction.confidence_metrics(cli.threshold),
-                        "chunk_info": result.unified_prediction.chunk_info(),
-                        "chunk_predictions": result.unified_prediction.chunk_predictions.iter().map(|p| {
-                            (p.human_probability(), p.ai_probability())
-                        })
-                        .collect::<Vec<_>>(),
-                    })
-                })
-                .collect();
-            println!("{}", serde_json::to_string(&json_array)?);
-        }
-        _ => {
-            // For other formats, output each result on its own line
-            for result in results {
-                output_result(result, cli)?;
-            }
-        }
+fn output_batch_json(predictions: &[UnifiedPrediction], threshold: Threshold) -> Result<()> {
+    let json_array: Vec<_> = predictions
+        .iter()
+        .map(|pred| prediction_json(pred, threshold))
+        .collect();
+    println!("{}", serde_json::to_string(&json_array)?);
+    Ok(())
+}
+
+fn output_batch_jsonl(predictions: &[UnifiedPrediction], threshold: Threshold) -> Result<()> {
+    for pred in predictions {
+        println!(
+            "{}",
+            serde_json::to_string(&prediction_json(pred, threshold))?
+        );
     }
     Ok(())
 }

@@ -1,8 +1,8 @@
 line-length = 120
 show-fixes = true
 src = ["python/"]
-extend-include = ["notebooks/*.ipynb"]
-exclude = ["python/**/tests/**", "python/**/test_*.py"]
+extend-include = ["notebooks/*.ipynb", "notebooks/*.py"]
+# exclude = ["python/**/tests/**", "python/**/test_*.py"]
 
 [lint]
 preview = true
@@ -38,23 +38,46 @@ split-on-trailing-comma = false
 
 [lint.per-file-ignores]
 "notebooks/*.{ipynb,py}" = [
-    "FBT003",  # Boolean position value in function
-    "T201",    # Use of print detected
-    "ERA001",  # Commented-out code
+    "B018",    # Useless expression
+    "D100",    # Missing docstring in public module
+    "D101",    # Missing docstring in public class
+    "D102",    # Missing docstring in public method
     "D103",    # Missing docstring in public function
+    "D104",    # Missing docstring in public package
+    "DOC201",  # Return is not documented in the docstring
+    "ERA001",  # Commented-out code
+    "EXE001",  # Shebang is present but file is not executableetected
+    "FBT003",  # Boolean position value in function
     "N803",    # Argument name should be lowercase
     "N806",    # Variable in function should be lowercase
     "PLR0914", # Too many branches in function
     "PLR0915", # Too many statements in function
     "PLR2004", # Magic value
+    "T201",    # Use of print detected
+    "UP009",   # UTF-8 encoding declaration is unnecessary
+]
+"python/**/tests/**" = [
     "D100",    # Missing docstring in public module
     "D101",    # Missing docstring in public class
     "D102",    # Missing docstring in public method
+    "D103",    # Missing docstring in public function
     "D104",    # Missing docstring in public package
     "DOC201",  # Return is not documented in the docstring
+    "ERA001",  # Commented-out code
     "EXE001",  # Shebang is present but file is not executableetected
-    "UP009",   # UTF-8 encoding declaration is unnecessary
-    "B018",    # Useless expression
+    "FBT003",  # Boolean position value in function
+    "N803",    # Argument name should be lowercase
+    "N806",    # Variable in function should be lowercase
+    "PLR0914", # Too many branches in function
+    "PLR0915", # Too many statements in function
+    "PLR2004", # Magic value
+    "T201",    # Use of print detected
+    "S101",    # Use of assert detected
+    "S301",    # Use of unsafe pickle load detected
+    "S403",    # Use of insecure pickle module
+    "RUF069",
+    "PLR6301",
+    "PT011",
 ]
 
 

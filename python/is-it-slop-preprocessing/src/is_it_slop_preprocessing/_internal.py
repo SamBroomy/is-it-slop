@@ -6,12 +6,13 @@ using TF-IDF.
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 import numpy as np
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, vstack
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -21,6 +22,7 @@ from ._is_it_slop_preprocessing_rust_bindings import (
     RustCleaningMode,
     RustTextCleaner,
     RustTfidfVectorizer,
+    RustTfidfVectorizerBuilder,
     RustTokenChunker,
     RustVectorizerParams,
     __version__,
@@ -28,21 +30,37 @@ from ._is_it_slop_preprocessing_rust_bindings import (
 from ._is_it_slop_preprocessing_rust_bindings import reverse_tokenize as reverse_tokenize_internal
 from ._is_it_slop_preprocessing_rust_bindings import tokenize as tokenize_internal
 
-__all__ = ["CleaningMode", "TextCleaner", "TfidfVectorizer", "TokenChunker", "VectorizerParams", "__version__"]
+__all__ = [
+    "CleaningMode",
+    "TextCleaner",
+    "TfidfVectorizer",
+    "TfidfVectorizerBuilder",
+    "TokenChunker",
+    "VectorizerParams",
+    "__version__",
+    "extract_combined_batch",
+    "reverse_tokenize",
+    "tokenize",
+]
 
 
-class ToList(Protocol):
-    """Protocol for objects with to_list() or tolist() methods.
+class SupportsToList(Protocol):
+    """Protocol for Polars-like & Numpy-like objects.
 
-    Supports both Polars Series (to_list) and NumPy arrays (tolist).
+    Requires: len(), slicing, to_list() and tolist() conversion.
+    Matches: Polars Series, DataFrame columns, NumPy arrays, custom array types, etc.
     """
 
-    def tolist(self) -> list[str]: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, key: int | slice) -> Any: ...  # noqa: ANN401
     def to_list(self) -> list[str]: ...
+    def tolist(self) -> list[str]: ...
 
 
 if TYPE_CHECKING:
-    ValidTexts: TypeAlias = list[str] | NDArray[np.str_] | NDArray[np.object_] | ToList
+    ValidTexts: TypeAlias = list[str] | NDArray[np.str_] | NDArray[np.object_] | SupportsToList
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_texts(texts: ValidTexts) -> list[str]:
@@ -70,16 +88,16 @@ def _validate_texts(texts: ValidTexts) -> list[str]:
     # Handle Protocol objects (Polars Series, etc.) via duck typing
     if not isinstance(texts, (list, np.ndarray)):
         # Try to_list() first (Polars convention)
-        if hasattr(texts, "to_list") and callable(texts.to_list):
+        if hasattr(texts, "to_list") and callable(texts.to_list):  # type: ignore[union-attr]
             try:
-                texts = texts.to_list()
+                texts = texts.to_list()  # type: ignore[union-attr]
             except Exception as e:
                 msg = f"Failed to convert input via .to_list(): {e}"
                 raise TypeError(msg) from e
         # Fallback to tolist() (NumPy-like convention)
-        elif hasattr(texts, "tolist") and callable(texts.tolist):
+        elif hasattr(texts, "tolist") and callable(texts.tolist):  # type: ignore[union-attr]
             try:
-                texts = texts.tolist()
+                texts = texts.tolist()  # type: ignore[union-attr]
             except Exception as e:
                 msg = f"Failed to convert input via .tolist(): {e}"
                 raise TypeError(msg) from e
@@ -180,7 +198,7 @@ class TfidfVectorizer:
     Examples
     --------
     >>> from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
-    >>> params = VectorizerParams(ngram_range=(3, 5), min_df=10)
+    >>> params = VectorizerParams(min_df=10, max_df=0.8)
     >>> vectorizer = TfidfVectorizer.fit(train_texts, params)
     >>> X_test = vectorizer.transform(test_texts)
 
@@ -200,69 +218,172 @@ class TfidfVectorizer:
         self._vectorizer = rust_vectorizer
 
     @staticmethod
-    def fit(texts: ValidTexts, params: VectorizerParams) -> TfidfVectorizer:
-        """Fit a new TF-IDF vectorizer to the provided texts.
+    def fit(
+        texts: ValidTexts, params: VectorizerParams, batch_size: int = 50_000, auto_batch_threshold: int = 100_000
+    ) -> TfidfVectorizer:
+        """Fit a new TF-IDF vectorizer to the provided texts with automatic batching for large datasets.
 
         Args:
             texts: Training texts to fit the vectorizer.
             params: Vectorizer parameters.
+            batch_size: Texts per batch when batching (default: 50,000).
+            auto_batch_threshold: Dataset size threshold for batching (default: 100,000).
 
         Returns:
             A fitted TfidfVectorizer instance.
 
+        Notes:
+            For datasets >= auto_batch_threshold, automatically uses batched processing
+            to avoid OOM. Validates texts in batches to avoid memory spikes.
+
         """
-        validated_texts = _validate_texts(texts)
-        rust_vectorizer = RustTfidfVectorizer(validated_texts, params.as_rust())
-        return TfidfVectorizer(params, rust_vectorizer)
+        num_texts = len(texts)
+
+        # Small datasets: validate all at once, use regular fit
+        if num_texts < auto_batch_threshold:
+            validated_texts = _validate_texts(texts)
+            rust_vectorizer = RustTfidfVectorizer(validated_texts, params.as_rust())
+            return TfidfVectorizer(params, rust_vectorizer)
+
+        # Large datasets: validate in batches, use batched fit
+        logger.info(
+            "Dataset size (%s) >= threshold (%s), using batched training with batch_size=%s",
+            f"{num_texts:,}",
+            f"{auto_batch_threshold:,}",
+            f"{batch_size:,}",
+        )
+
+        builder = TfidfVectorizerBuilder(params)
+        num_batches = (num_texts + batch_size - 1) // batch_size
+
+        for i in range(0, num_texts, batch_size):
+            batch_idx = i // batch_size
+            batch_slice = texts[i : i + batch_size]
+            batch = _validate_texts(batch_slice)
+
+            logger.info(
+                "Processing batch %d/%d (%s texts, total_docs=%s)",
+                batch_idx + 1,
+                num_batches,
+                f"{len(batch):,}",
+                f"{builder.total_docs:,}",
+            )
+
+            builder.partial_fit(batch)
+
+        logger.info(
+            "Finalizing vectorizer (total_docs=%s, raw_vocab=%s)",
+            f"{builder.total_docs:,}",
+            f"{builder.raw_vocab_size:,}",
+        )
+
+        return builder.finalize()
 
     @staticmethod
-    def fit_transform(texts: ValidTexts, params: VectorizerParams) -> tuple[TfidfVectorizer, csr_matrix]:
+    def fit_transform(
+        texts: ValidTexts, params: VectorizerParams, batch_size: int = 50_000, auto_batch_threshold: int = 100_000
+    ) -> tuple[TfidfVectorizer, csr_matrix]:
         """Fit a new TF-IDF vectorizer and transform the texts in one optimized step.
 
         This is more efficient than calling fit() followed by transform() because
         it only computes n-grams once instead of twice.
 
+        For large datasets (>= auto_batch_threshold), falls back to batched fit() + transform()
+        to avoid OOM, at the cost of computing n-grams twice.
+
         Args:
             texts: Training texts to fit the vectorizer and transform.
             params: Vectorizer parameters.
+            batch_size: Number of texts per batch when using batched mode (default: 50,000).
+            auto_batch_threshold: Switch to batching if len(texts) >= this (default: 100,000).
 
         Returns:
             A tuple of (fitted_vectorizer, transformed_matrix).
 
         """
-        validated_texts = _validate_texts(texts)
-        rust_vectorizer, transform_result = RustTfidfVectorizer.fit_transform(validated_texts, params.as_rust())
+        num_texts = len(texts)
 
-        shape: tuple[int, int]
-        data: NDArray[np.float32]
-        indices: NDArray[np.uintp]
-        indptr: NDArray[np.uintp]
+        # Small datasets: use optimized fit_transform (single n-gram computation)
+        if num_texts < auto_batch_threshold:
+            validated_texts = _validate_texts(texts)
+            rust_vectorizer, transform_result = RustTfidfVectorizer.fit_transform(validated_texts, params.as_rust())
 
-        shape, data, indices, indptr = transform_result  # type: ignore[assignment]
-        transformed_matrix = csr_matrix((data, indices, indptr), shape=shape, dtype=np.float32)
+            shape: tuple[int, int]
+            data: NDArray[np.float32]
+            indices: NDArray[np.uintp]
+            indptr: NDArray[np.uintp]
 
-        vectorizer = TfidfVectorizer(params, rust_vectorizer)
+            shape, data, indices, indptr = transform_result  # type: ignore[assignment]
+            transformed_matrix = csr_matrix((data, indices, indptr), shape=shape, dtype=np.float32)
+
+            vectorizer = TfidfVectorizer(params, rust_vectorizer)
+            return vectorizer, transformed_matrix
+
+        logger.warning(
+            "Dataset size (%s)) >= threshold (%s). fit_transform() will use batched fit() + transform() (computes n-grams twice). "
+            "This avoids OOM but is slower than optimized fit_transform().",
+            f"{num_texts:,}",
+            f"{auto_batch_threshold:,}",
+        )
+
+        vectorizer = TfidfVectorizer.fit(texts, params, batch_size, auto_batch_threshold)
+        transformed_matrix = vectorizer.transform(texts, batch_size, auto_batch_threshold)
+
         return vectorizer, transformed_matrix
 
-    def transform(self, texts: ValidTexts) -> csr_matrix:
+    def transform(self, texts: ValidTexts, batch_size: int = 50_000, auto_batch_threshold: int = 100_000) -> csr_matrix:
         """Transform new texts into TF-IDF feature vectors.
+
+        Automatically batches validation and transformation for large datasets to avoid OOM.
 
         Args:
             texts: Texts to transform.
+            batch_size: Number of texts per batch when using batched mode (default: 50,000).
+            auto_batch_threshold: Switch to batching if len(texts) >= this (default: 100,000).
 
         Returns:
             A SciPy CSR sparse matrix containing the TF-IDF feature vectors.
 
         """
-        validated_texts = _validate_texts(texts)
+        num_texts = len(texts)
 
-        shape: tuple[int, int]
-        data: NDArray[np.float32]
-        indices: NDArray[np.uintp]
-        indptr: NDArray[np.uintp]
+        # Small datasets: validate all, transform at once
+        if num_texts < auto_batch_threshold:
+            validated_texts = _validate_texts(texts)
 
-        shape, data, indices, indptr = self._vectorizer.transform(validated_texts)  # type: ignore[assignment]
-        return csr_matrix((data, indices, indptr), shape=shape, dtype=np.float32)
+            shape: tuple[int, int]
+            data: NDArray[np.float32]
+            indices: NDArray[np.uintp]
+            indptr: NDArray[np.uintp]
+
+            shape, data, indices, indptr = self._vectorizer.transform(validated_texts)  # type: ignore[assignment]
+            return csr_matrix((data, indices, indptr), shape=shape, dtype=np.float32)
+
+        # Large datasets: validate and transform in batches
+
+        logger.info("Transforming %s texts in batches of %s", f"{num_texts:,}", f"{batch_size:,}")
+
+        batch_matrices = []
+        num_batches = (num_texts + batch_size - 1) // batch_size
+
+        for i in range(0, num_texts, batch_size):
+            batch_idx = i // batch_size
+            batch_slice = texts[i : i + batch_size]
+            batch = _validate_texts(batch_slice)
+
+            logger.info(
+                "Transforming batch %s/%s (%s texts)", f"{batch_idx + 1}", f"{num_batches:,}", f"{len(batch):,}"
+            )
+
+            # Transform batch
+            shape, data, indices, indptr = self._vectorizer.transform(batch)  # type: ignore[assignment]
+            batch_matrix = csr_matrix((data, indices, indptr), shape=shape, dtype=np.float32)
+            batch_matrices.append(batch_matrix)
+
+        logger.info("Stacking %s batch matrices", f"{len(batch_matrices):,}")
+        # Stack all batch matrices vertically
+        stacked = vstack(batch_matrices, format="csr", dtype=np.float32)
+        return csr_matrix(stacked)  # Ensure csr_matrix type
 
     def vectorize_from_tokens(self, token_sequences: list[list[int]]) -> csr_matrix:
         """Transform pre-tokenized sequences to TF-IDF matrix.
@@ -398,20 +519,140 @@ class TfidfVectorizer:
         return self._vectorizer.__str__()
 
 
-def tokenize(text: ValidTexts) -> list[list[int]]:
-    """Tokenize text into token IDs.
+class TfidfVectorizerBuilder:
+    """Builder for incremental TF-IDF vectorizer training.
 
-    Used for vocabulary inspection. Not called during training/inference.
+    Supports sklearn-style partial_fit() for large datasets that don't fit in memory.
+    Accumulates document frequencies across multiple batches, then builds final vectorizer.
+
+    Examples
+    --------
+    >>> from is_it_slop_preprocessing import TfidfVectorizerBuilder, VectorizerParams
+    >>> params = VectorizerParams(min_df=10, max_df=0.9)
+    >>> builder = TfidfVectorizerBuilder(params)
+    >>>
+    >>> # Process data in batches
+    >>> for batch in batches:
+    ...     builder.partial_fit(batch)
+    >>>
+    >>> # Finalize: apply min_df/max_df filtering and calculate IDF
+    >>> vectorizer = builder.finalize()
+
+    """
+
+    __slots__ = ("_builder", "_parameters")
+
+    def __init__(self, params: VectorizerParams) -> None:
+        """Create a new builder with the given parameters.
+
+        Args:
+            params: Vectorizer configuration (ngram_range, min_df, max_df, sublinear_tf)
+
+        """
+        self._parameters = params
+        self._builder = RustTfidfVectorizerBuilder(params.as_rust())
+
+    def partial_fit(self, texts: ValidTexts) -> None:
+        """Process a batch of texts, updating document frequencies.
+
+        Can be called multiple times with different batches. Document frequencies
+        accumulate across all calls.
+
+        Args:
+            texts: Batch of documents to process
+
+        """
+        validated_texts = _validate_texts(texts)
+        self._builder.partial_fit(validated_texts)
+
+    def finalize(self) -> TfidfVectorizer:
+        """Finalize the vectorizer: apply min_df/max_df filtering and calculate IDF weights.
+
+        Returns a fitted TfidfVectorizer ready for transform() calls.
+        After calling this, the builder cannot be used again.
+
+        Returns:
+            Fitted TfidfVectorizer
+
+        Raises:
+            RuntimeError: If no documents have been processed (call partial_fit at least once)
+
+        """  # noqa: DOC502
+        rust_vectorizer = self._builder.finalize()
+        return TfidfVectorizer(self._parameters, rust_vectorizer)
+
+    @property
+    def total_docs(self) -> int:
+        """Get current number of documents processed."""
+        return self._builder.total_docs
+
+    @property
+    def raw_vocab_size(self) -> int:
+        """Get current vocabulary size (before filtering)."""
+        return self._builder.raw_vocab_size
+
+    def __repr__(self) -> str:
+        return self._builder.__repr__()
+
+
+def tokenize(text: ValidTexts, batch_size: int = 50_000, auto_batch_threshold: int = 100_000) -> list[list[int]]:
+    """Tokenize text into token IDs with automatic batching for large datasets.
+
+    Automatically switches between regular tokenization and batched processing based
+    on dataset size. For datasets smaller than the threshold, uses the faster
+    single-pass tokenization. For larger datasets, processes data in batches to
+    avoid OOM at the PyO3 FFI boundary.
+
+    Validates texts in batches to avoid OOM on large datasets.
 
     Args:
         text: List of input texts to tokenize.
+        batch_size: Number of texts per batch when using batched mode (default: 50,000).
+        auto_batch_threshold: Switch to batching if len(texts) >= this (default: 100,000).
 
     Returns:
         List of lists of token IDs.
 
+    Notes:
+        For datasets >= auto_batch_threshold, automatically uses batched processing
+        to avoid OOM at PyO3 FFI boundary.
+
     """
-    validated_texts = _validate_texts(text)
-    return tokenize_internal(validated_texts)
+    num_texts = len(text)
+
+    # Small datasets: validate all, tokenize at once
+    if num_texts < auto_batch_threshold:
+        validated_texts = _validate_texts(text)
+        return tokenize_internal(validated_texts)
+
+    # Large datasets: validate and tokenize in batches
+    logger.info(
+        "Dataset size (%s) >= threshold (%s), using batched tokenization with batch_size=%s",
+        f"{num_texts:,}",
+        f"{auto_batch_threshold:,}",
+        f"{batch_size:,}",
+    )
+
+    all_tokens = []
+    num_batches = (num_texts + batch_size - 1) // batch_size
+
+    for i in range(0, num_texts, batch_size):
+        batch_idx = i // batch_size
+        batch_slice = text[i : i + batch_size]
+        batch = _validate_texts(batch_slice)
+        logger.info(
+            "Tokenizing batch %s/%s (%s texts, %s completed)",
+            f"{batch_idx + 1}",
+            f"{num_batches:,}",
+            f"{len(batch):,}",
+            f"{len(all_tokens):,}",
+        )
+
+        batch_tokens = tokenize_internal(batch)
+        all_tokens.extend(batch_tokens)
+
+    logger.info("Tokenization complete: %s documents", f"{len(all_tokens):,}")
+    return all_tokens
 
 
 def reverse_tokenize(tokens: list[int]) -> str:
@@ -573,3 +814,63 @@ class TextCleaner:
         # Determine mode by checking if it's training or inference
         # (no direct way to get mode from Rust side, but doesn't matter for repr)
         return "TextCleaner(mode=TRAINING)" if self._inner.is_training_mode() else "TextCleaner(mode=INFERENCE)"
+
+
+def extract_combined_batch(full_texts: ValidTexts, chunk_tokens_batch: list[list[list[int]]]) -> NDArray[np.float32]:
+    """Extract combined statistical features for a batch of documents.
+
+    Requires the 'statistical-features' Rust feature to be enabled during build.
+
+    Extracts 9 writing style features that capture patterns orthogonal
+    to content-based TF-IDF features:
+
+    Document-Level Features (6):
+        1. bigram_repetition_rate - Proportion of repeating word bigrams
+        2. punctuation_entropy - Shannon entropy of punctuation distribution
+        3. lexical_diversity - Unique words / total words
+        4. vocab_richness - sqrt(unique words) / total words
+        5. word_repetition_rate - Proportion of repeating words
+        6. sentence_length_cv - Coefficient of variation for sentence lengths
+
+    Chunk-Level Features (3):
+        7. chunk_avg_word_length - Mean character length per word
+        8. chunk_punctuation_entropy - Local punctuation entropy
+        9. chunk_word_frequency_entropy - Shannon entropy of word frequencies
+
+    Args:
+        full_texts: List of full document texts (NOT tokens)
+        chunk_tokens_batch: List of chunked token sequences for each document
+
+    Returns:
+        Numpy array of shape (total_chunks, 9) with combined features
+
+    Raises:
+        ImportError: If statistical features were not compiled in.
+                    Rebuild with: maturin develop --features statistical-features
+
+    Examples:
+        >>> from is_it_slop_preprocessing import extract_combined_batch, tokenize
+        >>> texts = ["First document with multiple sentences.", "Second document also with text."]
+        >>> tokens_batch = tokenize(texts)
+        >>> # Assume we have chunks for each document
+        >>> chunks_batch = [[tokens_batch[0]], [tokens_batch[1]]]
+        >>> features = extract_combined_batch(texts, chunks_batch)
+        >>> features.shape  # (2, 9) - one row per chunk
+        (2, 9)
+
+    """
+    # Try to import statistical features - may not be available if not compiled
+    try:
+        from ._is_it_slop_preprocessing_rust_bindings import (  # noqa: PLC0415
+            rust_extract_combined_batch as rust_extract_combined_batch_internal,
+        )
+
+        validated_texts = _validate_texts(full_texts)
+        return rust_extract_combined_batch_internal(validated_texts, chunk_tokens_batch)
+    except (ImportError, AttributeError) as e:
+        msg = (
+            "Statistical features are not available. "
+            "The 'statistical-features' Rust feature was not enabled during build. "
+            "Rebuild with: maturin develop --features statistical-features"
+        )
+        raise ImportError(msg) from e

@@ -4,31 +4,17 @@
 default:
     @just --list
 
+# Setup: install dependencies and pre-commit hooks
+[group('setup')]
 bootstrap: && install-pre-commit
     uv sync --dev --all-extras --all-groups
 
-# Install Git hooks using prefligit
+# Install pre-commit hooks
 [group('git-hooks')]
+[group('setup')]
 install-pre-commit:
-    #!/usr/bin/env sh
-    if ! command -v prek &> /dev/null; then
-        echo "Installing prefligit..."
-        cargo install --locked prek --force
-    else
-        echo "prek is already installed"
-    fi
-    prek install
-    prek run --all-files
-
-# Run the pre-commit hooks
-[group('git-hooks')]
-run-pre-commit:
-    prefligit run --all-files
-
-# Run the pre-push hooks
-[group('git-hooks')]
-run-pre-push:
-    prefligit run --hook-stage pre-push
+    uv run prek install
+    uv run prek run --all-files
 
 # =============================================================================
 # Development Pipeline
@@ -41,10 +27,10 @@ build-pre-processing-bindings:
     uv run --directory python/is-it-slop-preprocessing maturin develop --release --uv
 
 dataset-curation: sync-notebooks
-    uv run python notebooks/dataset_curation.py --force-retrain-vectorizer #--bump-major
+    uv run python notebooks/dataset_curation.py --force-retrain-vectorizer --bump-major
 
 training-pipeline: sync-notebooks
-    uv run python notebooks/train.py --force-retrain-vectorizer #--bump-major
+    uv run python notebooks/train.py --force-retrain-vectorizer --bump-major
 
 # Generate additional visualizations from trained model
 generate-extra-plots: sync-notebooks
@@ -54,38 +40,35 @@ build-bindings:
     uv run --directory python/is-it-slop maturin develop --release --uv
 
 build-cli-release:
-    cargo build --release --features cli --bin is-it-slop
+    cargo build --profile dist --features cli --bin is-it-slop
 
 # Run CLI with different output formats and options
 run-cli:
-    @echo "=== Running slop-cli examples ==="
+    @echo "=== Running is-it-slop examples ==="
     @echo ""
-    @echo "1. Default output (AI probability as float 0-1):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text to check if it's AI generated."
+    @echo "1. Default output (human-readable):"
+    cargo run --release --features cli --bin is-it-slop -- "This is a test text to check if it's AI generated."
     @echo ""
-    @echo "2. Class format (just 0 or 1):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format class
+    @echo "2. Classification label only:"
+    cargo run --release --features cli --bin is-it-slop -- --label "This is a test text."
     @echo ""
-    @echo "3. JSON format (detailed output):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format json
+    @echo "3. Label with score:"
+    cargo run --release --features cli --bin is-it-slop -- --label --score "This is a test text."
     @echo ""
-    @echo "4. Human-readable format:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test text." --format human
+    @echo "4. JSON format:"
+    cargo run --release --features cli --bin is-it-slop -- --json "This is a test text."
     @echo ""
-    @echo "5. Verbose mode (shows timing):"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --verbose
+    @echo "5. JSONL format (streaming):"
+    cargo run --release --features cli --bin is-it-slop -- --jsonl "This is a test text."
     @echo ""
-    @echo "6. Custom labels with JSON:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --labels real fake --format json
+    @echo "6. Bare score for scripting:"
+    cargo run --release --features cli --bin is-it-slop -- --score "This is a test text."
     @echo ""
-    @echo "7. Quiet mode with class output:"
-    cargo run -q --release --features cli --bin is-it-slop -- "This is a test." --quiet --format class
-    @echo ""
-    @echo "=== All examples complete ==="
+    @echo "=== Examples complete ==="
 
-# Build the CLI in release mode
+# Build the CLI in dist mode (optimized for distribution)
 build-cli:
-    cargo build --release --features cli --bin is-it-slop
+    cargo build --profile dist --features cli --bin is-it-slop
 
 # Run a quick test with custom text
 test-cli TEXT:
@@ -126,6 +109,7 @@ package-artifacts:
         "tfidf_vectorizer.rkyv"
         "chunk_classification_threshold.txt"
         "token_chunker_config.json"
+        "model_metadata.json"
     )
 
     # Verify required files exist
@@ -221,28 +205,32 @@ package-training-data:
         exit 1
     fi
 
+    # Required files for dataset release
+    REQUIRED_FILES=(
+        "train.parquet"
+        "test.parquet"
+        "validation.parquet"
+        "dataset_metadata.json"
+    )
+
     # Verify required files exist
-    TRAIN_FILE="${DATA_DIR}/train.parquet"
-    TEST_FILE="${DATA_DIR}/test.parquet"
-    if [ ! -f "${TRAIN_FILE}" ]; then
-        echo "Missing required file: ${TRAIN_FILE}"
-        exit 1
-    fi
-    if [ ! -f "${TEST_FILE}" ]; then
-        echo "Missing required file: ${TEST_FILE}"
-        exit 1
-    fi
+    for f in "${REQUIRED_FILES[@]}"; do
+        if [ ! -f "${DATA_DIR}/${f}" ]; then
+            echo "❌ Missing required file: ${DATA_DIR}/${f}"
+            exit 1
+        fi
+    done
 
     # Calculate total size
     echo ""
     echo "📊 Training data contents:"
     echo "----------------------------------------"
     TOTAL_SIZE=0
-    for f in "${TRAIN_FILE}" "${TEST_FILE}"; do
-        SIZE=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null)
-        SIZE_HUMAN=$(du -h "$f" | cut -f1)
-        FILENAME=$(basename "$f")
-        printf "  %-35s %10s\n" "$FILENAME" "$SIZE_HUMAN"
+    for f in "${REQUIRED_FILES[@]}"; do
+        FILEPATH="${DATA_DIR}/${f}"
+        SIZE=$(stat -f%z "$FILEPATH" 2>/dev/null || stat -c%s "$FILEPATH" 2>/dev/null)
+        SIZE_HUMAN=$(du -h "$FILEPATH" | cut -f1)
+        printf "  %-35s %10s\n" "$f" "$SIZE_HUMAN"
         TOTAL_SIZE=$((TOTAL_SIZE + SIZE))
     done
     echo "----------------------------------------"
@@ -265,7 +253,9 @@ package-training-data:
     trap "rm -rf ${TEMP_DIR}" EXIT
 
     mkdir -p "${TEMP_DIR}/${MODEL_VERSION}"
-    cp "${TRAIN_FILE}" "${TEST_FILE}" "${TEMP_DIR}/${MODEL_VERSION}/"
+    for f in "${REQUIRED_FILES[@]}"; do
+        cp "${DATA_DIR}/${f}" "${TEMP_DIR}/${MODEL_VERSION}/"
+    done
 
     # Use COPYFILE_DISABLE to prevent macOS from adding resource forks
     COPYFILE_DISABLE=1 tar -cf "${TAR_PATH}" -C "${TEMP_DIR}" "${MODEL_VERSION}"
@@ -464,6 +454,33 @@ build-python-wheels:
 [group('dev')]
 install-cli:
     cargo install --path crates/is-it-slop --features cli --force
+
+# Test binary packaging locally (without uploading)
+[group('dev')]
+test-binary-package TARGET:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building for target: {{ TARGET }}"
+    cargo build --profile dist --features cli --target {{ TARGET }}
+
+    # Determine binary name (add .exe for Windows)
+    # Note: dist profile outputs to target/{TARGET}/dist/ not release/
+    if [[ "{{ TARGET }}" == *"windows"* ]]; then
+        BINARY="is-it-slop.exe"
+        ARCHIVE="is-it-slop-{{ TARGET }}.zip"
+        echo "Creating zip archive..."
+        cd target/{{ TARGET }}/dist
+        zip "../../../${ARCHIVE}" "${BINARY}"
+        cd ../../..
+    else
+        BINARY="is-it-slop"
+        ARCHIVE="is-it-slop-{{ TARGET }}.tar.gz"
+        echo "Creating tar.gz archive..."
+        tar -czf "target/${ARCHIVE}" -C "target/{{ TARGET }}/dist" "${BINARY}"
+    fi
+
+    SIZE=$(du -h "target/${ARCHIVE}" | cut -f1)
+    echo "✅ Test package created: target/${ARCHIVE} (${SIZE})"
 
 # Show current version across all packages
 [group('dev')]

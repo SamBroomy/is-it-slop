@@ -40,8 +40,11 @@ use tracing::instrument;
 pub trait NgramKeyTrait:
     Hash + Eq + PartialEq + PartialOrd + Ord + Clone + Debug + Send + Sync
 {
+    /// Creates an n-gram key from a slice of token IDs.
     fn from_slice(tokens: &[u32]) -> Self;
+    /// Returns the token IDs as a slice.
     fn as_slice(&self) -> &[u32];
+    /// Converts the token IDs to a vector.
     #[allow(dead_code)]
     fn to_vec(&self) -> Vec<u32>;
 }
@@ -49,10 +52,10 @@ pub trait NgramKeyTrait:
 /// Compact n-gram storage using u128 for up to 4 tokens.
 ///
 /// Stores token sequences by packing four u32 token IDs into a single u128:
-/// - Bits 0-31: token[0]
-/// - Bits 32-63: token[1]
-/// - Bits 64-95: token[2]
-/// - Bits 96-127: token[3]
+/// - Bits 0-31: token\[0\]
+/// - Bits 32-63: token\[1\]
+/// - Bits 64-95: token\[2\]
+/// - Bits 96-127: token\[3\]
 ///
 /// For n-grams with fewer than 4 tokens, the unused positions contain zeros.
 /// These trailing zeros must be stripped before decoding to prevent artifacts.
@@ -522,5 +525,22 @@ mod tests {
             assert_eq!(ngrams2.get(key), Some(count));
             assert_eq!(ngrams3.get(key), Some(count));
         }
+    }
+
+    #[test]
+    fn test_ngram_key_as_slice_sound() {
+        let key = NgramKey::from_slice(&[1, 2, 3]);
+        assert_eq!(key.0, 0x00000000_00000003_00000002_00000001);
+        let s = key.as_slice();
+        assert_eq!(s.len(), 4);
+        assert_eq!(s[0], 1);
+        assert_eq!(s[1], 2);
+        assert_eq!(s[2], 3);
+        assert_eq!(s[3], 0);
+
+        let key_full = NgramKey::from_slice(&[u32::MAX, u32::MAX, u32::MAX, u32::MAX]);
+        assert_eq!(key_full.0, u128::MAX);
+        let s = key_full.as_slice();
+        assert_eq!(s, &[u32::MAX; 4]);
     }
 }

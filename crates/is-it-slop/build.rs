@@ -14,7 +14,7 @@ use tempfile::tempdir;
 /// Model version to use
 /// Update this when releasing new model versions
 /// Crate version doesn't need to change for patch updates
-const MODEL_VERSION: &str = "2.1.0";
+const MODEL_VERSION: &str = "3.0.0";
 
 const CLASSIFIER_MODEL_FILENAME: &str = "slop-classifier.onnx";
 const TOKENIZER_FILENAME: &str = "tfidf_vectorizer.rkyv";

@@ -30,7 +30,7 @@ Quick Start
 
 """
 
-# Import only user-facing wrapper classes
+# Import only user-facing wrapper classes and functions
 from ._internal import (
     CleaningMode,
     TextCleaner,
@@ -38,6 +38,7 @@ from ._internal import (
     TokenChunker,
     VectorizerParams,
     __version__,
+    extract_combined_batch,
     reverse_tokenize,
     tokenize,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "TokenChunker",
     "VectorizerParams",
     "__version__",
+    "extract_combined_batch",
     "reverse_tokenize",
     "tokenize",
 ]

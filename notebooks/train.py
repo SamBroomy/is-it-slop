@@ -10,6 +10,7 @@ import os
 import random
 import time
 import warnings
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -23,6 +24,7 @@ from __init__ import (
     CHUNK_CLASSIFICATION_THRESHOLD_PATH,
     CHUNKER_CONFIG_PATH,
     CLASSIFICATION_THRESHOLD_PATH,
+    MODEL_DIR,
     MODEL_ONNX_PATH,
     PLOT_DIR,
     RETRAIN_VECTORIZER,
@@ -32,6 +34,7 @@ from __init__ import (
     ProbabilisticClassifier,
     df_test,
     df_train,
+    df_validation,
 )
 from is_it_slop_preprocessing import TfidfVectorizer, TokenChunker, VectorizerParams, __version__, tokenize
 from loguru import logger
@@ -75,13 +78,14 @@ random.seed(SEED)
 np.random.default_rng(SEED)
 os.environ["PYTHONHASHSEED"] = str(SEED)
 os.environ["ORT_DETERMINISTIC"] = "1"
-
-mlflow.set_tracking_uri("sqlite:///mlflow.db")
+mlflow.set_tracking_uri("sqlite:///notebooks/mlflow.db")
 mlflow.set_experiment("is-it-slop-training-pipeline")
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("is_it_slop_preprocessing").setLevel(logging.DEBUG)
 logging.getLogger("matplotlib").setLevel(logging.WARNING)
 logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("skl2onnx").setLevel(logging.INFO)
 print(f"Bindings version: {__version__}")
 print(f"Pipeline model version output: {RETRAINED_MODEL_VERSION}")
 
@@ -95,12 +99,8 @@ plt.rcParams["figure.figsize"] = (12, 8)
 
 print("Vectorizer exists:", VECTORIZER_BIN_PATH.exists())
 
-
-# In[ ]:
-
-
-df_test.select("text").sink_csv("test_texts.csv", include_header=False)
-df_train.select("text").sink_csv("train_texts.csv", include_header=False)
+# Start training timer for metadata
+training_start_time = time.time()
 
 
 # In[ ]:
@@ -124,6 +124,44 @@ mlflow.log_param("total_samples", total_samples)
 mlflow.log_param("train_samples", len(X_train))
 mlflow.log_param("test_samples", len(X_test))
 mlflow.log_param("preprocessing_version", __version__)
+mlflow.log_param("model_version", str(RETRAINED_MODEL_VERSION))
+
+
+# In[ ]:
+
+
+# ==============================================================================
+# Load Dataset Metadata (computed during curation)
+# ==============================================================================
+
+from __init__ import DATA_DIR
+
+logger.info("Loading dataset metadata...")
+dataset_metadata_path = DATA_DIR / "dataset_metadata.json"
+
+if not dataset_metadata_path.exists():
+    error = f"Dataset metadata not found at {dataset_metadata_path}"
+    logger.error(error)
+    logger.error("Please run dataset curation first: just dataset-curation")
+    raise FileNotFoundError(error)
+
+with dataset_metadata_path.open("r", encoding="utf-8") as f:
+    dataset_metadata = json.load(f)
+
+logger.info(f"Loaded dataset metadata (version: {dataset_metadata['dataset_version']})")
+logger.info(f"Dataset created: {dataset_metadata['created_timestamp']}")
+logger.info(f"Total samples: {dataset_metadata['sample_counts']['total']}")
+
+
+# In[ ]:
+
+
+# Load validation set for evaluation
+X_validation = df_validation.select("text").collect().to_series().to_numpy()
+y_validation = df_validation.select("label").collect().to_series().to_numpy()
+
+logger.info(f"Validation samples: {len(X_validation)}")
+mlflow.log_param("validation_samples", len(X_validation))
 
 
 # In[ ]:
@@ -134,7 +172,11 @@ t1 = time.time()
 RETRAIN_VECTORIZER = True
 if RETRAIN_VECTORIZER or not VECTORIZER_BIN_PATH.exists():
     logger.info("Training new Vectorizer")
-    params = VectorizerParams(min_df=100, max_df=0.7)
+
+    # Scaled for full dataset (473K texts)
+    # min_df=0.001 → min 473 docs (0.1% of corpus) - filters rare n-grams
+    # Previous v2.1.0: 30% sampling (142K texts), min_df=100 (0.07%)
+    params = VectorizerParams(min_df=0.0007, max_df=0.7)
 
     # Log vectorizer params
     mlflow.log_param("ngram_range", f"{params.ngram_range}")
@@ -142,13 +184,7 @@ if RETRAIN_VECTORIZER or not VECTORIZER_BIN_PATH.exists():
     mlflow.log_param("max_df", params.max_df)
     mlflow.log_param("retrain_vectorizer", True)
 
-    # vectorizer = TfidfVectorizer.fit(X_train, params)
-    # logger.info(f"Fitted vectorizer in {time.time() - t1:.2f} seconds")
-    # t2 = time.time()
-    # X_train_tfidf = vectorizer.transform(X_train)
-    # logger.info(f"Transformed train data {X_train_tfidf.shape} in {time.time() - t2:.2f} seconds")
-
-    # 1. Fit vocabulary on FULL texts
+    # Fit vocabulary (batching is automatic based on dataset size)
     vectorizer = TfidfVectorizer.fit(X_train, params)
 
     logger.info(f"Fitted vectorizer in {time.time() - t1:.2f} seconds")
@@ -157,22 +193,24 @@ else:
     logger.info("Loading Pre-trained Vectorizer")
 
     vectorizer = TfidfVectorizer.load(VECTORIZER_BIN_PATH)
+    params = vectorizer.params
     mlflow.log_param("retrain_vectorizer", False)
     logger.info(f"Loaded vectorizer in {time.time() - t1:.2f} seconds")
     t2 = time.time()
 
-# 2. Tokenize all texts
+# Tokenize all texts (batching is automatic based on dataset size)
 logger.info("Tokenizing texts...")
 train_tokens = tokenize(X_train)
 test_tokens = tokenize(X_test)
-# 3: Chunk at token level
+
+# Chunk at token level
 chunker = TokenChunker(chunk_size=150, overlap=15, min_chunk_size=30)
 logger.info("Chunking tokens...")
 train_chunked = chunker.chunk_batch(train_tokens)
 test_chunked = chunker.chunk_batch(test_tokens)
 
 
-# 4: Flatten chunks and replicate labels
+# Flatten chunks and replicate labels
 def flatten_with_labels(
     chunked_tokens: list[list[list[int]]], labels: np.ndarray
 ) -> tuple[list[list[int]], np.ndarray, np.ndarray]:
@@ -193,23 +231,55 @@ train_chunk_tokens, y_train_chunked, train_chunk_to_doc = flatten_with_labels(tr
 test_chunk_tokens, y_test_chunked, test_chunk_to_doc = flatten_with_labels(test_chunked, y_test)
 logger.info(f"Training samples: {len(y_train)} → {len(y_train_chunked)} (after chunking)")
 
-# 5: Vectorize from pre-tokenized chunks
+# Vectorize from pre-tokenized chunks
 logger.info("Vectorizing chunks...")
 X_train_tfidf = vectorizer.vectorize_from_tokens(train_chunk_tokens)
 X_test_tfidf = vectorizer.vectorize_from_tokens(test_chunk_tokens)
 
 
-logger.info("Transforming test data...")
-# X_test_tfidf = vectorizer.transform(X_test)
-
 logger.info(f"Transformed test data {X_test_tfidf.shape} in {time.time() - t2:.2f} seconds")
-logger.info(f"Train Feature matrix: {X_train_tfidf.shape}")
+logger.info(f"Train TF-IDF matrix: {X_train_tfidf.shape}")
 sparsity = 100 * (1 - X_train_tfidf.nnz / np.prod(X_train_tfidf.shape))  # pyright: ignore[reportCallIssue, reportArgumentType]
-logger.info(f"Sparsity: {sparsity:.2f}%")
+logger.info(f"TF-IDF Sparsity: {sparsity:.2f}%")
 
-# Log feature matrix metrics
-mlflow.log_metric("n_features", X_train_tfidf.shape[1])  # pyright: ignore[reportOptionalSubscript]
-mlflow.log_metric("sparsity_percent", sparsity)
+# Log TF-IDF metrics
+mlflow.log_metric("n_tfidf_features", X_train_tfidf.shape[1])  # pyright: ignore[reportOptionalSubscript]
+mlflow.log_metric("tfidf_sparsity_percent", sparsity)
+
+
+# In[ ]:
+
+
+# ==============================================================================
+# Compute Chunking Statistics (model-specific, not dataset property)
+# ==============================================================================
+
+logger.info("Computing chunking statistics...")
+
+
+def compute_statistics(values: list[int] | np.ndarray) -> dict:
+    """Compute statistical summary (mean, std, min, max, percentiles)."""
+    arr = np.array(values)
+    return {
+        "mean": float(np.mean(arr)),
+        "std": float(np.std(arr)),
+        "min": int(np.min(arr)),
+        "max": int(np.max(arr)),
+        "p50": int(np.percentile(arr, 50)),
+        "p95": int(np.percentile(arr, 95)),
+    }
+
+
+# Chunks per document (model-specific: depends on chunker config)
+chunks_per_doc_stats = {
+    "train": compute_statistics([len(chunks) for chunks in train_chunked]),
+    "test": compute_statistics([len(chunks) for chunks in test_chunked]),
+}
+
+logger.info(
+    f"Chunks per doc (train): mean={chunks_per_doc_stats['train']['mean']:.1f}, "
+    f"std={chunks_per_doc_stats['train']['std']:.1f}"
+)
 
 
 # In[ ]:
@@ -236,7 +306,15 @@ def create_chunk_level_dataframe(
             chunk_data.append(chunk_row)
             chunk_idx += 1
 
-    return pl.DataFrame(chunk_data)
+    schema = {
+        **df.schema,
+        "doc_idx": pl.Int64,
+        "chunk_idx": pl.Int64,
+        "chunk_position": pl.Int64,
+        "num_chunks_in_doc": pl.Int64,
+        "chunk_label": pl.Int8,
+    }
+    return pl.DataFrame(chunk_data, schema=schema)
 
 
 # Usage in your training notebook (after chunking)
@@ -254,12 +332,11 @@ df_test_chunks = create_chunk_level_dataframe(df_test.collect(), test_chunked, y
 # In[ ]:
 
 
-# Train ensemble
+# Train ensemble with manual GroupKFold stacking
 logger.info("Training ensemble...")
-
+cv = 5
+# Define base models
 nb = MultinomialNB(alpha=0.01)
-
-# cn = ComplementNB(alpha=0.01)
 
 sgd = SGDClassifier(
     loss="modified_huber",
@@ -267,7 +344,7 @@ sgd = SGDClassifier(
     alpha=0.00005,
     class_weight="balanced",
     early_stopping=True,
-    max_iter=2000,  # 8000
+    max_iter=2000,
     tol=1e-4,
     random_state=SEED,
     learning_rate="optimal",
@@ -276,71 +353,38 @@ sgd = SGDClassifier(
 
 logreg = LogisticRegression(
     penalty="l2", C=1.0, solver="saga", max_iter=200, class_weight="balanced", random_state=SEED, n_jobs=-1
-)  # 1000
+)
 
 # LinearSVC - very fast, needs calibration for probabilities
-svc = LinearSVC(
-    C=1.0,
-    loss="squared_hinge",  # Good for sparse data
-    max_iter=2000,
-    class_weight="balanced",
-    random_state=SEED,
-)
-# Wrap for probability calibration (needed for ensemble voting='soft')
-svc_calibrated = CalibratedClassifierCV(svc, cv=5, method="sigmoid")
+svc = LinearSVC(C=1.0, loss="squared_hinge", max_iter=2000, class_weight="balanced", random_state=SEED)
+svc_calibrated = CalibratedClassifierCV(svc, cv=cv, method="sigmoid")
 
-estimators: list[tuple[str, BaseEstimator, float]] = [
-    ("sgd", sgd, 0.15),
-    ("logreg", logreg, 0.30),
-    ("svc", svc_calibrated, 0.4),
-    ("nb", nb, 0.15),
-    # ("cnb", cn, 0.05),
-]
-voting = "soft"
+estimators: list[tuple[str, BaseEstimator]] = [("sgd", sgd), ("logreg", logreg), ("svc", svc_calibrated), ("nb", nb)]
 
-assert abs(sum(weight for _, _, weight in estimators) - 1.0) < 1e-6, "Weights must sum to 1.0"  # noqa: S101
-
-mlflow.log_param("ensemble_estimators", [name for name, _, _ in estimators])
-mlflow.log_param("ensemble_weights", [weight for _, _, weight in estimators])
+mlflow.log_param("ensemble_estimators", [name for name, _ in estimators])
 mlflow.log_param("model_type", "StackingClassifier")
-mlflow.log_param("voting", voting)
-
-# ensemble = VotingClassifier(
-#     estimators=[(name, model) for name, model, _ in estimators],
-#     weights=[weight for _, _, weight in estimators],
-#     voting=voting,
-#     n_jobs=-1,
-#     flatten_transform=False,
-#     verbose=True,
-# )
-
+mlflow.log_param("cv_folds", cv)
 
 meta_lr = LogisticRegression(max_iter=200, n_jobs=-1, random_state=SEED)
-meta_calibrated = CalibratedClassifierCV(meta_lr, cv=5, method="sigmoid")
+meta_calibrated = CalibratedClassifierCV(meta_lr, cv=cv, method="sigmoid")
 ensemble = StackingClassifier(
-    estimators=[(name, est) for name, est, _ in estimators],
+    estimators=[(name, est) for name, est in estimators],
     final_estimator=meta_lr,
-    cv=5,
+    cv=cv,
     stack_method="predict_proba",
     n_jobs=-1,
     passthrough=False,
     verbose=True,
 )
 
-# Retrain
-ensemble.fit(X_train_tfidf, y_train_chunked)
-# This is just a list but to save to onnx we need it as a numpy array
-# ensemble.weights = np.array(ensemble.weights)  # pyright: ignore[reportAttributeAccessIssue]
 
-# Use a Protocol or Union type for classifiers with predict_proba
-
+ensemble.fit(X_train_tfidf, y_train_chunked)  # type: ignore[reportArgumentType]
 
 models: dict[str, ProbabilisticClassifier] = {
     "sgd": ensemble.estimators_[0],
     "logreg": ensemble.estimators_[1],
     "svc": ensemble.estimators_[2],
     "nb": ensemble.estimators_[3],
-    # "cnb": ensemble.estimators_[4],
     "ensemble": ensemble,
 }  # pyright: ignore[reportAssignmentType]
 
@@ -424,7 +468,8 @@ def aggregate_chunk_predictions(
     chunk_probs: np.ndarray,
     chunk_to_doc_idx: np.ndarray,
     n_docs: int,
-    method: Literal["mean", "max", "weighted_mean"] = "mean",
+    threshold: float,
+    method: Literal["mean", "max", "weighted_mean"] = "weighted_mean",
 ) -> np.ndarray:
     doc_probs = np.zeros(n_docs)
 
@@ -443,23 +488,23 @@ def aggregate_chunk_predictions(
                 doc_probs[doc_idx] = chunk_probs[mask].max()
 
     elif method == "weighted_mean":
-        # Weight by distance from 0.5 (confidence-weighted)
+        # Weight by distance from threshold (confidence-weighted)
         for doc_idx in range(n_docs):
             mask = chunk_to_doc_idx == doc_idx
             if mask.any():
                 chunk_probs_doc = chunk_probs[mask]
-                # Higher weight for more confident predictions
-                weights = np.abs(chunk_probs_doc - best_chunked_threshold)
-                doc_probs[doc_idx] = np.average(chunk_probs_doc, weights=weights)
+                weights = np.abs(chunk_probs_doc - threshold)
+                # Handle edge case: if all weights are zero, fall back to mean
+                if weights.sum() > 1e-10:
+                    doc_probs[doc_idx] = np.average(chunk_probs_doc, weights=weights)
+                else:
+                    doc_probs[doc_idx] = chunk_probs_doc.mean()
 
     return doc_probs
 
 
 y_probs = aggregate_chunk_predictions(
-    chunk_probs,
-    test_chunk_to_doc,
-    n_docs=len(y_test),
-    method="weighted_mean",  # Try: "mean", "max", "weighted_mean"
+    chunk_probs, test_chunk_to_doc, n_docs=len(y_test), threshold=best_chunked_threshold, method="weighted_mean"
 )
 
 
@@ -574,6 +619,110 @@ logger.info(
 # In[ ]:
 
 
+# ==============================================================================
+# Validation Set Evaluation (Holdout Performance)
+# ==============================================================================
+
+logger.info("\n" + "=" * 80)
+logger.info("VALIDATION SET EVALUATION")
+logger.info("=" * 80)
+
+# Tokenize and chunk validation set
+logger.info("Processing validation set...")
+validation_tokens = tokenize(X_validation)
+validation_chunked = chunker.chunk_batch(validation_tokens)
+
+# Flatten chunks for vectorization
+validation_chunk_tokens, y_validation_chunked, validation_chunk_to_doc = flatten_with_labels(
+    validation_chunked, y_validation
+)
+
+# Vectorize
+X_validation_tfidf = vectorizer.vectorize_from_tokens(validation_chunk_tokens)
+logger.info(f"Validation samples: {len(y_validation)} → {len(y_validation_chunked)} chunks")
+
+# Predict at chunk level
+validation_chunk_probs = ensemble.predict_proba(X_validation_tfidf)[:, 1]  # pyright: ignore[reportCallIssue, reportArgumentType]
+validation_chunked_y_pred = (validation_chunk_probs >= best_chunked_threshold).astype(np.int8)
+
+# Chunk-level metrics
+val_chunk_mcc = matthews_corrcoef(y_validation_chunked, validation_chunked_y_pred)
+val_chunk_auc: float = roc_auc_score(y_validation_chunked, validation_chunked_y_pred)  # pyright: ignore[reportAssignmentType]
+val_chunk_accuracy: float = accuracy_score(y_validation_chunked, validation_chunked_y_pred)  # pyright: ignore[reportAssignmentType]
+val_chunk_precision: float = precision_score(y_validation_chunked, validation_chunked_y_pred)  # pyright: ignore[reportAssignmentType]
+val_chunk_recall: float = recall_score(y_validation_chunked, validation_chunked_y_pred)  # pyright: ignore[reportAssignmentType]
+val_chunk_f1: float = f1_score(y_validation_chunked, validation_chunked_y_pred)  # pyright: ignore[reportAssignmentType]
+val_chunk_tn, val_chunk_fp, val_chunk_fn, val_chunk_tp = confusion_matrix(
+    y_validation_chunked, validation_chunked_y_pred
+).ravel()
+
+logger.info("Chunk-level validation metrics:")
+logger.info(f"  MCC: {val_chunk_mcc:.4f}")
+logger.info(f"  AUC: {val_chunk_auc:.4f}")
+logger.info(f"  F1: {val_chunk_f1:.4f}")
+
+# Log to MLflow
+mlflow.log_metric("validation_chunked_mcc", val_chunk_mcc)
+mlflow.log_metric("validation_chunked_auc", val_chunk_auc)
+mlflow.log_metric("validation_chunked_accuracy", val_chunk_accuracy)
+mlflow.log_metric("validation_chunked_precision", val_chunk_precision)
+mlflow.log_metric("validation_chunked_recall", val_chunk_recall)
+mlflow.log_metric("validation_chunked_f1_score", val_chunk_f1)
+mlflow.log_metric("validation_chunked_tp", int(val_chunk_tp))
+mlflow.log_metric("validation_chunked_fp", int(val_chunk_fp))
+mlflow.log_metric("validation_chunked_tn", int(val_chunk_tn))
+mlflow.log_metric("validation_chunked_fn", int(val_chunk_fn))
+
+# Aggregate to document level
+validation_y_probs = aggregate_chunk_predictions(
+    validation_chunk_probs,
+    validation_chunk_to_doc,
+    n_docs=len(y_validation),
+    threshold=best_chunked_threshold,
+    method="weighted_mean",
+)
+
+validation_y_pred = (validation_y_probs >= best_threshold).astype(np.int8)
+
+# Document-level metrics
+val_doc_mcc = matthews_corrcoef(y_validation, validation_y_pred)
+val_doc_auc: float = roc_auc_score(y_validation, validation_y_pred)  # pyright: ignore[reportAssignmentType]
+val_doc_accuracy: float = accuracy_score(y_validation, validation_y_pred)  # pyright: ignore[reportAssignmentType]
+val_doc_precision: float = precision_score(y_validation, validation_y_pred)  # pyright: ignore[reportAssignmentType]
+val_doc_recall: float = recall_score(y_validation, validation_y_pred)  # pyright: ignore[reportAssignmentType]
+val_doc_f1: float = f1_score(y_validation, validation_y_pred)  # pyright: ignore[reportAssignmentType]
+val_doc_tn, val_doc_fp, val_doc_fn, val_doc_tp = confusion_matrix(y_validation, validation_y_pred).ravel()
+
+logger.info("Document-level validation metrics:")
+logger.info(f"  MCC: {val_doc_mcc:.4f}")
+logger.info(f"  AUC: {val_doc_auc:.4f}")
+logger.info(f"  Accuracy: {val_doc_accuracy:.4f}")
+logger.info(f"  Precision: {val_doc_precision:.4f}")
+logger.info(f"  Recall: {val_doc_recall:.4f}")
+logger.info(f"  F1: {val_doc_f1:.4f}")
+logger.info(f"  Confusion: TP={val_doc_tp}, FP={val_doc_fp}, TN={val_doc_tn}, FN={val_doc_fn}")
+
+# Log to MLflow
+mlflow.log_metric("validation_mcc", val_doc_mcc)
+mlflow.log_metric("validation_auc", val_doc_auc)
+mlflow.log_metric("validation_accuracy", val_doc_accuracy)
+mlflow.log_metric("validation_precision", val_doc_precision)
+mlflow.log_metric("validation_recall", val_doc_recall)
+mlflow.log_metric("validation_f1_score", val_doc_f1)
+mlflow.log_metric("validation_tp", int(val_doc_tp))
+mlflow.log_metric("validation_fp", int(val_doc_fp))
+mlflow.log_metric("validation_tn", int(val_doc_tn))
+mlflow.log_metric("validation_fn", int(val_doc_fn))
+
+# Add validation chunking statistics
+chunks_per_doc_stats["validation"] = compute_statistics([len(chunks) for chunks in validation_chunked])
+
+logger.info("=" * 80 + "\n")
+
+
+# In[ ]:
+
+
 # Save vectorizer in both formats:
 # 1. JSON-wrapped format for Python (with metadata)
 # vectorizer.save(VECTORIZER_JSON_PATH)
@@ -592,6 +741,7 @@ logger.info(f"Saved chunker config to {CHUNKER_CONFIG_PATH}")
 
 # Convert to ONNX
 # Disable ZipMap to output probabilities as a 2D tensor [batch_size, num_classes]
+logger.info("Converting to ONNX...")
 onx: onnx.ModelProto = to_onnx(
     ensemble,
     X_train_tfidf[:1].toarray(),  # Sample for shape inference
@@ -628,6 +778,136 @@ mlflow.log_artifact(str(CHUNKER_CONFIG_PATH))
 # In[ ]:
 
 
+# ==============================================================================
+# Collect and Save Model Metadata
+# ==============================================================================
+
+logger.info("\n" + "=" * 80)
+logger.info("COLLECTING MODEL METADATA")
+logger.info("=" * 80)
+
+
+def compute_artifact_sizes(model_dir: Path) -> dict:
+    """Compute sizes of all artifact files."""
+    files = {}
+    total_bytes = 0
+
+    for file_path in model_dir.iterdir():
+        if file_path.is_file():
+            size_bytes = file_path.stat().st_size
+            size_mb = size_bytes / (1024 * 1024)
+            files[file_path.name] = {"size_bytes": size_bytes, "size_mb": round(size_mb, 2)}
+            total_bytes += size_bytes
+
+    return {"files": files, "total_size_mb": round(total_bytes / (1024 * 1024), 2)}
+
+
+# Collect training-specific metadata
+training_duration = time.time() - training_start_time
+artifact_sizes = compute_artifact_sizes(MODEL_DIR)
+
+# Merge dataset metadata with model metadata
+model_metadata = {
+    "metadata_version": "1.0.0",
+    "version_info": {
+        "model_version": str(RETRAINED_MODEL_VERSION),
+        "dataset_version": dataset_metadata["dataset_version"],
+
+        "training_timestamp": datetime.now(UTC).isoformat(),
+        "dataset_created": dataset_metadata["created_timestamp"],
+    },
+    "dataset_info": {
+        # Use dataset metadata for composition and base statistics
+        **dataset_metadata
+    },
+    "model_config": {
+        "model_type": "StackingClassifier",
+        "base_estimators": [name for name, _ in estimators],
+        "meta_estimator": "LogisticRegression",
+        "vectorizer": {
+            "type": "TF-IDF",
+            "ngram_range": list(params.ngram_range),
+            "min_df": params.min_df,
+            "max_df": params.max_df,
+            "n_features": X_train_tfidf.shape[1],  # pyright: ignore[reportOptionalSubscript]
+            "sparsity_percent": round(sparsity, 2),
+        },
+        "chunking": chunker.to_dict(),
+        "thresholds": {"document_level": round(best_threshold, 6), "chunk_level": round(best_chunked_threshold, 6)},
+    },
+    "performance_metrics": {
+        "test": {
+            "document_level": {
+                "mcc": round(test_mcc, 4),
+                "auc": round(test_auc, 4),
+                "accuracy": round(accuracy, 4),
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "f1": round(f1, 4),
+                "confusion_matrix": {"tp": int(tp), "fp": int(fp), "tn": int(tn), "fn": int(fn)},
+            },
+            "chunk_level": {
+                "mcc": round(test_mcc, 4),
+                "auc": round(test_auc, 4),
+                "accuracy": round(accuracy, 4),
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "f1": round(f1, 4),
+            },
+        },
+        "validation": {
+            "document_level": {
+                "mcc": round(val_doc_mcc, 4),
+                "auc": round(val_doc_auc, 4),
+                "accuracy": round(val_doc_accuracy, 4),
+                "precision": round(val_doc_precision, 4),
+                "recall": round(val_doc_recall, 4),
+                "f1": round(val_doc_f1, 4),
+                "confusion_matrix": {
+                    "tp": int(val_doc_tp),
+                    "fp": int(val_doc_fp),
+                    "tn": int(val_doc_tn),
+                    "fn": int(val_doc_fn),
+                },
+            },
+            "chunk_level": {
+                "mcc": round(val_chunk_mcc, 4),
+                "auc": round(val_chunk_auc, 4),
+                "accuracy": round(val_chunk_accuracy, 4),
+                "precision": round(val_chunk_precision, 4),
+                "recall": round(val_chunk_recall, 4),
+                "f1": round(val_chunk_f1, 4),
+            },
+        },
+    },
+    "chunking_statistics": {
+        # Model-specific: depends on chunker configuration
+        "chunks_per_document": chunks_per_doc_stats
+    },
+    "artifact_info": artifact_sizes,
+    "training_info": {"seed": SEED, "cv_folds": cv, "training_duration_seconds": round(training_duration, 2)},
+}
+
+# Save metadata to JSON
+metadata_path = MODEL_DIR / "model_metadata.json"
+with metadata_path.open("w", encoding="utf-8") as f:
+    json.dump(model_metadata, f, indent=None)
+
+logger.info(f"Saved model metadata to {metadata_path}")
+logger.info(f"Training duration: {training_duration:.2f} seconds")
+logger.info(f"Total artifact size: {artifact_sizes['total_size_mb']:.2f} MB")
+logger.info(f"Dataset version: {dataset_metadata['dataset_version']}")
+logger.info(f"Markdown bias (from dataset): {dataset_metadata['markdown_bias']['ratio']:.2f}x")
+
+# Log metadata file to MLflow
+mlflow.log_artifact(str(metadata_path))
+
+logger.info("=" * 80 + "\n")
+
+
+# In[ ]:
+
+
 best_threshold
 
 
@@ -645,6 +925,18 @@ test_input = X_train_tfidf[:2]  # .astype(np.float64)  # .todense()
 input_name = sess.get_inputs()[0].name
 
 pred_onx = sess.run(None, {input_name: test_input.toarray()})
+
+
+# In[ ]:
+
+
+input_meta = sess.get_inputs()[0]
+
+
+# In[ ]:
+
+
+input_meta
 
 
 # In[ ]:
@@ -750,12 +1042,8 @@ compare_token_distributions(texts_human, texts_ai)
 # In[ ]:
 
 
-# =============================================================================
-# Additional v5.0 Visualizations (Chunking-specific)
-# =============================================================================
-
 logger.info("\n" + "=" * 80)
-logger.info("Generating v5.0 chunking-specific visualizations...")
+logger.info("Generating chunking-specific visualizations...")
 logger.info("=" * 80 + "\n")
 
 
@@ -765,7 +1053,7 @@ logger.info("=" * 80 + "\n")
 # 1. Top predictive n-grams
 logger.info("1/5: Top predictive n-grams...")
 # Use fitted logreg from ensemble (most interpretable single model)
-top_ngrams_visualization(vectorizer, models["logreg"].coef_.ravel(), top_n=20)  # pyright: ignore[reportAttributeAccessIssue]
+top_ngrams_visualization(vectorizer, models["logreg"].coef_.ravel(), top_n=25)  # pyright: ignore[reportAttributeAccessIssue]
 
 
 # In[ ]:

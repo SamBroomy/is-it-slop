@@ -13,6 +13,7 @@ Python bindings for the is-it-slop AI text detection library, powered by Rust an
 - **Simple API**: Single function call for predictions
 - **Batch processing**: Efficient multi-text inference
 - **Text chunking**: Handles variable-length documents (50-5000+ tokens)
+- **Command-line interface**: CLI included, no separate installation needed
 - **Cross-platform**: Linux, macOS (Apple Silicon), Windows
 
 ## Installation
@@ -27,7 +28,15 @@ or using pip:
 pip install is-it-slop
 ```
 
+or run directly without installing:
+
+```bash
+uvx is-it-slop "Your text here"
+```
+
 ## Quick Start
+
+### Python API
 
 ```python
 from is_it_slop import is_this_slop
@@ -48,6 +57,45 @@ texts = ["First text", "Second text", "Third text"]
 results = is_this_slop_batch(texts)
 for text, result in zip(texts, results):
     print(f"{text}: {result.classification} ({result.ai_probability:.1%})")
+```
+
+### Command-Line Interface
+
+The package includes a CLI that can be used after installation:
+
+```bash
+# Default: human-readable with probabilities and confidence metrics
+is-it-slop "Your text here"
+
+# Classification label only
+is-it-slop "Text" --label
+# Output: Human
+
+# Label with score
+is-it-slop "Text" --label --score
+# Output: Human (0.2340)
+
+# Bare AI probability for scripting
+is-it-slop "Text" --score
+# Output: 0.2340
+
+# Full JSON output
+is-it-slop "Text" --json
+
+# JSON lines (one object per line, useful for streaming)
+is-it-slop "Text" --jsonl
+
+# Batch processing (auto-detects .json vs line-delimited)
+is-it-slop -b texts.txt
+
+# Custom threshold
+is-it-slop "Text" --threshold 0.7
+
+# Read from stdin
+echo "Your text" | is-it-slop
+
+# Get help
+is-it-slop --help
 ```
 
 ## API Reference
@@ -109,6 +157,8 @@ Result object with classification and probabilities:
 - `classification` (str): Either `"Human"` or `"AI"`
 - `human_probability` (float): Probability of human-written text (0.0-1.0)
 - `ai_probability` (float): Probability of AI-generated text (0.0-1.0)
+- `num_chunks` (int): Number of text chunks processed (1 for short texts, more for long)
+- `chunk_agreement` (float): Agreement across chunks (0.5-1.0). 1.0 = all chunks agree
 
 **Note:** `human_probability + ai_probability == 1.0`
 
@@ -156,24 +206,15 @@ print(f"Model version: {MODEL_VERSION}")
 
 This pipeline ensures consistent preprocessing between training and inference.
 
-## Command-Line Interface
+## Alternative: Standalone Rust CLI
 
-For CLI usage, install the Rust binary:
+If you need faster startup time or want a standalone binary without Python, you can install the Rust CLI separately:
 
 ```bash
 cargo install is-it-slop --features cli
 ```
 
-```bash
-# Basic usage
-is-it-slop "Your text here"
-
-# JSON output
-is-it-slop "Your text here" --format json
-
-# Classification only (0 or 1)
-is-it-slop "Your text here" --format class
-```
+The standalone Rust binary has slightly faster startup but requires the Rust toolchain to install. The Python package CLI provides the same functionality and is easier to install.
 
 ## Platform Support
 

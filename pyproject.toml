@@ -55,7 +55,7 @@ dependencies = [
     "loguru>=0.7.3",
     "matplotlib>=3.10.7",
     "mlflow>=3.6.0",
-    "netron>=8.8.1",
+    "netron>=9.0.3",
     "onnxruntime>=1.23.2",
     "polars-splitters>=0.4.5",
     "polars>=1.35",
@@ -63,7 +63,9 @@ dependencies = [
     "seaborn>=0.13.2",
     "semver>=3.0.4",
     "skl2onnx>=1.19.1",
+    "sympy>=1.13",
     "tiktoken>=0.12.0",
+    "kagglehub>=1.0.0",
 ]
 
 [dependency-groups]
@@ -76,6 +78,7 @@ dev = [
     "nbstripout>=0.8.2",
     "new-dale-chall-readability>=1.0.13",
     "nltk>=3.9.2",
+    "prek>=0.3.8",
     "pytest>=9.0.1",
     "ruff>=0.14.0",
     "ty>=0.0.1a32",
@@ -92,8 +95,8 @@ Issues = "https://github.com/SamBroomy/is-it-slop/issues"
 package = false
 
 [tool.uv.workspace]
-members = ["python/is-it-slop-preprocessing", "python/is-it-slop"]
+members = ["python/is-it-slop", "python/is-it-slop-preprocessing"]
 
 [tool.uv.sources]
-is-it-slop-preprocessing = { workspace = true }
 is-it-slop = { workspace = true }
+is-it-slop-preprocessing = { workspace = true }

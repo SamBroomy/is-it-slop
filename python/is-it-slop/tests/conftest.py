@@ -4,7 +4,7 @@ import pytest
 
 
 @pytest.fixture(scope="session")
-def sample_texts():
+def sample_texts() -> list[str]:
     """Sample texts for testing inference."""
     return [
         "This is a short human-written text.",

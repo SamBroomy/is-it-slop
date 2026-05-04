@@ -15,48 +15,113 @@
 
 # is-it-slop
 
-Fast AI text detection using classic ML - TF-IDF and logistic regression.
+***Unsure if the article you just read was AI generated slop?***
+
+`is-it-slop` is a small, fast, and accurate text classifier that detects AI-generated text. Using classic ML - TF-IDF and logistic regression on token n-grams.
+
+**No transformers, no GPU, no Python runtime required. Just a single ~60 MB Rust binary with embedded model artifacts.**
+
+> Inspired by [Magika](https://github.com/google/magika) for serving a small, fast model via ONNX Runtime in Rust.
 
 ## Features
 
-- **Fast**: Rust based multi-threaded preprocessing and multi-threaded batch inference via ONNX inference.
-- **Small**: 14 MB model + 8 MB vectorizer — no transformers or GPU needed
-- **Portable**: Single 35 MB binary with embedded model, no Python runtime required
-- **Accurate**: 96%+ accuracy (F1 0.96, MCC 0.93) on diverse datasets
-- **Chunk-aware**: Handles long documents via overlapping token chunks with aggregation
+- **Fast**: Rust-based multi-threaded preprocessing and batched ONNX Runtime inference
+- **Small**: ~11.4 MB of model artifacts, no GPU or transformers needed
+- **Portable**: Single ~60 MB binary with embedded model and no Python runtime required
+- **Accurate**: 95.6% accuracy on holdout test set (F1 0.958, MCC 0.912)
+- **Chunk-aware**: Handles long documents via overlapping 150-token chunks with weighted aggregation
+- **Cross-platform**: macOS (ARM64), Linux (x86_64, ARM64), Windows (x86_64)
 
 ## Installation
 
-### CLI
+### Command Line Tool
 
-```bash
+**Via Python/PyPI** (recommended — includes both CLI and library):
+
+```shell
+pip install is-it-slop
+# or with pipx:
+pipx install is-it-slop
+# or with uv:
+uv tool install is-it-slop
+# or run directly:
+uvx is-it-slop "Your text here"
+# or add to project:
+uv add is-it-slop
+```
+
+**Via cargo-binstall** (pre-built binaries, no compilation):
+
+```shell
+cargo binstall is-it-slop
+```
+
+**Via cargo install** (build from source):
+
+```shell
 cargo install is-it-slop --locked --features cli
 ```
 
-Model artifacts (~22 MB) download automatically during build.
+Model artifacts (~11.4 MB) download automatically during build and are embedded in the binary. No runtime downloads, no Python required.
 
-### Python
+### Python Library
 
-```bash
+```shell
+uv add is-it-slop
+# or
 pip install is-it-slop
 ```
 
 ### Rust Library
 
-```bash
+```shell
 cargo add is-it-slop
 ```
 
 ## Quick Start
 
-### CLI
+### Command Line
+
+Default output is human-readable with probabilities and confidence metrics:
 
 ```bash
-is-it-slop "Your text here"
-# Output: 0.234 (AI probability)
+$ is-it-slop "Your text here"
+Classification: Human
+Probabilities:
+  Human: 91.2%
+  AI:    8.8%
 
-is-it-slop "Text" --format class
-# Output: Human (or AI)
+Confidence Metrics:
+  Model:     91.2%
+  Threshold: 87.3%
+  Entropy:   64.1%
+  Overall:   83.5%
+```
+
+Other output modes:
+
+```bash
+# Classification label only
+$ is-it-slop "Your text" --label
+Human
+
+# Label with AI probability score
+$ is-it-slop "Your text" --label --score
+Human (0.0880)
+
+# Bare float for shell scripting
+$ is-it-slop "Your text" --score
+0.0880
+
+# Full JSON (includes chunk predictions and confidence metrics)
+$ is-it-slop "Your text" --json
+{"status":"ok","class":"Human",...}
+
+# Batch from file (auto-detects .json vs line-delimited)
+$ is-it-slop -b texts.txt
+
+# Custom classification threshold
+$ is-it-slop "Your text" --threshold 0.7
 ```
 
 ### Python
@@ -65,8 +130,9 @@ is-it-slop "Text" --format class
 from is_it_slop import is_this_slop
 
 result = is_this_slop("Your text here")
-print(result.classification)  # 'Human' or 'AI'
-print(f"AI probability: {result.ai_probability:.2%}")
+print(result.classification)   # 'Human' or 'AI'
+print(f"AI: {result.ai_probability:.1%}")  # AI: 8.8%
+print(f"Chunks: {result.num_chunks}, Agreement: {result.chunk_agreement:.1%}")
 ```
 
 ### Rust
@@ -84,25 +150,24 @@ println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
 **Training (Python):**
 
 ```
-Texts (HuggingFace Datasets) → Clean → Tokenize → Chunk → TF-IDF → Logistic Regression → ONNX
+Texts → Clean → Tokenize (BPE) → Chunk → TF-IDF → Stacked Ensemble → ONNX
 ```
 
 **Inference (Rust):**
 
 ```
-Text → Clean → Tokenize → Chunk (150 tokens, 15 overlap)
-     → TF-IDF per chunk → ONNX → Aggregate predictions → Result
+Text → Clean → Tokenize → Chunk (150 tokens, 15 overlap) → TF-IDF per chunk → ONNX → Aggregate → Result
 ```
 
 ### Why BPE Tokenization?
 
-We use tiktoken's BPE tokenization (o200k_base) to convert text into token sequences. This allows us to capture subword information and create token n-grams without having to deal with creating a custom tokenizer (where BPE tokenization handles edge cases and is widely used in LLMs).
+We use tiktoken's BPE tokenization `o200k_base` to convert text into sequences of 2-4 consecutive tokens. This captures sub-word patterns that character or word n-grams miss, particularly useful for the predictable token sequences that AI models produce.
 
 > The idea here is that LLMs operate on tokens, and token-level n-grams can capture patterns that character or word n-grams might miss, especially for AI-generated text. Humans often have more varied token usage, while AI-generated text may have more predictable token sequences.
 
 ### Why Chunking?
 
-Variable-length documents (50-5000 tokens) lose information when mapped to fixed-size TF-IDF vectors. v5.0 splits texts into 150-token overlapping chunks, classifies each, then aggregates using weighted mean (default), max, or mean strategies.
+Variable-length documents (50-5000 tokens) lose information in fixed-size feature vectors. Splitting into overlapping 150-token chunks ensures consistent feature extraction regardless of document length. Chunk predictions are aggregated via weighted mean.
 
 ### Why Separate Artifacts?
 
@@ -118,33 +183,36 @@ This also avoids complex sklearn-to-ONNX preprocessing conversion while keeping 
 
 ```
 crates/
-├── is-it-slop-preprocessing/  # Text → TF-IDF pipeline
+├── is-it-slop-preprocessing/  # Text → TF-IDF pipeline (PyO3 bindings for training)
 │   ├── cleaner.rs            # Two-stage text cleaning
 │   ├── tokenizer.rs          # tiktoken BPE (o200k_base)
 │   ├── chunker.rs            # Token-based chunking
 │   ├── ngrams.rs             # Token n-gram extraction
-│   └── vectorizer/           # TF-IDF (sklearn-compatible)
+│   └── vectorizer/           # TF-IDF vectorizer with rkyv serialization
 └── is-it-slop/               # ONNX inference + CLI
-    ├── model/                # Embedded artifacts
-    └── pipeline/             # Prediction aggregation
+    ├── bin/                  # CLI binary entrypoint
+    ├── cli/                  # Command-line argument parsing
+    ├── model/                # Embedded artifacts (build.rs downloads)
+    ├── pipeline/             # Prediction, aggregation, error types
+    └── lib.rs                # Predictor, Threshold, public re-exports
 
-python/                       # PyO3 bindings for training
+python/                       # Two PyO3 packages (inference + preprocessing)
 notebooks/                    # Dataset curation + training
 ```
 
 ## Training
 
-### Dataset Curation
+### Dataset
 
-Training uses **15+ diverse datasets** spanning multiple domains and AI models to prevent overfitting:
+Trained on **25+ diverse datasets** (~687K samples across 118K test, 95K validation):
 
-- Human text: News articles, scientific papers, creative writing, social media
-- AI text: GPT-3.5/4, Claude, Llama, Gemini, and other models
-- Balanced split: ~50% human, ~50% AI across domains
+- **Human sources**: News (newswire, ag_news, imdb), essays (ivy panda, ASAP, PERSUADE), quotes, reviews
+- **AI sources**: GPT-3.5/4, Claude, Llama 3.1/3.2, Gemini 2, SmolLM2, Qwen 2.5
+- **Class balance**: ~48% human, ~52% AI
 
-**Data quality caveat:** Model performance depends on dataset label accuracy. We assume training data labels are correct (human text is genuinely human-written, AI text is genuinely AI-generated), but mislabeled examples may exist.
+**Data quality caveat:** Model performance depends on dataset label accuracy. We assume training data labels are correct (human text is genuinely human-written, AI text is genuinely AI-generated), but mislabelled examples may exist.
 
-See [`notebooks/dataset_curation.ipynb`](notebooks/dataset_curation.ipynb) for full dataset selection and preprocessing.
+See [`notebooks/dataset_curation.ipynb`](notebooks/dataset_curation.ipynb) for details.
 
 ![Embedding visualization](./plots/embedding_visualization.png)
 
@@ -156,17 +224,17 @@ See [`notebooks/train.ipynb`](notebooks/train.ipynb) for the complete training p
 
 The classifier is a **stacked ensemble** of calibrated linear models trained on token n-gram TF-IDF features:
 
-1. **Base models** (5 classifiers):
-   - Logistic Regression (30% weight)
-   - Calibrated Linear SVC (40% weight)
-   - SGD Classifier (15% weight)
-   - Naive Bayes (15% weight)
+1. **Base models** (4 classifiers):
+   - SGD Classifier (stochastic gradient descent)
+   - Logistic Regression
+   - Calibrated Linear SVC (with probability calibration)
+   - Multinomial Naive Bayes
 
-2. **Meta-learner**: Logistic regression combines base model predictions
+2. **Meta-learner**: Logistic Regression combines base model predictions via 5-fold stacking
 
 3. **Feature extraction**: Token n-grams (2-4 tokens) → TF-IDF vectors
    - Uses tiktoken's `o200k_base` BPE encoding
-   - Captures subword patterns across ~210k features
+   - Captures subword patterns across ~105k features (2-4 grams, min_df=0.07%, 99.9% sparse)
 
 **Why this works:** AI-generated text exhibits predictable token sequence patterns. By combining multiple linear models with different learning characteristics, the ensemble captures these patterns robustly across diverse writing styles.
 
@@ -180,6 +248,10 @@ Exported artifacts (embedded at build time):
 - `chunk_classification_threshold.txt` - Per-chunk threshold
 - `token_chunker_config.json` - Chunking parameters
 
+Not embedded but also available in `model_artifacts/`:
+
+- `model_metadata.json` - Metadata (training datasets, performance metrics)
+
 ### `slop-classifier.onnx`
 
 ![Training pipeline visualization](./plots/slop-classifier.onnx.svg)
@@ -189,28 +261,22 @@ The diagram shows the full ONNX graph: input → 5 parallel classifiers → prob
 ### **Additional visualizations:**
 
 >See [`plots/`](./plots/) for embedding visualizations, feature distributions, and model analysis.
+>
 
 ## Development
 
-### Build
-
 ```bash
+# Build
 cargo build --release -p is-it-slop --features cli
-```
 
-### Test
+# Test (295 tests)
+just test
 
-```bash
-cargo test --all-features  # All tests (298 tests)
-just test                  # Rust tests + Python tests
-```
+# Full CI check (fmt + clippy + tests)
+just check
 
-### Training Pipeline
-
-```bash
-just model-pipeline        # Full pipeline: dataset → train → build
-just dataset-curation      # Curate datasets
-just training-pipeline     # Train and export artifacts
+# Training pipeline
+just model-pipeline
 ```
 
 ## License

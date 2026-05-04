@@ -15,7 +15,8 @@
 use std::ops::AddAssign;
 
 use ahash::{HashMap, HashMapExt};
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::slice::ParallelSlice; // For par_chunks
 use sprs::CsMat;
 use tracing::{debug, instrument, warn};
 
@@ -51,6 +52,18 @@ pub struct CountVectorizer {
 }
 
 impl CountVectorizer {
+    /// Create vectorizer from pre-built vocabulary.
+    ///
+    /// Used by `TfidfVectorizerBuilder` after incremental vocabulary construction.
+    ///
+    /// # Arguments
+    /// * `vocab` - Pre-built vocabulary mapping n-grams to feature indices
+    /// * `params` - Vectorizer parameters
+    #[must_use]
+    pub fn from_vocab(vocab: HashMap<NgramKey, usize>, params: VectorizerParams) -> Self {
+        Self { params, vocab }
+    }
+
     /// Fit vectorizer on training texts.
     ///
     /// # Arguments
@@ -64,15 +77,16 @@ impl CountVectorizer {
         Self::fit_from_tokenized(&tokenized_texts, params, None)
     }
 
-    /// Internal method to fit from pre-tokenized texts.
-    /// Used by `fit_transform` to avoid double tokenization.
+    /// Fit vectorizer from pre-tokenized texts.
+    ///
+    /// Public method to support memory-efficient workflows that manage tokenization separately.
     ///
     /// # Arguments
     /// * `tokenized_texts` - Pre-tokenized documents
     /// * `params` - Vectorizer parameters
     /// * `precomputed_ngrams` - Optional pre-computed n-grams to avoid recomputation
     #[instrument(level = "debug", skip(tokenized_texts, precomputed_ngrams), fields(num_texts = tokenized_texts.len(), has_precomputed = precomputed_ngrams.is_some()))]
-    fn fit_from_tokenized(
+    pub fn fit_from_tokenized(
         tokenized_texts: &[Vec<u32>],
         params: VectorizerParams,
         precomputed_ngrams: Option<&[HashMap<NgramKey, usize>]>,
@@ -106,21 +120,44 @@ impl CountVectorizer {
             |ngram_maps| {
                 // Fast path: reuse pre-computed n-grams
                 debug!("Using pre-computed n-grams for vocabulary building");
+
+                // Chunked aggregation: Process documents in chunks to reduce parallelization
+                // overhead. With millions of docs, per-doc parallelism causes
+                // excessive work-stealing overhead. Chunk size: aim for ~100-1000
+                // chunks total (not millions of tasks)
+                let chunk_size = (ngram_maps.len() / 100).max(1000);
+
+                let local_vocabs: Vec<HashMap<NgramKey, usize>> = ngram_maps
+                    .par_chunks(chunk_size)
+                    .map(|chunk| {
+                        let mut local_vocab = HashMap::with_capacity_and_hasher(
+                            10_000,
+                            ahash::RandomState::default(),
+                        );
+
+                        for ngram_map in chunk {
+                            for ngram_key in ngram_map.keys() {
+                                *local_vocab.entry(ngram_key.clone()).or_insert(0) += 1;
+                            }
+                        }
+
+                        local_vocab
+                    })
+                    .collect();
+
+                // Merge local vocabs into final DashMap
                 let vocab_df = dashmap::DashMap::with_capacity_and_hasher(
                     tokenized_texts.len() / 2,
                     ahash::RandomState::default(),
                 );
-                // let mut vocab_df = HashMap::with_capacity(tokenized_texts.len() / 2);
-                // lock contention is minimal here since each thread writes different keys
-                ngram_maps.par_iter().for_each(|ngram_map| {
-                    for ngram_key in ngram_map.keys() {
-                        // Hotspot here from the entry lookup. The clone is negligible because we
-                        // use smallvec and the keys are on the stack.
-                        vocab_df.entry(ngram_key.clone()).or_insert(1).add_assign(1);
+
+                for local_vocab in local_vocabs {
+                    for (ngram_key, count) in local_vocab {
+                        vocab_df.entry(ngram_key).or_insert(0).add_assign(count);
                     }
-                });
+                }
+
                 vocab_df
-                // .into_iter().collect()
             },
         );
 
@@ -282,54 +319,96 @@ impl CountVectorizer {
         // You know: ~353 non-zero per doc on average
         const AVG_NNZ_PER_DOC: usize = 400;
 
-        // Phase 1: Parallel row extraction
-        let all_row_entries: Vec<Vec<(usize, f32)>> = precomputed_ngrams.map_or_else(
+        // Chunked collection: Build CSR matrix in parallel chunks to reduce allocation overhead
+        // This avoids creating millions of intermediate Vec allocations
+        struct CsrChunk {
+            indices: Vec<usize>,
+            data: Vec<f32>,
+            row_lengths: Vec<usize>, // Length of each row in this chunk
+        }
+
+        let chunks: Vec<CsrChunk> = precomputed_ngrams.map_or_else(
             || {
                 tokenized_texts
-                    .par_iter()
-                    .map(|tokens| self.row_entries_from_tokens_sparse(tokens))
+                    .par_chunks(1000) // Process 1000 docs per chunk
+                    .map(|chunk_texts| {
+                        let mut indices = Vec::with_capacity(chunk_texts.len() * AVG_NNZ_PER_DOC);
+                        let mut data = Vec::with_capacity(chunk_texts.len() * AVG_NNZ_PER_DOC);
+                        let mut row_lengths = Vec::with_capacity(chunk_texts.len());
+
+                        for tokens in chunk_texts {
+                            let row_start = indices.len();
+                            let row_entries = self.row_entries_from_tokens_sparse(tokens);
+
+                            for (col_idx, count) in row_entries {
+                                indices.push(col_idx);
+                                data.push(count);
+                            }
+
+                            row_lengths.push(indices.len() - row_start);
+                        }
+
+                        CsrChunk {
+                            indices,
+                            data,
+                            row_lengths,
+                        }
+                    })
                     .collect()
             },
             |precomputed| {
                 precomputed
-                    .par_iter()
-                    .map(|ngrams| {
-                        // Pre-allocate for expected size
-                        let mut row_entries = Vec::with_capacity(AVG_NNZ_PER_DOC);
+                    .par_chunks(1000) // Process 1000 docs per chunk
+                    .map(|chunk_ngrams| {
+                        let mut indices = Vec::with_capacity(chunk_ngrams.len() * AVG_NNZ_PER_DOC);
+                        let mut data = Vec::with_capacity(chunk_ngrams.len() * AVG_NNZ_PER_DOC);
+                        let mut row_lengths = Vec::with_capacity(chunk_ngrams.len());
 
-                        for (ngram_key, count) in ngrams {
-                            // With 99.9% sparsity, this lookup succeeds ~353 times per doc
-                            if let Some(&col_idx) = self.vocab.get(ngram_key) {
-                                row_entries.push((col_idx, *count as f32));
+                        for ngrams in chunk_ngrams {
+                            let row_start = indices.len();
+                            let mut row_entries = Vec::with_capacity(AVG_NNZ_PER_DOC);
+
+                            for (ngram_key, count) in ngrams {
+                                if let Some(&col_idx) = self.vocab.get(ngram_key) {
+                                    row_entries.push((col_idx, *count as f32));
+                                }
                             }
+
+                            row_entries.sort_unstable_by_key(|(col_idx, _)| *col_idx);
+
+                            for (col_idx, count) in row_entries {
+                                indices.push(col_idx);
+                                data.push(count);
+                            }
+
+                            row_lengths.push(indices.len() - row_start);
                         }
 
-                        row_entries.sort_unstable_by_key(|(col_idx, _)| *col_idx);
-                        row_entries
+                        CsrChunk {
+                            indices,
+                            data,
+                            row_lengths,
+                        }
                     })
                     .collect()
             },
         );
 
-        // Use actual total from parallel phase for exact allocation
-        let actual_total_nnz: usize = all_row_entries.iter().map(Vec::len).sum();
+        // Calculate total size and concatenate chunks
+        let actual_total_nnz: usize = chunks.iter().map(|c| c.indices.len()).sum();
         let mut indices = Vec::with_capacity(actual_total_nnz);
         let mut data = Vec::with_capacity(actual_total_nnz);
         let mut indptr = Vec::with_capacity(num_texts + 1);
 
         indptr.push(0);
 
-        for row_entries in all_row_entries {
-            if row_entries.is_empty() {
-                // No entries for this row
-                indptr.push(indices.len());
-                continue;
+        for chunk in chunks {
+            indices.extend(chunk.indices);
+            data.extend(chunk.data);
+
+            for row_len in chunk.row_lengths {
+                indptr.push(indptr.last().unwrap() + row_len);
             }
-            for (col_idx, count) in &row_entries {
-                indices.push(*col_idx);
-                data.push(*count);
-            }
-            indptr.push(indices.len());
         }
 
         debug!(
@@ -418,21 +497,30 @@ impl CountVectorizer {
     ) -> (Self, CsMat<f32>) {
         debug!(
             num_texts = texts.len(),
-            "Optimized fit_transform: tokenizing and computing n-grams once"
+            "fit_transform: computing n-grams once"
         );
 
         // Step 1: Tokenize once
         let tokenized_texts = tokenizer::tokenize(texts);
 
         // Step 2: Compute n-grams once and cache them
+        // Use chunking to reduce thread synchronization overhead
+        // Similar to vocabulary building: process ~100-1000 chunks instead of millions of tasks
         debug!("Computing n-grams for all documents");
-        let ngram_maps = tokenized_texts
-            .par_iter()
-            .map(|tokens| {
-                ngrams::count_ngrams(tokens, params.ngram_counts())
-                // ngrams::count_ngrams_const::<DEFAULT_MIN_NGRAM, DEFAULT_MAX_NGRAM>(tokens)
+        let chunk_size = (tokenized_texts.len() / 100).max(1000);
+        let ngram_chunks: Vec<Vec<HashMap<NgramKey, usize>>> = tokenized_texts
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .map(|tokens| ngrams::count_ngrams(tokens, params.ngram_counts()))
+                    .collect()
             })
-            .collect::<Vec<_>>();
+            .collect();
+
+        // Flatten chunks into single Vec
+        let ngram_maps: Vec<HashMap<NgramKey, usize>> =
+            ngram_chunks.into_iter().flatten().collect();
 
         // Step 3: Fit from pre-computed n-grams
         debug!("Fitting vectorizer from cached n-grams");
@@ -445,6 +533,12 @@ impl CountVectorizer {
             texts.len(),
             Some(&ngram_maps[..]),
         );
+
+        // Skip expensive drop of millions of HashMaps - not needed since we're done with them.
+        // For large datasets (millions of docs), sequential HashMap deallocation dominates runtime.
+        // The OS will reclaim this memory when appropriate.
+        // std::mem::forget(ngram_maps);
+        // std::mem::forget(tokenized_texts); // Also skip dropping Vec<Vec<u32>>
 
         debug!("fit_transform complete with single n-gram computation");
         (vectorizer, transformed)
@@ -491,6 +585,14 @@ impl CountVectorizer {
     #[must_use]
     pub fn params(&self) -> &VectorizerParams {
         &self.params
+    }
+
+    /// Get reference to the internal vocabulary `HashMap`.
+    ///
+    /// Maps n-gram keys to feature indices. Useful for streaming IDF computation.
+    #[must_use]
+    pub fn vocab_map(&self) -> &HashMap<NgramKey, usize> {
+        &self.vocab
     }
 
     /// Convert a pre-computed n-gram map into sorted `(col_idx, count)` pairs.
@@ -773,6 +875,138 @@ mod tests {
         // assert!(v_large.num_features() >= v_small.num_features());
     }
 
+    #[test]
+    fn test_chunked_vocabulary_correctness() {
+        // Test that chunked n-gram computation and vocabulary building produce identical results
+        // to sequential reference implementation
+        use crate::pre_processor::ngrams;
+
+        let texts: Vec<String> = (0..5000)
+            .map(|i| format!("Sample document number {i} with some repeated words for testing"))
+            .collect();
+
+        let params = VectorizerParams::new(2.0, 1.0, false);
+
+        // Approach 1: Use fit_transform (uses chunked parallelism)
+        let (vectorizer_chunked, matrix_chunked) =
+            CountVectorizer::fit_transform(&texts, params.clone());
+
+        // Approach 2: Manual reference - tokenize and build vocabulary without chunking
+        let tokenized_texts = tokenizer::tokenize(&texts);
+
+        // Build reference n-gram maps sequentially
+        let ngram_maps_ref: Vec<HashMap<NgramKey, usize>> = tokenized_texts
+            .iter()
+            .map(|tokens| ngrams::count_ngrams(tokens, params.ngram_counts()))
+            .collect();
+
+        // Build reference vocabulary using the same logic but with sequential iteration
+        let vectorizer_ref =
+            CountVectorizer::fit_from_tokenized(&tokenized_texts, params, Some(&ngram_maps_ref));
+
+        // Verify vocabularies are identical
+        assert_eq!(
+            vectorizer_chunked.num_features(),
+            vectorizer_ref.num_features(),
+            "Chunked and reference vocabularies should have identical sizes"
+        );
+
+        // Verify vocabularies contain the same n-grams
+        let vocab_chunked = vectorizer_chunked
+            .vocab
+            .keys()
+            .collect::<std::collections::HashSet<_>>();
+        let vocab_ref = vectorizer_ref
+            .vocab
+            .keys()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            vocab_chunked, vocab_ref,
+            "Vocabularies should contain identical n-grams"
+        );
+
+        // Verify feature indices match
+        for (ngram, &idx_chunked) in &vectorizer_chunked.vocab {
+            let idx_ref = vectorizer_ref
+                .vocab
+                .get(ngram)
+                .expect("N-gram should exist in reference vocab");
+            assert_eq!(
+                idx_chunked, *idx_ref,
+                "Feature indices should match for n-gram {ngram:?}"
+            );
+        }
+
+        // Verify matrix shapes match
+        assert_eq!(matrix_chunked.rows(), texts.len());
+        assert_eq!(matrix_chunked.cols(), vectorizer_chunked.num_features());
+    }
+
+    #[test]
+    fn test_chunked_ngram_computation_equivalence() {
+        // Test that chunked n-gram computation produces identical results to sequential
+        use rayon::prelude::*;
+
+        use crate::pre_processor::ngrams;
+
+        let texts: Vec<String> = (0..10000)
+            .map(|i| format!("Test document {i} with varied content and repeated terms"))
+            .collect();
+
+        let tokenized_texts = tokenizer::tokenize(&texts);
+        let ngram_counts = &[2, 3, 4]; // n-gram sizes to extract
+
+        // Sequential reference
+        let ngram_maps_sequential: Vec<HashMap<NgramKey, usize>> = tokenized_texts
+            .iter()
+            .map(|tokens| ngrams::count_ngrams(tokens, ngram_counts))
+            .collect();
+
+        // Chunked parallel (mimics the actual implementation)
+        let chunk_size = (tokenized_texts.len() / 100).max(1000);
+        let ngram_chunks: Vec<Vec<HashMap<NgramKey, usize>>> = tokenized_texts
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .map(|tokens| ngrams::count_ngrams(tokens, ngram_counts))
+                    .collect()
+            })
+            .collect();
+        let ngram_maps_chunked: Vec<HashMap<NgramKey, usize>> =
+            ngram_chunks.into_iter().flatten().collect();
+
+        // Verify lengths match
+        assert_eq!(
+            ngram_maps_sequential.len(),
+            ngram_maps_chunked.len(),
+            "Chunked and sequential should produce same number of n-gram maps"
+        );
+
+        // Verify each document's n-grams match
+        for (i, (seq_map, chunked_map)) in ngram_maps_sequential
+            .iter()
+            .zip(ngram_maps_chunked.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                seq_map.len(),
+                chunked_map.len(),
+                "Document {i}: n-gram count mismatch"
+            );
+
+            for (ngram, &seq_count) in seq_map {
+                let chunked_count = chunked_map
+                    .get(ngram)
+                    .unwrap_or_else(|| panic!("Document {i}: n-gram {ngram:?} missing in chunked"));
+                assert_eq!(
+                    seq_count, *chunked_count,
+                    "Document {i}: count mismatch for n-gram {ngram:?}"
+                );
+            }
+        }
+    }
+
     // CSR matrix validity tests
 
     #[test]
@@ -914,5 +1148,397 @@ mod tests {
         assert_eq!(x1.data(), x2.data());
         assert_eq!(x1.indices(), x2.indices());
         assert_eq!(x1.indptr(), x2.indptr());
+    }
+
+    // ========================================================================
+    // Comprehensive Integration Tests with Realistic Data
+    // ========================================================================
+
+    /// Test fixture: Realistic text samples that mirror actual training data
+    /// These samples are based on patterns seen in AI vs human text datasets
+    mod test_fixtures {
+        pub fn realistic_human_texts() -> Vec<&'static str> {
+            vec![
+                "The conference was held in downtown Seattle, bringing together researchers from around the world.",
+                "I've been thinking about this problem for weeks, and I finally found a solution that works.",
+                "This restaurant serves the best pizza in town - you have to try their margherita!",
+                "The market volatility has investors worried about potential economic downturn.",
+                "She walked through the park, enjoying the autumn leaves and crisp morning air.",
+                "The new software update includes several bug fixes and performance improvements.",
+                "Climate change continues to be one of the most pressing challenges of our time.",
+                "I can't believe how quickly this year has gone by - it feels like just yesterday we were celebrating New Year's.",
+                "The research team published their findings in Nature, demonstrating a breakthrough in quantum computing.",
+                "After years of hard work, she finally achieved her dream of opening her own bakery.",
+            ]
+        }
+
+        pub fn realistic_ai_texts() -> Vec<&'static str> {
+            vec![
+                "In conclusion, the implementation of these strategies will undoubtedly lead to improved outcomes across all metrics.",
+                "The utilization of advanced methodologies ensures optimal results in various scenarios and contexts.",
+                "It is important to note that careful consideration must be given to all relevant factors before proceeding.",
+                "The comprehensive analysis reveals significant patterns that warrant further investigation and study.",
+                "Through systematic examination of the data, several key insights emerge that inform our understanding.",
+                "The integration of multiple approaches facilitates a more robust and effective solution framework.",
+                "Substantial evidence suggests that the proposed methodology offers considerable advantages over traditional methods.",
+                "The implementation process requires careful attention to detail and adherence to established protocols.",
+                "A thorough evaluation of the available options indicates that a multifaceted approach is most appropriate.",
+                "The findings demonstrate the efficacy of the proposed intervention across diverse populations and settings.",
+            ]
+        }
+
+        pub fn mixed_realistic_corpus() -> Vec<&'static str> {
+            let mut corpus = Vec::new();
+            corpus.extend(realistic_human_texts());
+            corpus.extend(realistic_ai_texts());
+            corpus
+        }
+    }
+
+    #[test]
+    fn test_vocabulary_stability_with_realistic_data() {
+        // Test that vocabulary is stable across multiple runs with identical data
+        let texts = test_fixtures::mixed_realistic_corpus();
+        let params = VectorizerParams::new(2.0, 1.0, false);
+
+        // Run fit_transform multiple times
+        let (vec1, _) = CountVectorizer::fit_transform(&texts, params.clone());
+        let (vec2, _) = CountVectorizer::fit_transform(&texts, params.clone());
+        let (vec3, _) = CountVectorizer::fit_transform(&texts, params);
+
+        // Vocabularies should be identical
+        assert_eq!(
+            vec1.num_features(),
+            vec2.num_features(),
+            "Vocabulary size should be stable across runs"
+        );
+        assert_eq!(
+            vec1.num_features(),
+            vec3.num_features(),
+            "Vocabulary size should be stable across runs"
+        );
+
+        // Check that vocabularies contain same n-grams
+        let vocab1_keys: std::collections::HashSet<_> = vec1.vocab.keys().collect();
+        let vocab2_keys: std::collections::HashSet<_> = vec2.vocab.keys().collect();
+        let vocab3_keys: std::collections::HashSet<_> = vec3.vocab.keys().collect();
+
+        assert_eq!(vocab1_keys, vocab2_keys, "Vocabularies should be identical");
+        assert_eq!(vocab1_keys, vocab3_keys, "Vocabularies should be identical");
+    }
+
+    #[test]
+    fn test_fit_vs_fit_transform_vocabulary_equivalence() {
+        // Verify that fit() and fit_transform() produce identical vocabularies
+        let texts = test_fixtures::mixed_realistic_corpus();
+        let params = VectorizerParams::new(2.0, 1.0, false);
+
+        // Method 1: fit only
+        let vectorizer_fit = CountVectorizer::fit(&texts, params.clone());
+
+        // Method 2: fit_transform
+        let (vectorizer_fit_transform, _) = CountVectorizer::fit_transform(&texts, params);
+
+        // Vocabularies must be identical
+        assert_eq!(
+            vectorizer_fit.num_features(),
+            vectorizer_fit_transform.num_features(),
+            "fit() and fit_transform() should produce identical vocabulary sizes"
+        );
+
+        // Check n-gram by n-gram
+        for (ngram, &idx_fit) in &vectorizer_fit.vocab {
+            let idx_ft = vectorizer_fit_transform
+                .vocab
+                .get(ngram)
+                .unwrap_or_else(|| panic!("N-gram {ngram:?} missing in fit_transform vocabulary"));
+            assert_eq!(
+                idx_fit, *idx_ft,
+                "Feature indices should match for n-gram {ngram:?}"
+            );
+        }
+
+        // Verify no extra n-grams in fit_transform
+        assert_eq!(
+            vectorizer_fit.vocab.len(),
+            vectorizer_fit_transform.vocab.len(),
+            "Both vocabularies should have same number of n-grams"
+        );
+    }
+
+    #[test]
+    fn test_large_corpus_vocabulary_consistency() {
+        // Test with a larger corpus to catch issues that only appear at scale
+        let base_texts = test_fixtures::mixed_realistic_corpus();
+
+        // Replicate to create larger corpus (200 documents)
+        let large_corpus: Vec<String> = (0..10)
+            .flat_map(|i| {
+                base_texts
+                    .iter()
+                    .map(move |text| format!("{text} Document ID: {i}"))
+            })
+            .collect();
+
+        let params = VectorizerParams::new(2.0, 0.8, false);
+
+        // Run fit_transform twice
+        let (vec1, matrix1) = CountVectorizer::fit_transform(&large_corpus, params.clone());
+        let (vec2, matrix2) = CountVectorizer::fit_transform(&large_corpus, params);
+
+        // Vocabularies should be identical
+        assert_eq!(vec1.num_features(), vec2.num_features());
+
+        // Matrices should be identical
+        assert_eq!(matrix1.rows(), matrix2.rows());
+        assert_eq!(matrix1.cols(), matrix2.cols());
+        assert_eq!(matrix1.nnz(), matrix2.nnz());
+
+        // Verify vocabulary contents match
+        let vocab1_sorted: Vec<_> = {
+            let mut v: Vec<_> = vec1.vocab.iter().collect();
+            v.sort_by_key(|(_, idx)| *idx);
+            v
+        };
+        let vocab2_sorted: Vec<_> = {
+            let mut v: Vec<_> = vec2.vocab.iter().collect();
+            v.sort_by_key(|(_, idx)| *idx);
+            v
+        };
+
+        assert_eq!(vocab1_sorted.len(), vocab2_sorted.len());
+        for ((ngram1, idx1), (ngram2, idx2)) in vocab1_sorted.iter().zip(vocab2_sorted.iter()) {
+            assert_eq!(ngram1, ngram2, "N-grams should match at index {idx1}");
+            assert_eq!(idx1, idx2, "Indices should match for n-gram {ngram1:?}");
+        }
+    }
+
+    #[test]
+    fn test_vocabulary_size_with_different_params() {
+        // Test that vocabulary size changes predictably with parameters
+        let texts = test_fixtures::mixed_realistic_corpus();
+
+        // Moderately restrictive: min_df=3 (appear in 3+ docs out of 20)
+        let params_moderate = VectorizerParams::new(3.0, 0.7, false);
+        let (vec_moderate, _) = CountVectorizer::fit_transform(&texts, params_moderate);
+
+        // Lenient: min_df=1 should keep most n-grams
+        let params_lenient = VectorizerParams::new(1.0, 1.0, false);
+        let (vec_lenient, _) = CountVectorizer::fit_transform(&texts, params_lenient);
+
+        // Lenient should have more features (or at least as many)
+        assert!(
+            vec_lenient.num_features() >= vec_moderate.num_features(),
+            "Lenient params should produce larger vocabulary. Moderate: {}, Lenient: {}",
+            vec_moderate.num_features(),
+            vec_lenient.num_features()
+        );
+
+        // Sanity check: both should have some features
+        assert!(
+            vec_lenient.num_features() > 0,
+            "Lenient filtering should keep many features"
+        );
+
+        // With only 20 docs, moderate filtering might filter everything out, which is OK
+        // The important test is that lenient keeps more than moderate
+    }
+
+    #[test]
+    fn test_chunked_vs_sequential_vocabulary_on_realistic_data() {
+        // Verify chunked and sequential produce identical vocabularies with realistic data
+        let texts = test_fixtures::mixed_realistic_corpus();
+
+        // Replicate to create dataset large enough to trigger chunking (5000+ docs)
+        let large_corpus: Vec<String> = (0..250)
+            .flat_map(|i| texts.iter().map(move |text| format!("{text} Sample {i}")))
+            .collect();
+
+        let params = VectorizerParams::new(2.0, 0.9, false);
+
+        // This will use chunked parallelism (5000 docs >> 1000 threshold)
+        let (vectorizer_chunked, matrix_chunked) =
+            CountVectorizer::fit_transform(&large_corpus, params.clone());
+
+        // Build reference using sequential n-gram computation
+        let tokenized_texts = tokenizer::tokenize(&large_corpus);
+        let ngram_maps_sequential: Vec<HashMap<NgramKey, usize>> = tokenized_texts
+            .iter()
+            .map(|tokens| ngrams::count_ngrams(tokens, params.ngram_counts()))
+            .collect();
+        let vectorizer_sequential = CountVectorizer::fit_from_tokenized(
+            &tokenized_texts,
+            params,
+            Some(&ngram_maps_sequential),
+        );
+
+        // Vocabularies must be identical
+        assert_eq!(
+            vectorizer_chunked.num_features(),
+            vectorizer_sequential.num_features(),
+            "Chunked and sequential should produce identical vocabulary sizes"
+        );
+
+        // Verify every n-gram matches
+        for (ngram, &idx_chunked) in &vectorizer_chunked.vocab {
+            let idx_seq = vectorizer_sequential.vocab.get(ngram).unwrap_or_else(|| {
+                panic!("N-gram {ngram:?} present in chunked but missing in sequential")
+            });
+            assert_eq!(
+                idx_chunked, *idx_seq,
+                "Feature indices should match for n-gram {ngram:?}"
+            );
+        }
+
+        // Verify matrix dimensions match
+        assert_eq!(matrix_chunked.rows(), large_corpus.len());
+        assert_eq!(matrix_chunked.cols(), vectorizer_chunked.num_features());
+    }
+
+    #[test]
+    fn test_edge_case_empty_documents() {
+        // Test handling of empty documents in corpus
+        let mut texts = test_fixtures::mixed_realistic_corpus();
+        texts.push(""); // Add empty document
+        texts.push("   "); // Add whitespace-only document
+
+        let params = VectorizerParams::new(2.0, 1.0, false);
+        let (vectorizer, matrix) = CountVectorizer::fit_transform(&texts, params);
+
+        // Should handle gracefully
+        assert_eq!(matrix.rows(), texts.len());
+        assert!(vectorizer.num_features() > 0);
+    }
+
+    #[test]
+    fn test_vocabulary_determinism_with_special_characters() {
+        // Test that special characters don't affect vocabulary stability
+        let texts = vec![
+            "Test with [citations] and (parentheses) 2024.",
+            "Email: test@example.com and URLs: https://example.com",
+            "Math symbols: α β γ δ ε and emojis: 😀 🎉",
+            "Quotes \"in text\" and apostrophes' work fine",
+            "Numbers 123, decimals 3.14, and ranges 1-10",
+        ];
+
+        let params = VectorizerParams::new(1.0, 1.0, false);
+
+        let (vec1, _) = CountVectorizer::fit_transform(&texts, params.clone());
+        let (vec2, _) = CountVectorizer::fit_transform(&texts, params);
+
+        // Should be deterministic
+        assert_eq!(vec1.num_features(), vec2.num_features());
+
+        let vocab1_keys: std::collections::HashSet<_> = vec1.vocab.keys().collect();
+        let vocab2_keys: std::collections::HashSet<_> = vec2.vocab.keys().collect();
+        assert_eq!(vocab1_keys, vocab2_keys);
+    }
+
+    #[test]
+    fn test_fit_transform_twice_identical_results() {
+        // Critical test: Running fit_transform twice on identical data should give identical
+        // results
+        let texts = test_fixtures::mixed_realistic_corpus();
+
+        // Replicate to larger corpus
+        let large_corpus: Vec<String> = (0..100)
+            .flat_map(|i| texts.iter().map(move |text| format!("{text} ID: {i}")))
+            .collect();
+
+        let params = VectorizerParams::new(5.0, 0.8, false);
+
+        // First run
+        let (vec1, mat1) = CountVectorizer::fit_transform(&large_corpus, params.clone());
+
+        // Second run - should be IDENTICAL
+        let (vec2, mat2) = CountVectorizer::fit_transform(&large_corpus, params);
+
+        // Vocabularies must be identical
+        assert_eq!(
+            vec1.num_features(),
+            vec2.num_features(),
+            "Vocabulary sizes must be identical across runs"
+        );
+
+        // Matrices must be identical
+        assert_eq!(mat1.rows(), mat2.rows());
+        assert_eq!(mat1.cols(), mat2.cols());
+        assert_eq!(mat1.nnz(), mat2.nnz());
+
+        // Data must be identical (same values)
+        assert_eq!(
+            mat1.data(),
+            mat2.data(),
+            "Matrix data must be identical across runs"
+        );
+        assert_eq!(
+            mat1.indices(),
+            mat2.indices(),
+            "Matrix indices must be identical across runs"
+        );
+        assert_eq!(
+            mat1.indptr(),
+            mat2.indptr(),
+            "Matrix indptr must be identical across runs"
+        );
+
+        // Every n-gram must match
+        for (ngram, &idx1) in &vec1.vocab {
+            let idx2 = vec2
+                .vocab
+                .get(ngram)
+                .unwrap_or_else(|| panic!("N-gram {ngram:?} missing in second run"));
+            assert_eq!(idx1, *idx2, "Feature index mismatch for n-gram {ngram:?}");
+        }
+    }
+
+    #[test]
+    fn test_vectorize_from_tokens_equivalence_with_transform() {
+        let texts = vec![
+            "the quick brown fox jumps",
+            "over the lazy dog",
+            "quick brown fox runs",
+        ];
+        let params = VectorizerParams::new(1.0, 1.0, false);
+
+        let (vectorizer, _) = CountVectorizer::fit_transform(&texts, params);
+
+        let tokenized = tokenizer::tokenize(&texts);
+
+        let from_tokens = vectorizer.vectorize_from_tokens(&tokenized);
+        let from_texts = vectorizer.transform(&texts);
+
+        assert_eq!(from_tokens.rows(), from_texts.rows());
+        assert_eq!(from_tokens.cols(), from_texts.cols());
+        assert_eq!(from_tokens.data(), from_texts.data());
+        assert_eq!(from_tokens.indices(), from_texts.indices());
+        let indptr_a = from_tokens.indptr();
+        let indptr_b = from_texts.indptr();
+        assert_eq!(indptr_a.raw_storage(), indptr_b.raw_storage());
+    }
+
+    #[test]
+    fn test_from_vocab_preserves_indices() {
+        let texts = vec!["hello world test", "hello world sample"];
+        let params = VectorizerParams::new(1.0, 1.0, false);
+
+        let trained = CountVectorizer::fit(&texts, params);
+        let original_vocab = trained.vocab.clone();
+        let original_num = trained.num_features();
+
+        let rebuilt = CountVectorizer::from_vocab(
+            original_vocab.clone(),
+            VectorizerParams::new(1.0, 1.0, false),
+        );
+        assert_eq!(rebuilt.num_features(), original_num);
+
+        for (ngram_key, &idx) in &original_vocab {
+            assert_eq!(rebuilt.vocab.get(ngram_key), Some(&idx));
+        }
+
+        let test_texts = vec!["hello world"];
+        let x_trained = trained.transform(&test_texts);
+        let x_rebuilt = rebuilt.transform(&test_texts);
+        assert_eq!(x_trained.data(), x_rebuilt.data());
     }
 }

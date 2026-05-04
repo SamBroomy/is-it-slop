@@ -42,7 +42,7 @@
 //! ];
 //!
 //! // Aggregate with weighted mean
-//! let method = AggregationMethod::WeightedMean(0.5);
+//! let method = AggregationMethod::default();
 //! let result = UnifiedPrediction::new(chunks, method);
 //!
 //! println!(
@@ -55,7 +55,7 @@
 use core::fmt;
 
 use super::Classification;
-use crate::model::CHUNK_CLASSIFICATION_THRESHOLD;
+use crate::Threshold;
 
 /// Single prediction result containing probabilities for both classes.
 ///
@@ -64,7 +64,7 @@ use crate::model::CHUNK_CLASSIFICATION_THRESHOLD;
 /// # Examples
 ///
 /// ```rust
-/// use is_it_slop::Predictor;
+/// use is_it_slop::{Predictor, pipeline::PipelineError};
 ///
 /// let predictor = Predictor::new();
 /// let result = predictor.predict("some text")?;
@@ -74,7 +74,7 @@ use crate::model::CHUNK_CLASSIFICATION_THRESHOLD;
 ///     result.prediction.human_probability() * 100.0
 /// );
 /// println!("AI: {:.2}%", result.prediction.ai_probability() * 100.0);
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), PipelineError>(())
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Prediction(f32, f32);
@@ -122,8 +122,8 @@ impl Prediction {
     /// otherwise returns [`Classification::Human`].
     #[inline]
     #[must_use]
-    pub fn classification(&self, threshold: f32) -> Classification {
-        if self.1 >= threshold {
+    pub fn classification(&self, threshold: Threshold) -> Classification {
+        if self.1 >= *threshold {
             Classification::AI
         } else {
             Classification::Human
@@ -138,9 +138,9 @@ impl Prediction {
     ///
     /// Range: 0.5-1.0 (binary classification, predicted class always ≥ 0.5)
     #[must_use]
-    pub fn model_confidence(&self, threshold: f32) -> f32 {
+    pub fn model_confidence(&self, threshold: Threshold) -> f32 {
         let ai_prob = self.ai_probability();
-        if ai_prob >= threshold {
+        if ai_prob >= *threshold {
             ai_prob // Confidence in AI prediction
         } else {
             1.0 - ai_prob // Confidence in Human prediction
@@ -152,10 +152,10 @@ impl Prediction {
     /// Measures how far the prediction is from the decision boundary.
     /// Range: 0.0-1.0 (0.0 = at threshold, 1.0 = at extreme)
     #[must_use]
-    pub fn threshold_distance(&self, threshold: f32) -> f32 {
+    pub fn threshold_distance(&self, threshold: Threshold) -> f32 {
         let ai_prob = self.ai_probability();
-        let distance = (ai_prob - threshold).abs();
-        let max_distance = threshold.max(1.0 - threshold);
+        let distance = (ai_prob - *threshold).abs();
+        let max_distance = threshold.max(1.0 - *threshold);
         distance / max_distance
     }
 
@@ -199,11 +199,11 @@ impl Prediction {
     /// # Examples
     ///
     /// ```rust
-    /// use is_it_slop::Predictor;
+    /// use is_it_slop::{Predictor, Threshold, pipeline::PipelineError};
     ///
     /// let predictor = Predictor::new();
     /// let result = predictor.predict("some text")?;
-    /// let metrics = result.prediction.confidence_metrics(0.5);
+    /// let metrics = result.prediction.confidence_metrics(Threshold::default());
     ///
     /// println!("Model confidence: {:.1}%", metrics.model_confidence * 100.0);
     /// println!(
@@ -215,10 +215,10 @@ impl Prediction {
     ///     metrics.entropy_confidence * 100.0
     /// );
     /// println!("Overall: {:.1}%", metrics.overall * 100.0);
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), PipelineError>(())
     /// ```
     #[must_use]
-    pub fn confidence_metrics(&self, threshold: f32) -> ConfidenceMetrics {
+    pub fn confidence_metrics(&self, threshold: Threshold) -> ConfidenceMetrics {
         let model_confidence = self.model_confidence(threshold);
         let threshold_distance = self.threshold_distance(threshold);
         let entropy_confidence = self.entropy_confidence();
@@ -283,7 +283,10 @@ impl From<[f32; 2]> for Prediction {
 /// # Example
 ///
 /// ```rust
-/// use is_it_slop::pipeline::{AggregationMethod, Prediction, UnifiedPrediction};
+/// use is_it_slop::{
+///     Threshold,
+///     pipeline::{AggregationMethod, Prediction, UnifiedPrediction},
+/// };
 ///
 /// let chunks = vec![
 ///     Prediction::from_ai_probability(0.2), // Low confidence AI
@@ -299,7 +302,8 @@ impl From<[f32; 2]> for Prediction {
 /// assert!((max.ai_probability() - 0.9).abs() < 0.01);
 ///
 /// // WeightedMean: weights high-confidence chunks more
-/// let weighted = AggregationMethod::WeightedMean(0.5).aggregate_predictions(&chunks);
+/// let weighted =
+///     AggregationMethod::WeightedMean(Threshold::default()).aggregate_predictions(&chunks);
 /// // Result will be closer to 0.9 than 0.55 (high-confidence chunk weighted more)
 /// ```
 #[derive(Debug, Clone, Copy)]
@@ -309,7 +313,7 @@ pub enum AggregationMethod {
     /// Maximum probability across chunks (most suspicious chunk)
     Max,
     /// Weighted average based on distance from threshold
-    WeightedMean(f32),
+    WeightedMean(Threshold),
 }
 
 impl AggregationMethod {
@@ -336,7 +340,7 @@ impl AggregationMethod {
                 // Weights based on distance from threshold
                 let weights = ai_probs
                     .iter()
-                    .map(|&p| (p - threshold).abs())
+                    .map(|&p| (p - **threshold).abs())
                     .collect::<Vec<_>>();
                 let total_weight: f32 = weights.iter().sum();
                 if total_weight == 0.0 {
@@ -360,7 +364,7 @@ impl AggregationMethod {
         }
         let threshold = match self {
             Self::WeightedMean(t) => t,
-            _ => CHUNK_CLASSIFICATION_THRESHOLD,
+            _ => Threshold::chunk_classification_threshold(),
         };
 
         let ai_chunks = chunk_predictions
@@ -377,7 +381,7 @@ impl AggregationMethod {
 
 impl Default for AggregationMethod {
     fn default() -> Self {
-        Self::WeightedMean(CHUNK_CLASSIFICATION_THRESHOLD)
+        Self::WeightedMean(Threshold::chunk_classification_threshold())
     }
 }
 
@@ -482,7 +486,7 @@ impl UnifiedPrediction {
     /// - High agreement → confidence boosted
     /// - Low agreement (e.g., 50/50 split) → confidence penalized
     #[must_use]
-    pub fn confidence_metrics(&self, threshold: f32) -> ConfidenceMetrics {
+    pub fn confidence_metrics(&self, threshold: Threshold) -> ConfidenceMetrics {
         let mut metrics = self.prediction.confidence_metrics(threshold);
 
         // Adjust overall confidence based on chunk agreement
@@ -504,7 +508,7 @@ impl UnifiedPrediction {
 
     #[must_use]
     /// Get the binary classification using the given threshold.
-    pub fn classification(&self, threshold: f32) -> Classification {
+    pub fn classification(&self, threshold: Threshold) -> Classification {
         self.prediction.classification(threshold)
     }
 }
@@ -542,7 +546,7 @@ mod tests {
     #[test]
     fn test_aggregation_weighted_mean_confidence_based() {
         // Test that chunks farther from threshold get more weight
-        let threshold = 0.5;
+        let threshold = Threshold(0.5);
         let chunks = vec![
             Prediction::from_ai_probability(0.3),  // distance = 0.2
             Prediction::from_ai_probability(0.49), // distance = 0.01 (near threshold, low weight)
@@ -568,7 +572,8 @@ mod tests {
         let result_max = AggregationMethod::Max.aggregate_predictions(&chunks);
         assert!((result_max.ai_probability() - 0.75).abs() < 1e-6);
 
-        let result_weighted = AggregationMethod::WeightedMean(0.5).aggregate_predictions(&chunks);
+        let result_weighted =
+            AggregationMethod::WeightedMean(Threshold(0.5)).aggregate_predictions(&chunks);
         assert!((result_weighted.ai_probability() - 0.75).abs() < 1e-6);
     }
 
@@ -576,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_chunk_agreement_perfect_unanimous() {
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let chunks_all_ai = vec![
             Prediction::from_ai_probability(0.9),
             Prediction::from_ai_probability(0.8),
@@ -603,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_chunk_agreement_split_fifty_fifty() {
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let chunks = vec![
             Prediction::from_ai_probability(0.7), // AI
             Prediction::from_ai_probability(0.3), // Human
@@ -620,7 +625,7 @@ mod tests {
 
     #[test]
     fn test_chunk_agreement_weighted_majority() {
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let chunks = vec![
             Prediction::from_ai_probability(0.8), // AI
             Prediction::from_ai_probability(0.7), // AI
@@ -652,7 +657,7 @@ mod tests {
     #[test]
     fn test_chunk_agreement_single_chunk() {
         let chunks = vec![Prediction::from_ai_probability(0.7)];
-        let agg = AggregationMethod::WeightedMean(0.5);
+        let agg = AggregationMethod::WeightedMean(Threshold(0.5));
         let agreement = agg.calculate_chunk_agreement(&chunks);
         assert!(
             (agreement - 1.0).abs() < 1e-6,
@@ -665,7 +670,7 @@ mod tests {
     #[test]
     fn test_confidence_metrics_high_certainty() {
         let pred = Prediction::from_ai_probability(0.95);
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let metrics = pred.confidence_metrics(threshold);
 
         // High certainty prediction
@@ -687,7 +692,7 @@ mod tests {
     #[test]
     fn test_confidence_metrics_near_threshold() {
         let pred = Prediction::from_ai_probability(0.51);
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let metrics = pred.confidence_metrics(threshold);
 
         // Near threshold = low confidence
@@ -734,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_unified_prediction_confidence_with_agreement() {
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let chunks = vec![
             Prediction::from_ai_probability(0.9),
             Prediction::from_ai_probability(0.8),
@@ -755,7 +760,7 @@ mod tests {
 
     #[test]
     fn test_unified_prediction_low_agreement_penalty() {
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let chunks = vec![
             Prediction::from_ai_probability(0.9), // AI
             Prediction::from_ai_probability(0.1), // Human
@@ -814,14 +819,15 @@ mod tests {
         let result_max = AggregationMethod::Max.aggregate_predictions(&chunks);
         assert!((result_max.ai_probability() - 0.6).abs() < 1e-6);
 
-        let result_weighted = AggregationMethod::WeightedMean(0.5).aggregate_predictions(&chunks);
+        let result_weighted =
+            AggregationMethod::WeightedMean(Threshold::new(0.5)).aggregate_predictions(&chunks);
         assert!((result_weighted.ai_probability() - 0.6).abs() < 1e-6);
     }
 
     #[test]
     fn test_weighted_mean_all_at_threshold() {
         // Edge case: all chunks exactly at threshold (all weights = 0)
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
         let chunks = vec![
             Prediction::from_ai_probability(0.5),
             Prediction::from_ai_probability(0.5),
@@ -834,7 +840,7 @@ mod tests {
 
     #[test]
     fn test_prediction_classification() {
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
 
         let pred_ai = Prediction::from_ai_probability(0.7);
         assert!(matches!(
@@ -858,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_threshold_distance_calculation() {
-        let threshold = 0.5;
+        let threshold = Threshold::new(0.5);
 
         // At threshold: distance = 0
         let pred_at = Prediction::from_ai_probability(0.5);

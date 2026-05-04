@@ -4,6 +4,7 @@ This module tests the Python wrapper around the Rust inference engine,
 including single and batch predictions, result structure, and edge cases.
 """
 
+import pytest
 from is_it_slop import CLASSIFICATION_THRESHOLD, MODEL_VERSION, Prediction, is_this_slop, is_this_slop_batch
 
 
@@ -173,13 +174,9 @@ class TestBatchInference:
         assert all(isinstance(r, Prediction) for r in results)
 
     def test_batch_empty_list(self) -> None:
-        """Empty batch may error or return empty results."""
-        try:
-            results = is_this_slop_batch([])
-            assert results == []
-        except RuntimeError as e:
-            # Empty batch errors are acceptable
-            assert len(str(e)) > 0
+        """Empty batch raises ValueError."""
+        with pytest.raises(ValueError, match="non-empty list"):
+            is_this_slop_batch([])
 
     def test_batch_single_item(self) -> None:
         """Batch with single item should work."""
@@ -250,20 +247,14 @@ class TestEdgeCases:
     """Test edge cases and error handling."""
 
     def test_empty_string(self) -> None:
-        """Empty string should not crash."""
-        # Empty string behavior depends on implementation
-        # Should either return a result or raise a clear error
-        try:
-            result = is_this_slop("")
-            assert isinstance(result, Prediction)
-        except (ValueError, RuntimeError) as e:
-            # If it raises an error, it should be descriptive
-            assert len(str(e)) > 0
+        """Empty string raises ValueError."""
+        with pytest.raises(ValueError, match="non-empty"):
+            is_this_slop("")
 
     def test_whitespace_only(self) -> None:
-        """Whitespace-only text should be handled."""
-        result = is_this_slop("   \n\t  ")
-        assert isinstance(result, Prediction)
+        """Whitespace-only text raises ValueError, same as empty string."""
+        with pytest.raises(ValueError, match="non-empty"):
+            is_this_slop("   \n\t  ")
 
     def test_special_characters(self) -> None:
         """Text with special characters should work."""
@@ -301,7 +292,7 @@ class TestEdgeCases:
         assert isinstance(result, Prediction)
 
     def test_threshold_validation(self) -> None:
-        """Invalid threshold values should be handled."""
+        """Out-of-range threshold raises ValueError."""
         text = "Threshold validation test"
 
         # Valid thresholds should work
@@ -309,14 +300,8 @@ class TestEdgeCases:
         is_this_slop(text, threshold=0.0)
         is_this_slop(text, threshold=1.0)
 
-        # Invalid thresholds might raise errors (implementation-dependent)
-        # This documents expected behavior
-        try:
+        with pytest.raises(ValueError, match="threshold"):
             is_this_slop(text, threshold=-0.1)
-        except (ValueError, RuntimeError):
-            pass  # Expected
 
-        try:
+        with pytest.raises(ValueError, match="threshold"):
             is_this_slop(text, threshold=1.5)
-        except (ValueError, RuntimeError):
-            pass  # Expected

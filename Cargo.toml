@@ -3,8 +3,9 @@ resolver = "3"
 members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0-alpha.0"
 edition = "2024"
+rust-version = "1.95"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
 license = "MIT"
 repository = "https://github.com/SamBroomy/is-it-slop"
@@ -12,10 +13,10 @@ homepage = "https://github.com/SamBroomy/is-it-slop"
 readme = "README.md"
 description = "Detect AI-generated slop text using machine learning."
 categories = [
+    "algorithms",
     "command-line-utilities",
     "science",
     "text-processing",
-    "algorithms",
 ]
 keywords = [
     "AI-text-detector",
@@ -23,12 +24,13 @@ keywords = [
     "onnx",
     "pyo3",
     "text-classification",
+    "ai-slop-detector",
 ]
 
 
 [workspace.dependencies]
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "0.5.0-beta.7" }
-is-it-slop = { path = "crates/is-it-slop", version = "0.5.0-beta.7" }
+is-it-slop = { path = "crates/is-it-slop" }
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing" }
 
 
 ahash = { version = "0.8.12", features = ["serde"] }
@@ -38,36 +40,74 @@ bpe-openai = "0.3.0"
 clap = { version = "4.5.53", features = ["derive"] }
 dashmap = "6.1.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
-mimalloc = { version = "0.1.48", features = ["v3"] }
+itertools = "0.14.0"
+mimalloc = { version = "0.1.48" }
 ndarray = "0.17"
 numpy = "0.28"
-ort = "=2.0.0-rc.11"
+# ONNX Runtime with pure Rust tract backend for smaller binary size
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "download-binaries",
+    "ndarray",
+    "tls-rustls",
+    "tracing",
+] }
 pyo3 = { version = "0.28", default-features = false, features = [
     "extension-module",
     "macros",
 ] }
-# pyo3-log = { version = "0.13.2" }
+pyo3-log = { version = "0.13.2" }
 rayon = "1.11.0"
-rkyv = "0.8.15"
 regex = "1.12.2"
+rkyv = "0.8.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 sprs = "0.11"
+thiserror = "2.0.18"
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = "0.3.20"
 
 # dev-dependencies
+csv = "1.4.0"
 directories = "6"
 flate2 = "1.1.5"
-tar = "0.4.44"
+tar = "0.4.45"
 tempfile = "3.23.0"
 ureq = "3.1.4"
+
+[profile.profiling]
+debug = true
+inherits = "release"
+lto = false
+panic = "abort"
+strip = false
+
+[profile.minimal-size]
+inherits = "release"
+# Enable Full LTO for the best optimizations
+lto = "fat"
+# Reduce codegen units to 1 for better optimizations
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# The profile that 'cargo dist' will build with
+[profile.dist]
+inherits = "minimal-size"
+
+
+[workspace.metadata.cargo-shear]
+ignored = ["is-it-slop"]
 
 [workspace.lints.rust]
 # Standard Rust lints
 missing_docs = "warn"
 # unsafe_code = "forbid"
+deprecated = "warn"
+elided_lifetimes_in_paths = "warn"
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
 rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2021_prelude_collisions = "warn"
 trivial_casts = "warn"
 trivial_numeric_casts = "warn"
 unused_import_braces = "warn"
@@ -76,19 +116,19 @@ unused_qualifications = "warn"
 [workspace.lints.clippy]
 multiple_crate_versions = "allow"
 # But allow some pedantic lints that might be too strict
-module_name_repetitions = "allow"
-similar_names = "allow"
-too_many_lines = "allow"
-cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
 cast_sign_loss = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
 unreadable_literal = "allow"
 
 #must_use_candidate = "allow" # --fix fixes this
-return_self_not_must_use = "allow" # --fix does not fix this
 cast_possible_truncation = "allow"
+return_self_not_must_use = "allow" # --fix does not fix this
 
 # Specific lints to deny (treat as errors)
 dbg_macro = "deny"
@@ -97,38 +137,22 @@ unimplemented = "deny"
 #unwrap_used = "deny"
 
 #unreadable_literal = "warn"
-redundant_else = "warn"
 needless_pass_by_value = "warn"
+redundant_else = "warn"
 
 
 # Nursery lints (experimental but useful)
-use_self = "warn"
 option_if_let_else = "warn"
 redundant_pub_crate = "warn"
+use_self = "warn"
 
 
 # Enable Clippy lints for the entire workspace
 all = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-correctness = { level = "warn", priority = -1 }
-suspicious = { level = "warn", priority = -1 }
 complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -2 }
 perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -2 }
-
-[profile.release]
-strip = true
-lto = "fat"
-
-[profile.profiling]
-inherits = "release"
-strip = false
-debug = true
-lto = false
-panic = "abort"
-
-[profile.dist]
-inherits = "release"
-
-#
+suspicious = { level = "warn", priority = -1 }

@@ -939,7 +939,7 @@ mod tests {
 
             // Generate a longer text with multiple issues
             let input = (0..100).fold(String::new(), |mut output, i| {
-                let _ = write!(output, "Sentence {i}[{i}] with &quot;quotes&quot; here. ",);
+                let _ = write!(output, "Sentence {i}[{i}] with &quot;quotes&quot; here. ");
                 output
             });
 
@@ -1012,6 +1012,26 @@ mod tests {
                 cleaner.clean("He said 'hello' there"),
                 "He said 'hello' there"
             );
+        }
+
+        #[test]
+        fn test_clean_batch_equivalence() {
+            let texts: Vec<&str> = vec![
+                "Hello &amp; world [1]",
+                "",
+                "Text with &quot;quotes&quot; and  multiple  spaces",
+            ];
+
+            let batch_results = text_cleaner_for_training().clean_batch(&texts);
+            let sequential: Vec<String> = texts
+                .iter()
+                .map(|t| text_cleaner_for_training().clean(t).to_string())
+                .collect();
+
+            assert_eq!(batch_results.len(), sequential.len());
+            for (i, (batch, seq)) in batch_results.iter().zip(sequential.iter()).enumerate() {
+                assert_eq!(batch, seq, "clean_batch and clean disagree at index {i}");
+            }
         }
     }
 }

@@ -34,6 +34,8 @@ __all__ = [
     "__version__",
     "is_this_slop",
     "is_this_slop_batch",
+    "predict",
+    "predict_batch",
 ]
 
 
@@ -93,6 +95,21 @@ class Prediction:
         """Classification label ("Human" or "AI")."""
         return self._inner.classification  # type: ignore[return-value]
 
+    @property
+    def num_chunks(self) -> int:
+        """Number of text chunks processed (usually 1 for short texts, more for long)."""
+        return self._inner.num_chunks
+
+    @property
+    def chunk_agreement(self) -> float:
+        """Agreement score across chunks (0.5 to 1.0).
+
+        1.0 means all chunks agree on classification.
+        0.5 means chunks are evenly split.
+        For single-chunk texts, this is always 1.0.
+        """
+        return self._inner.chunk_agreement
+
     def __repr__(self) -> str:
         """Return a detailed string representation.
 
@@ -128,6 +145,9 @@ def is_this_slop(text: str, threshold: float | None = None) -> Prediction:
     Returns:
         Prediction: A result object containing probabilities and classification.
 
+    Raises:
+        ValueError: If text is empty or whitespace-only, or threshold is not in [0, 1].
+
     Examples:
         >>> result = is_this_slop("This is some text")
         >>> print(result.classification)
@@ -145,6 +165,12 @@ def is_this_slop(text: str, threshold: float | None = None) -> Prediction:
         ...     print("High confidence AI-generated text")
 
     """
+    if not text or not text.strip():
+        msg = "Input text must be non-empty"
+        raise ValueError(msg)
+    if threshold is not None and not 0.0 <= threshold <= 1.0:
+        msg = f"threshold must be in [0.0, 1.0], got {threshold}"
+        raise ValueError(msg)
     return Prediction(_is_this_slop(text, threshold))
 
 
@@ -155,13 +181,16 @@ def is_this_slop_batch(texts: list[str], threshold: float | None = None) -> list
     calling is_this_slop() individually for each text.
 
     Args:
-        texts: List of input texts to classify. All must be non-empty strings.
+        texts: List of input texts to classify. Must be a non-empty list of strings.
         threshold: Classification threshold between 0.0 and 1.0 (default: built-in
             threshold optimized for overall f1). Applied uniformly to all texts in the batch.
 
     Returns:
         list[Prediction]: List of prediction results, one for each input text,
             in the same order as the input.
+
+    Raises:
+        ValueError: If texts is empty or threshold is not in [0, 1].
 
     Examples:
         >>> texts = ["First text", "Second text", "Third text"]
@@ -184,4 +213,48 @@ def is_this_slop_batch(texts: list[str], threshold: float | None = None) -> list
         >>> conservative_results = is_this_slop_batch(texts, threshold=0.9)
 
     """
+    if not texts:
+        msg = "Input texts must be a non-empty list"
+        raise ValueError(msg)
+    if threshold is not None and not 0.0 <= threshold <= 1.0:
+        msg = f"threshold must be in [0.0, 1.0], got {threshold}"
+        raise ValueError(msg)
     return [Prediction(r) for r in _is_this_slop_batch(texts, threshold)]
+
+
+def predict(text: str, threshold: float | None = None) -> Prediction:
+    """Alias for [`is_this_slop`].
+
+    Predict whether text is AI-generated (slop) or human-written.
+
+    Args:
+        text: Input text to classify. Must be a non-empty string.
+        threshold: Classification threshold between 0.0 and 1.0.
+
+    Returns:
+        Prediction: A result object containing probabilities and classification.
+
+    Raises:
+        ValueError: If text is empty or whitespace-only, or threshold is not in [0, 1].
+
+    """  # noqa: DOC502
+    return is_this_slop(text, threshold)
+
+
+def predict_batch(texts: list[str], threshold: float | None = None) -> list[Prediction]:
+    """Alias for [`is_this_slop_batch`].
+
+    Predict whether multiple texts are AI-generated (slop) or human-written.
+
+    Args:
+        texts: List of input texts to classify. Must be a non-empty list.
+        threshold: Classification threshold between 0.0 and 1.0.
+
+    Returns:
+        list[Prediction]: List of prediction results, one for each input text.
+
+    Raises:
+        ValueError: If texts is empty or threshold is not in [0, 1].
+
+    """  # noqa: DOC502
+    return is_this_slop_batch(texts, threshold)

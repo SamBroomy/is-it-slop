@@ -12,11 +12,17 @@
 # In[ ]:
 
 
+import json
+from datetime import UTC, datetime
+
+import kagglehub
+import numpy as np
 import polars as pl
 import polars.selectors as cs
-from __init__ import DATA_PATH, RETRAINED_MODEL_VERSION, SEED, TEST_PATH, TRAIN_PATH
+from __init__ import DATA_DIR, DATA_PATH, RETRAINED_MODEL_VERSION, SEED, TEST_PATH, TRAIN_PATH, VALIDATION_PATH
 from datasets import load_dataset
-from is_it_slop_preprocessing import CleaningMode, TextCleaner, __version__
+from is_it_slop_preprocessing import CleaningMode, TextCleaner, __version__, tokenize
+from kagglehub import KaggleDatasetAdapter
 from loguru import logger
 
 print(f"Bindings version: {__version__}")
@@ -29,324 +35,62 @@ def clean_text_inner(series: pl.Series) -> pl.Series:
     return pl.Series(series.name, cleaner.clean_batch(series.to_list()))
 
 
-# logging.basicConfig(level=logging.INFO)
-# logging.getLogger("matplotlib").setLevel(logging.WARNING)
-# logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
-
-
 def clean_text(df: pl.LazyFrame, text_col: str = "text") -> pl.LazyFrame:
 
     return (
-        df.with_columns(pl.col(text_col).map_batches(clean_text_inner, return_dtype=pl.Utf8))
-        .filter(pl.col(text_col).is_not_null())
-        .filter(pl.col(text_col).str.len_chars() > 0)
-    )
-
-    return (
-        df.with_columns(
-            pl.col(text_col)
-            .str.replace_all(r"[\u200B-\u200D\uFEFF]", "")  # Zero-width spaces
-            .str.replace_all(r"\u00A0", " ")  # Non-breaking space
-        )
-        .with_columns(
-            pl.col(text_col)
-            .str.replace_all(r"â€™", "'")  # Right single quote
-            .str.replace_all(r"â€œ", '"')  # Left double quote
-            .str.replace_all(r"â€", '"')  # Right double quote
-            .str.replace_all(r'â€"', "—")  # Em dash
-            .str.replace_all(r'â€"', "–")  # En dash  # noqa: RUF001
-        )
-        # Decode HTML entities
-        .with_columns(
-            pl.col(text_col)
-            .str.replace_all(r"&#39;", "'")
-            .str.replace_all(r"&quot;", '"')
-            .str.replace_all(r"&amp;", "&")
-            .str.replace_all(r"&lt;", "<")
-            .str.replace_all(r"&gt;", ">")
-            .str.replace_all(r"&nbsp;", " ")
-            .str.replace_all(r"&#(\d+);", "")  # Catch-all numeric entities
-            # Clean up partial HTML entities (malformed)
-            .str.replace_all(r"#39;?", "'")  # Partial &#39; → '
-            .str.replace_all(r"quot;?", '"')  # Partial &quot; → "
-        )
-        # Remove HTML tags
-        .with_columns(
-            pl.col(text_col)
-            .str.replace_all(r"<br\s*/?>", " ")
-            .str.replace_all(r"</?(p|div|span|strong|em|b|i|ul|ol|li|h[1-6])>", "")
-        )
-        # Remove citation markers (more aggressive)
-        .with_columns(
-            pl.col(text_col)
-            # Remove [1], [2], [123] with optional trailing punctuation
-            .str.replace_all(r"\[\d+\][\.,;:\)\]]?", "")  # [1], [2], [1].
-            # Remove malformed citations: 1], 2].
-            .str.replace_all(r"\b\d+\][\.,;]?", "")
-            # Remove [1].\n patterns
-            .str.replace_all(r"\[\d+\]\.\s*\n", "\n")
-            .str.replace_all(r"\[\d+", "")  # Remove [1, [2, etc.
-            .str.replace_all(r"\d+\]", "")  # Remove 1], 2], etc.
-            .str.replace_all(r"\[\d+\]", "")  # Remove [1], [2], etc.
-        )
-        # Remove news wire attributions and datelines
-        .with_columns(
-            pl.col(text_col)
-            # Remove news agencies in parentheses
-            .str.replace_all(r"\s*\([A-Z]{2,}\)\s*", " ")  # (AP), (Reuters), (UPI)
-            # Remove news agencies followed by dash
-            .str.replace_all(r"\b(AP|AFP|Reuters|UPI)\s*[-—]\s*", "")
-            # Remove common dateline patterns
-            .str.replace_all(r"^(WASHINGTON|NEW YORK|LONDON|PARIS|BEIJING|MOSCOW|TOKYO|BERLIN)[,—]\s*", "")
-            .str.replace_all(r"\n(WASHINGTON|NEW YORK|LONDON|PARIS|BEIJING|MOSCOW|TOKYO|BERLIN)[,—]\s*", "\n")
-            # Remove "— The" and "— A" patterns (dateline endings)
-            .str.replace_all(r"\s*—\s*(The|A)\s+", " ")
-            # Clean up remaining em-dash patterns from datelines
-            .str.replace_all(r"\)\s*—\s*", ") ")
-        )
-        # Remove news wire attributions and datelines
-        .with_columns(
-            pl.col(text_col)
-            # News agencies in parentheses
-            .str.replace_all(r"\s*\((?:AP|AFP|Reuters|UPI|Bloomberg)\)\s*", " ")
-            # News agencies followed by dash
-            .str.replace_all(r"\b(?:AP|AFP|Reuters|UPI|Bloomberg)\s*[-—]\s*", "")
-            # US state abbreviations in datelines (after comma)
-            .str.replace_all(
-                r",\s*(?:Ala\.|Ariz\.|Ark\.|Calif\.|Colo\.|Conn\.|Del\.|Fla\.|Ga\.|Ill\.|Ind\.|Kan\.|Ky\.|La\.|Md\.|Mass\.|Mich\.|Minn\.|Miss\.|Mo\.|Mont\.|Neb\.|Nev\.|N\.Y\.|N\.C\.|N\.D\.|Ohio|Okla\.|Ore\.|Pa\.|R\.I\.|S\.C\.|S\.D\.|Tenn\.|Tex\.|Vt\.|Va\.|Wash\.|W\.Va\.|Wis\.|Wyo\.)\b",
-                ",",
-            )
-            # Common dateline cities at start or after newline
-            .str.replace_all(
-                r"^(?:WASHINGTON|NEW YORK|LONDON|PARIS|BEIJING|MOSCOW|TOKYO|BERLIN|BRUSSELS|GENEVA|ROME|MADRID|SEOUL|SYDNEY|MEXICO CITY|LOS ANGELES|SANFRANCISCO|CHICAGO|BOSTON|MIAMI|ATLANTA|HOUSTON|DALLAS|PHILADELPHIA|PHOENIX|SAN DIEGO|SEATTLE|DETROIT|DENVER)\s*[,—]\s*",  # noqa: E501
-                "",
-            )
-            .str.replace_all(
-                r"\n(?:WASHINGTON|NEW YORK|LONDON|PARIS|BEIJING|MOSCOW|TOKYO|BERLIN|BRUSSELS|GENEVA|ROME|MADRID|SEOUL|SYDNEY|MEXICO CITY|LOS ANGELES|SANFRANCISCO|CHICAGO|BOSTON|MIAMI|ATLANTA|HOUSTON|DALLAS|PHILADELPHIA|PHOENIX|SAN DIEGO|SEATTLE|DETROIT|DENVER)\s*[,—]\s*",  # noqa: E501
-                "\n",
-            )
-            # "— The" and "— A" patterns (dateline endings)
-            .str.replace_all(r"\s*—\s*(?:The|A)\s+", " ")
-            .str.replace_all(r"\)\s*—\s*", ") ")
-        )
-        # Remove academic/structured document section headers
-        .with_columns(
-            pl.col(text_col)
-            .str.replace_all(
-                r"\b(?:ABSTRACT|BACKGROUND|OBJECTIVE|METHODS?|RESULTS?|CONCLUSIONS?|DISCUSSION|INTRODUCTION)[\s:]*", ""
-            )
-            # Abstract section headers (case-sensitive, with punctuation)
-            .str.replace_all(
-                r"(?:^|\n)\s*(?:BACKGROUND|OBJECTIVE|METHODS|RESULTS|CONCLUSION|CONCLUSIONS|INTRODUCTION|DISCUSSION|ABSTRACT|SUMMARY):\s*",
-                "\n",
-            )
-            # Wikipedia/biography section headers
-            .str.replace_all(
-                r"\.\s*(?:History|Biography|Early life|Background|Career|Personal life|Death|Legacy|Education|Awards|References|External links)\s*\n",
-                ".\n",
-            )
-            .str.replace_all(
-                r"^\s*(?:History|Biography|Early life|Background|Career|Personal life|Death|Legacy|Education|Awards|References|External links)\s*\n",
-                "",
-            )
-            # Description headers (Wikipedia-style)
-            .str.replace_all(r"\.\s*Description\s*\n", ".\n")
-            .str.replace_all(r"^\s*Description\s*\n", "")
-        )
-        # Remove timestamp/timezone markers (metadata artifacts)
-        .with_columns(
-            pl.col(text_col)
-            # Timezone abbreviations with punctuation (EDT, EST, PST, etc.)
-            .str.replace_all(r"\s+(?:EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC)[,\.]?\s+", " ")
-            # "at HH:MM AM/PM EST" patterns
-            .str.replace_all(
-                r"\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\s*(?:EST|EDT|CST|CDT|MST|MDT|PST|PDT|GMT|UTC)?\s*[,\.]?", " "
-            )
-        )
-        # Remove academic prompt artifacts (sentence start only)
-        .with_columns(
-            pl.col(text_col)
-            .str.replace_all(r"^(?:This (?:paper|study|article|abstract|research))\s+", "")
-            .str.replace_all(r"\n(?:This (?:paper|study|article|abstract|research))\s+", "\n")
-        )
-        .with_columns(
-            pl.col(text_col)
-            .str.replace_all(r"^\d+\.\s+", "")  # Start of line
-            .str.replace_all(r"\n\d+\.\s+", "\n")  # After newline
-        )
-        # Normalize whitespace
-        .with_columns(
-            pl.col(text_col)
-            .str.replace_all(r"  +", " ")
-            .str.replace_all(r"\n\n\n+", "\n\n")
-            .str.replace_all(r" \n", "\n")
-            .str.replace_all(r"\n ", "\n")
-        )
-        # Strip quotes/whitespace
-        .with_columns(pl.col(text_col).str.strip_chars().str.strip_chars("'\"").str.strip_chars())
-        # Filter null/empty
+        df
+        .with_columns(pl.col(text_col).map_batches(clean_text_inner, return_dtype=pl.Utf8))
         .filter(pl.col(text_col).is_not_null())
         .filter(pl.col(text_col).str.len_chars() > 0)
     )
 
 
-def load_normal(dataset_name: str, rename: dict[str, str] | None = None, *, clean: bool = True) -> pl.LazyFrame:
-    ds = load_dataset(dataset_name)
-    dataset_name = dataset_name.rsplit("/", maxsplit=1)[-1]
-    lf = pl.concat(
-        ds[split].to_polars().lazy()  # type: ignore[attr-defined]
-        for split in ds
-    )
+def load_normal(
+    dataset_name: str,
+    rename: dict[str, str] | None = None,
+    *,
+    subset_name: str | None = None,
+    clean: bool = True,
+    drop_nulls: bool = True,
+    file_name: str | None = None,
+) -> pl.LazyFrame:
+
+    if file_name is None:
+        ds = load_dataset(dataset_name, name=subset_name)
+        lf = pl.concat(
+            ds[split].to_polars()  # type: ignore[attr-defined]
+            for split in ds
+        )
+    else:
+        lf: pl.LazyFrame = kagglehub.dataset_load(KaggleDatasetAdapter.POLARS, dataset_name, file_name).lazy()
+    dataset_name = dataset_name.rsplit("/", maxsplit=1)[-1] + (f"/{subset_name}" if subset_name else "")
     if rename:
         lf = lf.rename(rename)
+    if drop_nulls:
+        lf = lf.drop_nulls(subset="text")
     if clean:
         lf = lf.pipe(clean_text)
-    return lf.with_columns(cs.by_dtype(pl.Utf8).str.strip_chars(), dataset=pl.lit(dataset_name))
+    return lf.with_columns(cs.by_dtype(pl.Utf8).str.strip_chars(), dataset=pl.lit(dataset_name)).lazy()
+
+
+def get_value_counts(df: pl.LazyFrame) -> pl.LazyFrame:
+    return df.select(pl.col("label").value_counts()).unnest("label").sort("label")
+
+
+def output_value_counts(df: pl.LazyFrame) -> list[dict]:
+    return df.pipe(get_value_counts).collect().to_dicts()
 
 
 # # [English Quotes dataset](https://huggingface.co/datasets/Abirate/english_quotes)
-# 
-# Number of rows: 2,508
-# Likes: 101
-# Downloads last month: 5,702
-# 
-# 
-# 
-# > Assertion: Using quotes would provide a rich source of human-generated text.
-# > Assumption: Quotes from real authors are human generated. (Issues may arise with popular quotes that have been AI generated and misattributed to famous authors.)
-# 
-# english_quotes is a dataset of all the quotes retrieved from goodreads quotes. This dataset can be used for multi-label text classification and text generation. The content of each quote is in English and concerns the domain of datasets for NLP and beyond.
-# 
-# 
-# Data Fields
-# 
-#     author : The author of the quote.
-#     quote : The text of the quote.
-#     tags: The tags could be characterized as topics around the quote.
-# 
-
-#  Dataset Card for English quotes
-# I-Dataset Summary
-# 
-# english_quotes is a dataset of all the quotes retrieved from goodreads quotes. This dataset can be used for multi-label text classification and text generation. The content of each quote is in English and concerns the domain of datasets for NLP and beyond.
-# II-Supported Tasks and Leaderboards
-# 
-#     Multi-label text classification : The dataset can be used to train a model for text-classification, which consists of classifying quotes by author as well as by topic (using tags). Success on this task is typically measured by achieving a high or low accuracy.
-#     Text-generation : The dataset can be used to train a model to generate quotes by fine-tuning an existing pretrained model on the corpus composed of all quotes (or quotes by author).
-# 
-# III-Languages
-# 
-# The texts in the dataset are in English (en).
-# IV-Dataset Structure
-# Data Instances
-# 
-# A JSON-formatted example of a typical instance in the dataset:
-# 
-# {'author': 'Ralph Waldo Emerson',
-#  'quote': '“To be yourself in a world that is constantly trying to make you something else is the greatest accomplishment.”',
-#  'tags': ['accomplishment', 'be-yourself', 'conformity', 'individuality']}
-# 
-# Data Fields
-# 
-#     author : The author of the quote.
-#     quote : The text of the quote.
-#     tags: The tags could be characterized as topics around the quote.
-# 
-# Data Splits
-# 
-# I kept the dataset as one block (train), so it can be shuffled and split by users later using methods of the hugging face dataset library like the (.train_test_split()) method.
-# V-Dataset Creation
-# Curation Rationale
-# 
-# I want to share my datasets (created by web scraping and additional cleaning treatments) with the HuggingFace community so that they can use them in NLP tasks to advance artificial intelligence.
-# Source Data
-# 
-# The source of Data is goodreads site: from goodreads quotes
-# Initial Data Collection and Normalization
-# 
-# The data collection process is web scraping using BeautifulSoup and Requests libraries. The data is slightly modified after the web scraping: removing all quotes with "None" tags, and the tag "attributed-no-source" is removed from all tags, because it has not added value to the topic of the quote.
-# Who are the source Data producers ?
-# 
-# The data is machine-generated (using web scraping) and subjected to human additional treatment.
-# 
-# below, I provide the script I created to scrape the data (as well as my additional treatment):
-# 
-# import requests
-# from bs4 import BeautifulSoup
-# import pandas as pd
-# import json
-# from collections import OrderedDict
-# 
-# page = requests.get('https://www.goodreads.com/quotes')
-# if page.status_code == 200:
-#     pageParsed = BeautifulSoup(page.content, 'html5lib')
-#     
-# # Define a function that retrieves information about each HTML quote code in a dictionary form.
-# def extract_data_quote(quote_html):
-#         quote = quote_html.find('div',{'class':'quoteText'}).get_text().strip().split('\n')[0]
-#         author = quote_html.find('span',{'class':'authorOrTitle'}).get_text().strip()
-#         if quote_html.find('div',{'class':'greyText smallText left'}) is not None:
-#             tags_list = [tag.get_text() for tag in quote_html.find('div',{'class':'greyText smallText left'}).find_all('a')]
-#             tags = list(OrderedDict.fromkeys(tags_list))
-#             if 'attributed-no-source' in tags:
-#                 tags.remove('attributed-no-source')
-#         else:
-#             tags = None
-#         data = {'quote':quote, 'author':author, 'tags':tags}
-#         return data
-# 
-# # Define a function that retrieves all the quotes on a single page. 
-# def get_quotes_data(page_url):
-#     page = requests.get(page_url)
-#     if page.status_code == 200:
-#         pageParsed = BeautifulSoup(page.content, 'html5lib')
-#         quotes_html_page = pageParsed.find_all('div',{'class':'quoteDetails'})
-#         return [extract_data_quote(quote_html) for quote_html in quotes_html_page]
-# 
-# # Retrieve data from the first page.
-# data = get_quotes_data('https://www.goodreads.com/quotes')
-# 
-# # Retrieve data from all pages.
-# for i in range(2,101):
-#     print(i)
-#     url = f'https://www.goodreads.com/quotes?page={i}'
-#     data_current_page = get_quotes_data(url)
-#     if data_current_page is None:
-#         continue
-#     data = data + data_current_page
-# 
-# data_df = pd.DataFrame.from_dict(data)
-# for i, row in data_df.iterrows():
-#     if row['tags'] is None:
-#         data_df = data_df.drop(i)
-# # Produce the data in a JSON format.
-# data_df.to_json('C:/Users/Abir/Desktop/quotes.jsonl',orient="records", lines =True,force_ascii=False)
-# # Then I used the familiar process to push it to the Hugging Face hub.
-# 
-# Annotations
-# 
-# Annotations are part of the initial data collection (see the script above).
-# VI-Additional Informations
-# Dataset Curators
-# 
-# Abir ELTAIEF
-# Licensing Information
-# 
-# This work is licensed under a Creative Commons Attribution 4.0 International License (all software and libraries used for web scraping are made available under this Creative Commons Attribution license).
-# Contributions
-# 
-# Thanks to @Abirate for adding this dataset. 
 
 # In[ ]:
 
 
-english_quotes = (
-    load_normal("Abirate/english_quotes", {"quote": "text"})
-    .with_columns(pl.col("text"), label=pl.lit(0, dtype=pl.Int8))
-    .drop(["tags", "author"])
+english_quotes = load_normal("Abirate/english_quotes", {"quote": "text"}).select(
+    pl.col("text"), pl.col("dataset"), label=pl.lit(0, dtype=pl.Int8)
 )
 logger.info("Loaded English quotes")
-# english_quotes.head(5).collect()
+print(output_value_counts(english_quotes))
 
 
 # # [Newswire dataset](https://huggingface.co/datasets/dell-research-harvard/newswire)
@@ -358,239 +102,6 @@ logger.info("Loaded English quotes")
 # 
 # >Assertion: Using newswire articles would provide a rich source of human-generated text.
 
-# ---
-# license: cc-by-4.0
-# task_categories:
-# - text-classification
-# - text-generation
-# - text-retrieval
-# - summarization
-# - question-answering
-# language:
-# - en
-# tags:
-# - social science
-# - economics
-# - news
-# - newspaper
-# - large language modeling
-# - nlp
-# - lam
-# pretty_name: NewsWire
-# size_categories:
-# - 1M<n<10M
-# ---
-# # Dataset Card for NewsWire
-# 
-# ## Dataset Description
-# 
-# - **Homepage:** [Dell Research homepage](https://dell-research-harvard.github.io/)
-# - **Repository:** [Github repository](https://github.com/dell-research-harvard)
-# - **Paper:** [arxiv submission](https://arxiv.org/abs/2406.09490)
-# - **Point of Contact:** [Melissa Dell](mailto:melissadell@fas.harvard.edu)
-# 
-# ### Dataset Summary
-# 
-# NewsWire contains 2.7 million unique public domain U.S. news wire articles, written between 1878 and 1977. Locations in these articles are georeferenced, topics are tagged using customized neural topic classification, named entities are recognized, and individuals are disambiguated to Wikipedia using a novel entity disambiguation model.  
-# 
-# ### Languages
-# 
-# English (en)
-# 
-# ## Dataset Structure
-# Each year in the dataset is divided into a distinct file (eg. 1952_data_clean.json)
-# 
-# ### Data Instances
-# An example from the NewsWire dataset looks like:
-# 
-# ```
-# {
-#     "year": 1880,
-#     "dates": ["Feb-23-1880"], 
-#     "article": "SENATE Washington, Feb. 23.--Bayard moved that in respect of the 
-#         memory of George Washington the senate adjourn ... ",
-#     "byline": "",
-#     "newspaper_metadata": [
-#         {
-#             "lccn": "sn92053943",
-#             "newspaper_title": "the rock island argus",
-#             "newspaper_city": "rock island",
-#             "newspaper_state": " illinois "
-#         },
-#         ...
-#     ],
-#     "antitrust": 0,
-#     "civil_rights": 0,
-#     "crime": 0,
-#     "govt_regulation": 1,
-#     "labor_movement": 0,
-#     "politics": 1,
-#     "protests": 0,
-#     "ca_topic": "Federal Government Operations",
-#     "ner_words": ["SENATE", "Washington", "Feb", "23", "Bayard", "moved", "that", 
-#         "in", "respect", "of", "the", "memory", "of", "George", "Washington", 
-#         "the", "senate", "adjourn", ... ],
-#     "ner_labels": ["B-ORG", "B-LOC", "O", "B-PER", "B-PER", "O", "O", "O", "O", 
-#         "O", "O", "O", "O", "B-PER", "I-PER", "O", "B-ORG", "O", ...],
-#     "wire_city": "Washington",
-#     "wire_state": "district of columbia",
-#     "wire_country": "United States",
-#     "wire_coordinates": [38.89511, -77.03637],
-#     "wire_location_notes": "",
-#     "people_mentioned": [
-#         {
-#             "wikidata_id": "Q23",
-#             "person_name": "George Washington",
-#             "person_gender": "man",
-#             "person_occupation": "politician"
-#         },
-#         ...
-#     ],
-#     "cluster_size": 8
-# }
-# ```
-# 
-# 
-# ### Data Fields
-# 
-# - `year`: year of article publication.
-# 
-# - `dates`: list of dates on which this article was published, as strings in the form mmm-DD-YYYY. 
-# 
-# - `byline`: article byline, if any.
-# 
-# - `article`: article text. 
-# 
-# - `newspaper_metadata`: list of newspapers that carried the article. Each newspaper is represented as a list of dictionaries, where `lccn` is the newspaper's Library of Congress identifier, `newspaper_title` is the name of the newspaper, and `newspaper_city` and `newspaper_state` give the location of the newspaper. 
-# 
-# - `antitrust`: binary variable. 1 if the article was classified as being about antitrust. 
-# 
-# - `civil_rights`: binary variable. 1 if the article was classified as being about civil rights. 
-# 
-# - `crime`: binary variable. 1 if the article was classified as being about crime. 
-# 
-# - `govt_regulation`: binary variable. 1 if the article was classified as being about government regulation. 
-# 
-# - `labor_movement`: binary variable. 1 if the article was classified as being about the labor movement. 
-# 
-# - `politics`: binary variable. 1 if the article was classified as being about politics. 
-# 
-# - `protests`: binary variable. 1 if the article was classified as being about protests. 
-# 
-# - `ca_topic`: predicted Comparative Agendas topic of article.
-# 
-# - `wire_city`: City of wire service bureau that wrote the article. 
-# 
-# - `wire_state`: State of wire service bureau that wrote the article. 
-# 
-# - `wire_country`: Country of wire service bureau that wrote the article.
-# 
-# - `wire_coordinates`: Coordinates of city of wire service bureau that wrote the article. 
-# 
-# - `wire_location_notes`: Contains wire dispatch location if it is not a geographic location. Can be one of ``Pacific Ocean (WWII)'', ``Supreme Headquarters Allied Expeditionary Force (WWII)'', ``North Africa'', ``War Front (WWI)'', ``War Front (WWII)'' or ``Johnson Space Center''.
-# 
-# - `people_mentioned`: list of disambiguated people mentioned in the article. Each disambiguated person is represented as a dictionary, where `wikidata_id` is their ID in Wikidata, `person_name` is their name on Wikipedia, `person_gender` is their gender from Wikidata and `person_occupation` is the first listed occupation on Wikidata. 
-# 
-# - `cluster_size`: Number of newspapers that ran the wire article. Equals length of `newspaper_metadata`.
-# 
-# 
-# 
-# ### Accessing the Data
-# 
-# The whole dataset can be easily downloaded using the `datasets` library: 
-# 
-# ```
-# from datasets import load_dataset
-# dataset_dict = load_dataset("dell-research-harvard/newswire")
-# ```
-# 
-# Specific files can be downloaded by specifying them:
-# 
-# ```
-# from datasets import load_dataset
-# load_dataset(
-#     "dell-research-harvard/newswire", 
-#     data_files=["1929_data_clean.json", "1969_data_clean.json"]
-# )
-# ```
-# 
-# 
-# ## Dataset Creation
-# 
-# ### Curation Rationale
-# 
-# The dataset was created to provide researchers with a large, high-quality corpus of historical news articles.  
-# These texts provide a massive repository of information about historical topics and events - and which newspapers were covering them. 
-# The dataset will be useful to a wide variety of researchers including historians, other social scientists, and NLP practitioners.
-# 
-# ### Source Data
-# 
-# #### Initial Data Collection and Normalization
-# 
-# Dataset construction is described in the associated paper. 
-# 
-# #### Who are the source language producers?
-# 
-# The source language was produced by people - by newspaper editors, columnists, and other sources.
-# 
-# ### Annotations
-# 
-# #### Annotation process
-# 
-# Not Applicable
-# 
-# #### Who are the annotators?
-# 
-# The dataset does not contain any additional annotations.
-# 
-# ### Personal and Sensitive Information
-# 
-# The dataset may contain information about individuals, to the extent that this is covered in news stories. However we make no additional information about individuals publicly available.
-# 
-# ## Considerations for Using the Data
-# 
-# ### Social Impact of Dataset
-# 
-#  This dataset provides high-quality data that could be used for pre-training a large language model to achieve better understanding of historical English and historical world knowledge. 
-#  The dataset could also be added to the external database of a retrieval-augmented language model to make historical information more widely accessible.
-#  
-# ### Discussion of Biases
-# 
-# This dataset contains unfiltered content composed by newspaper editors, columnists, and other sources. 
-# In addition to other potentially harmful content, the corpus may contain factual errors and intentional misrepresentations of news events. 
-# All content should be viewed as individuals' opinions and not as a purely factual account of events of the day. 
-# 
-# 
-# ## Additional Information
-# 
-# ### Dataset Curators
-# 
-# Emily Silcock (Harvard), Abhishek Arora (Harvard), Luca D'Amico-Wong (Harvard), Melissa Dell (Harvard) 
-# 
-# ### Licensing Information
-# 
-# The dataset has a CC-BY 4.0 license
-# 
-# ### Citation Information
-# 
-# You can cite this dataset using
-# 
-# ```
-# @misc{silcock2024newswirelargescalestructureddatabase,
-#       title={Newswire: A Large-Scale Structured Database of a Century of Historical News}, 
-#       author={Emily Silcock and Abhishek Arora and Luca D'Amico-Wong and Melissa Dell},
-#       year={2024},
-#       eprint={2406.09490},
-#       archivePrefix={arXiv},
-#       primaryClass={cs.CL},
-#       url={https://arxiv.org/abs/2406.09490}, 
-# }
-# ```
-# 
-# ### Contributions
-# 
-# Coming Soon
-
 # In[ ]:
 
 
@@ -601,6 +112,7 @@ newswire = (
 )
 # newswire.head(5).collect()
 logger.info("Loaded newswire articles")
+print(output_value_counts(newswire))
 
 
 # # [rotten_tomatoes dataset](https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes)
@@ -613,219 +125,13 @@ logger.info("Loaded newswire articles")
 # > Assumption: Movie reviews are more likely to be human generated than AI generated.
 # 
 
-# ---
-# annotations_creators:
-# - crowdsourced
-# language_creators:
-# - crowdsourced
-# language:
-# - en
-# license:
-# - unknown
-# multilinguality:
-# - monolingual
-# size_categories:
-# - 1K<n<10K
-# source_datasets:
-# - original
-# task_categories:
-# - text-classification
-# task_ids:
-# - sentiment-classification
-# paperswithcode_id: mr
-# pretty_name: RottenTomatoes - MR Movie Review Data
-# dataset_info:
-#   features:
-#   - name: text
-#     dtype: string
-#   - name: label
-#     dtype:
-#       class_label:
-#         names:
-#           '0': neg
-#           '1': pos
-#   splits:
-#   - name: train
-#     num_bytes: 1074810
-#     num_examples: 8530
-#   - name: validation
-#     num_bytes: 134679
-#     num_examples: 1066
-#   - name: test
-#     num_bytes: 135972
-#     num_examples: 1066
-#   download_size: 487770
-#   dataset_size: 1345461
-# train-eval-index:
-# - config: default
-#   task: text-classification
-#   task_id: binary_classification
-#   splits:
-#     train_split: train
-#     eval_split: test
-#   col_mapping:
-#     text: text
-#     label: target
-#   metrics:
-#   - type: accuracy
-#     name: Accuracy
-#   - type: f1
-#     name: F1
-#     args:
-#       average: binary
-#   - type: f1
-#     name: F1 micro
-#     args:
-#       average: micro
-#   - type: f1
-#     name: F1 weighted
-#     args:
-#       average: weighted
-#   - type: precision
-#     name: Precision macro
-#     args:
-#       average: macro
-#   - type: precision
-#     name: Precision micro
-#     args:
-#       average: micro
-#   - type: precision
-#     name: Precision weighted
-#     args:
-#       average: weighted
-#   - type: recall
-#     name: Recall macro
-#     args:
-#       average: macro
-#   - type: recall
-#     name: Recall micro
-#     args:
-#       average: micro
-#   - type: recall
-#     name: Recall weighted
-#     args:
-#       average: weighted
-# ---
-# 
-# # Dataset Card for "rotten_tomatoes"
-# 
-# ## Table of Contents
-# - [Dataset Description](#dataset-description)
-#   - [Dataset Summary](#dataset-summary)
-#   - [Supported Tasks and Leaderboards](#supported-tasks-and-leaderboards)
-#   - [Languages](#languages)
-# - [Dataset Structure](#dataset-structure)
-#   - [Data Instances](#data-instances)
-#   - [Data Fields](#data-fields)
-#   - [Data Splits](#data-splits)
-# - [Dataset Creation](#dataset-creation)
-#   - [Curation Rationale](#curation-rationale)
-#   - [Source Data](#source-data)
-#   - [Annotations](#annotations)
-#   - [Personal and Sensitive Information](#personal-and-sensitive-information)
-# - [Considerations for Using the Data](#considerations-for-using-the-data)
-#   - [Social Impact of Dataset](#social-impact-of-dataset)
-#   - [Discussion of Biases](#discussion-of-biases)
-#   - [Other Known Limitations](#other-known-limitations)
-# - [Additional Information](#additional-information)
-#   - [Dataset Curators](#dataset-curators)
-#   - [Licensing Information](#licensing-information)
-#   - [Citation Information](#citation-information)
-#   - [Contributions](#contributions)
-# 
-# ## Dataset Description
-# 
-# - **Homepage:** [http://www.cs.cornell.edu/people/pabo/movie-review-data/](http://www.cs.cornell.edu/people/pabo/movie-review-data/)
-# - **Repository:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Paper:** [https://arxiv.org/abs/cs/0506075](https://arxiv.org/abs/cs/0506075)
-# - **Point of Contact:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Size of downloaded dataset files:** 0.49 MB
-# - **Size of the generated dataset:** 1.34 MB
-# - **Total amount of disk used:** 1.84 MB
-# 
-# ### Dataset Summary
-# 
-# Movie Review Dataset.
-# This is a dataset of containing 5,331 positive and 5,331 negative processed
-# sentences from Rotten Tomatoes movie reviews. This data was first used in Bo
-# Pang and Lillian Lee, ``Seeing stars: Exploiting class relationships for
-# sentiment categorization with respect to rating scales.'', Proceedings of the
-# ACL, 2005.
-# 
-# ### Supported Tasks and Leaderboards
-# 
-# [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# 
-# ### Languages
-# 
-# [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# 
-# ## Dataset Structure
-# 
-# ### Data Instances
-# 
-# #### default
-# 
-# - **Size of downloaded dataset files:** 0.49 MB
-# - **Size of the generated dataset:** 1.34 MB
-# - **Total amount of disk used:** 1.84 MB
-# 
-# An example of 'validation' looks as follows.
-# ```
-# {
-#     "label": 1,
-#     "text": "Sometimes the days and nights just drag on -- it 's the morning that make me feel alive . And I have one thing to thank for that : pancakes . "
-# }
-# ```
-# 
-# ### Data Fields
-# 
-# The data fields are the same among all splits.
-# 
-# #### default
-# - `text`: a `string` feature.
-# - `label`: a classification label, with possible values including `neg` (0), `pos` (1).
-# 
-# ### Data Splits
-# 
-# Reads Rotten Tomatoes sentences and splits into 80% train, 10% validation, and 10% test, as is the practice set out in
-# 
-# Jinfeng Li, ``TEXTBUGGER: Generating Adversarial Text Against Real-world Applications.''
-# 
-# | name  |train|validation|test|
-# |-------|----:|---------:|---:|
-# |default| 8530|      1066|1066|
-# 
-# ### Citation Information
-# 
-# ```
-# @InProceedings{Pang+Lee:05a,
-#   author =       {Bo Pang and Lillian Lee},
-#   title =        {Seeing stars: Exploiting class relationships for sentiment
-#                   categorization with respect to rating scales},
-#   booktitle =    {Proceedings of the ACL},
-#   year =         2005
-# }
-# 
-# ```
-# 
-# 
-# ### Contributions
-# 
-# Thanks to [@thomwolf](https://github.com/thomwolf), [@jxmorris12](https://github.com/jxmorris12) for adding this dataset.
-
 # In[ ]:
 
 
 rt = load_normal("cornell-movie-review-data/rotten_tomatoes").with_columns(label=pl.lit(0, dtype=pl.Int8))
 # rt.head(5).collect()
 logger.info("Loaded Rotten Tomatoes reviews")
-
-
-# In[ ]:
-
-
-# rt.group_by("label").agg(pl.len()).sort("label").collect()
+print(output_value_counts(rt))
 
 
 # # [ag_news](https://huggingface.co/datasets/fancyzhx/ag_news)
@@ -834,220 +140,12 @@ logger.info("Loaded Rotten Tomatoes reviews")
 # Likes: 177
 # Downloads last month: 84,165
 
-# ---
-# annotations_creators:
-# - found
-# language_creators:
-# - found
-# language:
-# - en
-# license:
-# - unknown
-# multilinguality:
-# - monolingual
-# size_categories:
-# - 100K<n<1M
-# source_datasets:
-# - original
-# task_categories:
-# - text-classification
-# task_ids:
-# - topic-classification
-# paperswithcode_id: ag-news
-# pretty_name: AG’s News Corpus
-# dataset_info:
-#   features:
-#   - name: text
-#     dtype: string
-#   - name: label
-#     dtype:
-#       class_label:
-#         names:
-#           '0': World
-#           '1': Sports
-#           '2': Business
-#           '3': Sci/Tech
-#   splits:
-#   - name: train
-#     num_bytes: 29817303
-#     num_examples: 120000
-#   - name: test
-#     num_bytes: 1879474
-#     num_examples: 7600
-#   download_size: 19820267
-#   dataset_size: 31696777
-# configs:
-# - config_name: default
-#   data_files:
-#   - split: train
-#     path: data/train-*
-#   - split: test
-#     path: data/test-*
-# train-eval-index:
-# - config: default
-#   task: text-classification
-#   task_id: multi_class_classification
-#   splits:
-#     train_split: train
-#     eval_split: test
-#   col_mapping:
-#     text: text
-#     label: target
-#   metrics:
-#   - type: accuracy
-#     name: Accuracy
-#   - type: f1
-#     name: F1 macro
-#     args:
-#       average: macro
-#   - type: f1
-#     name: F1 micro
-#     args:
-#       average: micro
-#   - type: f1
-#     name: F1 weighted
-#     args:
-#       average: weighted
-#   - type: precision
-#     name: Precision macro
-#     args:
-#       average: macro
-#   - type: precision
-#     name: Precision micro
-#     args:
-#       average: micro
-#   - type: precision
-#     name: Precision weighted
-#     args:
-#       average: weighted
-#   - type: recall
-#     name: Recall macro
-#     args:
-#       average: macro
-#   - type: recall
-#     name: Recall micro
-#     args:
-#       average: micro
-#   - type: recall
-#     name: Recall weighted
-#     args:
-#       average: weighted
-# ---
-# 
-# # Dataset Card for "ag_news"
-# 
-# ## Table of Contents
-# - [Dataset Description](#dataset-description)
-#   - [Dataset Summary](#dataset-summary)
-#   - [Supported Tasks and Leaderboards](#supported-tasks-and-leaderboards)
-#   - [Languages](#languages)
-# - [Dataset Structure](#dataset-structure)
-#   - [Data Instances](#data-instances)
-#   - [Data Fields](#data-fields)
-#   - [Data Splits](#data-splits)
-# - [Dataset Creation](#dataset-creation)
-#   - [Curation Rationale](#curation-rationale)
-#   - [Source Data](#source-data)
-#   - [Annotations](#annotations)
-#   - [Personal and Sensitive Information](#personal-and-sensitive-information)
-# - [Considerations for Using the Data](#considerations-for-using-the-data)
-#   - [Social Impact of Dataset](#social-impact-of-dataset)
-#   - [Discussion of Biases](#discussion-of-biases)
-#   - [Other Known Limitations](#other-known-limitations)
-# - [Additional Information](#additional-information)
-#   - [Dataset Curators](#dataset-curators)
-#   - [Licensing Information](#licensing-information)
-#   - [Citation Information](#citation-information)
-#   - [Contributions](#contributions)
-# 
-# ## Dataset Description
-# 
-# - **Homepage:** [http://groups.di.unipi.it/~gulli/AG_corpus_of_news_articles.html](http://groups.di.unipi.it/~gulli/AG_corpus_of_news_articles.html)
-# - **Repository:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Paper:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Point of Contact:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Size of downloaded dataset files:** 31.33 MB
-# - **Size of the generated dataset:** 31.70 MB
-# - **Total amount of disk used:** 63.02 MB
-# 
-# ### Dataset Summary
-# 
-# AG is a collection of more than 1 million news articles. News articles have been
-# gathered from more than 2000 news sources by ComeToMyHead in more than 1 year of
-# activity. ComeToMyHead is an academic news search engine which has been running
-# since July, 2004. The dataset is provided by the academic comunity for research
-# purposes in data mining (clustering, classification, etc), information retrieval
-# (ranking, search, etc), xml, data compression, data streaming, and any other
-# non-commercial activity. For more information, please refer to the link
-# http://www.di.unipi.it/~gulli/AG_corpus_of_news_articles.html .
-# 
-# The AG's news topic classification dataset is constructed by Xiang Zhang
-# (xiang.zhang@nyu.edu) from the dataset above. It is used as a text
-# classification benchmark in the following paper: Xiang Zhang, Junbo Zhao, Yann
-# LeCun. Character-level Convolutional Networks for Text Classification. Advances
-# in Neural Information Processing Systems 28 (NIPS 2015).
-# 
-# ## Dataset Structure
-# 
-# ### Data Instances
-# 
-# #### default
-# 
-# - **Size of downloaded dataset files:** 31.33 MB
-# - **Size of the generated dataset:** 31.70 MB
-# - **Total amount of disk used:** 63.02 MB
-# 
-# An example of 'train' looks as follows.
-# ```
-# {
-#     "label": 3,
-#     "text": "New iPad released Just like every other September, this one is no different. Apple is planning to release a bigger, heavier, fatter iPad that..."
-# }
-# ```
-# 
-# ### Data Fields
-# 
-# The data fields are the same among all splits.
-# 
-# #### default
-# - `text`: a `string` feature.
-# - `label`: a classification label, with possible values including `World` (0), `Sports` (1), `Business` (2), `Sci/Tech` (3).
-# 
-# ### Data Splits
-# 
-# | name  |train |test|
-# |-------|-----:|---:|
-# |default|120000|7600|
-# 
-# ### Citation Information
-# 
-# ```
-# @inproceedings{Zhang2015CharacterlevelCN,
-#   title={Character-level Convolutional Networks for Text Classification},
-#   author={Xiang Zhang and Junbo Jake Zhao and Yann LeCun},
-#   booktitle={NIPS},
-#   year={2015}
-# }
-# 
-# ```
-# 
-# 
-# ### Contributions
-# 
-# Thanks to [@jxmorris12](https://github.com/jxmorris12), [@thomwolf](https://github.com/thomwolf), [@lhoestq](https://github.com/lhoestq), [@lewtun](https://github.com/lewtun) for adding this dataset.
-
 # In[ ]:
 
 
 ag = load_normal("fancyzhx/ag_news").with_columns(label=pl.lit(0, dtype=pl.Int8))
 logger.info("Loaded AG News articles")
-# ag.head(5).collect()
-
-
-# In[ ]:
-
-
-# ag.group_by("label").agg(pl.len()).sort("label").collect()
+print(output_value_counts(ag))
 
 
 # # [Imdb dataset](https://huggingface.co/datasets/stanfordnlp/imdb)
@@ -1056,216 +154,12 @@ logger.info("Loaded AG News articles")
 # Likes: 352
 # Downloads last month: 171,036
 
-# ---
-# annotations_creators:
-# - expert-generated
-# language_creators:
-# - expert-generated
-# language:
-# - en
-# license:
-# - other
-# multilinguality:
-# - monolingual
-# size_categories:
-# - 10K<n<100K
-# source_datasets:
-# - original
-# task_categories:
-# - text-classification
-# task_ids:
-# - sentiment-classification
-# paperswithcode_id: imdb-movie-reviews
-# pretty_name: IMDB
-# dataset_info:
-#   config_name: plain_text
-#   features:
-#   - name: text
-#     dtype: string
-#   - name: label
-#     dtype:
-#       class_label:
-#         names:
-#           '0': neg
-#           '1': pos
-#   splits:
-#   - name: train
-#     num_bytes: 33432823
-#     num_examples: 25000
-#   - name: test
-#     num_bytes: 32650685
-#     num_examples: 25000
-#   - name: unsupervised
-#     num_bytes: 67106794
-#     num_examples: 50000
-#   download_size: 83446840
-#   dataset_size: 133190302
-# configs:
-# - config_name: plain_text
-#   data_files:
-#   - split: train
-#     path: plain_text/train-*
-#   - split: test
-#     path: plain_text/test-*
-#   - split: unsupervised
-#     path: plain_text/unsupervised-*
-#   default: true
-# train-eval-index:
-# - config: plain_text
-#   task: text-classification
-#   task_id: binary_classification
-#   splits:
-#     train_split: train
-#     eval_split: test
-#   col_mapping:
-#     text: text
-#     label: target
-#   metrics:
-#   - type: accuracy
-#   - name: Accuracy
-#   - type: f1
-#     name: F1 macro
-#     args:
-#       average: macro
-#   - type: f1
-#     name: F1 micro
-#     args:
-#       average: micro
-#   - type: f1
-#     name: F1 weighted
-#     args:
-#       average: weighted
-#   - type: precision
-#     name: Precision macro
-#     args:
-#       average: macro
-#   - type: precision
-#     name: Precision micro
-#     args:
-#       average: micro
-#   - type: precision
-#     name: Precision weighted
-#     args:
-#       average: weighted
-#   - type: recall
-#     name: Recall macro
-#     args:
-#       average: macro
-#   - type: recall
-#     name: Recall micro
-#     args:
-#       average: micro
-#   - type: recall
-#     name: Recall weighted
-#     args:
-#       average: weighted
-# ---
-# 
-# # Dataset Card for "imdb"
-# 
-# ## Table of Contents
-# - [Dataset Description](#dataset-description)
-#   - [Dataset Summary](#dataset-summary)
-#   - [Supported Tasks and Leaderboards](#supported-tasks-and-leaderboards)
-#   - [Languages](#languages)
-# - [Dataset Structure](#dataset-structure)
-#   - [Data Instances](#data-instances)
-#   - [Data Fields](#data-fields)
-#   - [Data Splits](#data-splits)
-# - [Dataset Creation](#dataset-creation)
-#   - [Curation Rationale](#curation-rationale)
-#   - [Source Data](#source-data)
-#   - [Annotations](#annotations)
-#   - [Personal and Sensitive Information](#personal-and-sensitive-information)
-# - [Considerations for Using the Data](#considerations-for-using-the-data)
-#   - [Social Impact of Dataset](#social-impact-of-dataset)
-#   - [Discussion of Biases](#discussion-of-biases)
-#   - [Other Known Limitations](#other-known-limitations)
-# - [Additional Information](#additional-information)
-#   - [Dataset Curators](#dataset-curators)
-#   - [Licensing Information](#licensing-information)
-#   - [Citation Information](#citation-information)
-#   - [Contributions](#contributions)
-# 
-# ## Dataset Description
-# 
-# - **Homepage:** [http://ai.stanford.edu/~amaas/data/sentiment/](http://ai.stanford.edu/~amaas/data/sentiment/)
-# - **Repository:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Paper:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Point of Contact:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-# - **Size of downloaded dataset files:** 84.13 MB
-# - **Size of the generated dataset:** 133.23 MB
-# - **Total amount of disk used:** 217.35 MB
-# 
-# ### Dataset Summary
-# 
-# Large Movie Review Dataset.
-# This is a dataset for binary sentiment classification containing substantially more data than previous benchmark datasets. We provide a set of 25,000 highly polar movie reviews for training, and 25,000 for testing. There is additional unlabeled data for use as well.
-# 
-# ## Dataset Structure
-# 
-# ### Data Instances
-# 
-# #### plain_text
-# 
-# - **Size of downloaded dataset files:** 84.13 MB
-# - **Size of the generated dataset:** 133.23 MB
-# - **Total amount of disk used:** 217.35 MB
-# 
-# An example of 'train' looks as follows.
-# ```
-# {
-#     "label": 0,
-#     "text": "Goodbye world2\n"
-# }
-# ```
-# 
-# ### Data Fields
-# 
-# The data fields are the same among all splits.
-# 
-# #### plain_text
-# - `text`: a `string` feature.
-# - `label`: a classification label, with possible values including `neg` (0), `pos` (1).
-# 
-# ### Data Splits
-# 
-# |   name   |train|unsupervised|test |
-# |----------|----:|-----------:|----:|
-# |plain_text|25000|       50000|25000|
-# 
-# ```
-# @InProceedings{maas-EtAl:2011:ACL-HLT2011,
-#   author    = {Maas, Andrew L.  and  Daly, Raymond E.  and  Pham, Peter T.  and  Huang, Dan  and  Ng, Andrew Y.  and  Potts, Christopher},
-#   title     = {Learning Word Vectors for Sentiment Analysis},
-#   booktitle = {Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies},
-#   month     = {June},
-#   year      = {2011},
-#   address   = {Portland, Oregon, USA},
-#   publisher = {Association for Computational Linguistics},
-#   pages     = {142--150},
-#   url       = {http://www.aclweb.org/anthology/P11-1015}
-# }
-# 
-# ```
-# 
-# 
-# ### Contributions
-# 
-# Thanks to [@ghazi-f](https://github.com/ghazi-f), [@patrickvonplaten](https://github.com/patrickvonplaten), [@lhoestq](https://github.com/lhoestq), [@thomwolf](https://github.com/thomwolf) for adding this dataset.
-
 # In[ ]:
 
 
 imdb = load_normal("stanfordnlp/imdb").with_columns(label=pl.lit(0, dtype=pl.Int8))
 logger.info("Loaded IMDB reviews")
-# imdb.head(5).collect()
-
-
-# In[ ]:
-
-
-# imdb.group_by("label").agg(pl.len()).sort("label").collect()
+print(output_value_counts(imdb))
 
 
 # # [AI-human-text](https://huggingface.co/datasets/andythetechnerd03/AI-human-text)
@@ -1274,54 +168,12 @@ logger.info("Loaded IMDB reviews")
 # Likes: 8
 # Downloads last month: 365
 
-# ---
-# dataset_info:
-#   features:
-#   - name: text
-#     dtype: string
-#   - name: generated
-#     dtype: int8
-#   splits:
-#   - name: train
-#     num_bytes: 1026814130.2626022
-#     num_examples: 462873
-#   - name: test
-#     num_bytes: 54043432.73739777
-#     num_examples: 24362
-#   download_size: 570879675
-#   dataset_size: 1080857563
-# configs:
-# - config_name: default
-#   data_files:
-#   - split: train
-#     path: data/train-*
-#   - split: test
-#     path: data/test-*
-# license: apache-2.0
-# task_categories:
-# - text-classification
-# language:
-# - en
-# tags:
-# - code
-# pretty_name: AI vs Human Text
-# size_categories:
-# - 100K<n<1M
-# ---
-# This is a processed dataset of Human vs AI Text roughly 400k rows. This is taken from the Kaggle dataset https://www.kaggle.com/datasets/shanegerami/ai-vs-human-text/data then processed and split into training and test sets.
-
 # In[ ]:
 
 
 ai_human = load_normal("andythetechnerd03/AI-human-text").rename({"generated": "label"})
 logger.info("Loaded AI vs Human text")
-# ai_human.head(5).collect()
-
-
-# In[ ]:
-
-
-# ai_human.group_by("label").agg(pl.len()).sort("label").collect()
+print(output_value_counts(ai_human))
 
 
 # # [Human vs Machine](https://huggingface.co/datasets/NicolaiSivesind/human-vs-machine)
@@ -1329,56 +181,6 @@ logger.info("Loaded AI vs Human text")
 # Number of rows: 320,000
 # Likes: 19
 # Downloads last month: 188
-
-# ---
-# license: cc
-# task_categories:
-# - text-classification
-# pretty_name: Human vs Machine - Labled text segments produced by humans and LLMs
-# size_categories:
-# - 100K<n<1M
-# language:
-# - en
-# tags:
-# - chatgpt
-# - gpt
-# - research abstracts
-# - wikipedia introductions
-# ---
-# # Human-vs-Machine
-# This is a dataset collection created in relation to a bachelor thesis written by Nicolai Thorer Sivesind and Andreas Bentzen Winje. It contains human-produced and machine-generated text samples from two domains: Wikipedia introducions and Scientific research abstracts. 
-# 
-# Each of the two domains are already exisitng datasets reformatted for text-classification:
-# 
-# [GPT-wiki-intros:](https://huggingface.co/datasets/aadityaubhat/GPT-wiki-intro)
-# + Generated samples are produced using the GPT-3 model, _text-curie-001_
-#   + Target content set by title of real wikipedia introduction and a starter sentence.
-#   + Target word count of 200 words each.
-# + Contains 150k data points of each class.
-# + Created by Aaditya Bhat
-# 
-# [ChatGPT-Research-Abstracts](https://huggingface.co/datasets/NicolaiSivesind/ChatGPT-Research-Abstracts):
-# + Generated samples are produced using the GPT-3.5 model, _GPT-3.5-turbo-0301_ (Snapshot of the model used in ChatGPT 1st of March, 2023).
-#   + Target content set by title of real abstract.
-#   + Target word count equal to the human-produced abstract
-# + Contains 10k data points of each class.
-# + Created by Nicolai Thorer Sivesind
-# 
-# ### Credits
-# + [GPT-wiki-intro](https://huggingface.co/datasets/aadityaubhat/GPT-wiki-intro), by Aaditya Bhat
-# 
-# ### Citation
-# Please use the following citation:
-# ```
-# @misc {sivesind_2023,
-#     author       = { {Nicolai Thorer Sivesind}, {Andreas Bentzen Winje}},
-#     title        = { Human-vs-Machine },
-#     year         = 2023,
-#     publisher    = { Hugging Face }
-# }
-# ```
-# 
-# More information about the dataset will be added once the thesis is finished (end of may 2023).
 
 # In[ ]:
 
@@ -1394,20 +196,15 @@ abstracts_path = hf_hub_download(
 
 
 human_vs_machine = (
-    pl.concat([pl.scan_csv(wiki_path), pl.scan_csv(abstracts_path)])
+    pl
+    .concat([pl.scan_csv(wiki_path), pl.scan_csv(abstracts_path)])
     .with_columns(cs.by_dtype(pl.Utf8).str.strip_chars(), dataset=pl.lit("human_vs_machine"))
     .drop(["title", "word_count"])
     .pipe(clean_text)
     .cast({"label": pl.Int8})
 )
 logger.info("Loaded Human vs Machine text")
-# human_vs_machine.head(5).collect()
-
-
-# In[ ]:
-
-
-# human_vs_machine.group_by("label").agg(pl.len()).sort("label").collect()
+print(output_value_counts(human_vs_machine))
 
 
 # # [AI-and-Human-Generated-Text](https://huggingface.co/datasets/Ateeqq/AI-and-Human-Generated-Text)
@@ -1416,30 +213,6 @@ logger.info("Loaded Human vs Machine text")
 # Likes: 19
 # Downloads last month: 486
 
-# ---
-# license: mit
-# language:
-# - en
-# size_categories:
-# - 10K<n<100K
-# task_categories:
-# - text-classification
-# ---
-# 
-# # AI & Human Generated Text
-# 
-# ## I am Using this dataset for AI Text Detection for https://exnrt.com.
-# Check Original DataSet GitHub Repository Here: https://github.com/panagiotisanagnostou/AI-GA
-# 
-# 
-# ## Description
-# The AI-GA dataset, short for Artificial Intelligence Generated Abstracts, comprises abstracts and titles. Half of these abstracts are generated by AI, while the remaining half are original. Primarily intended for research and experimentation in natural language processing, especially concerning language generation and machine learning, this dataset offers ample opportunities for exploration and analysis.
-# 
-# The AI-GA dataset comprises 28,662 samples, each containing an abstract, a title, and a label. It is evenly divided into two categories: "AI-generated abstracts" and "original abstracts." The label distinguishes between an original abstract (labeled 0) and an AI-generated one (labeled 1). Notably, the AI-generated abstracts are crafted using cutting-edge language generation techniques, notably leveraging the GPT-3 model.
-# 
-# ### Large Alternative:
-# This compilation encompasses https://github.com/sakibsh/LLM both human-authored and LLM-generated (utilizing GPT-4 and BARD) texts spanning various genres such as essays, stories, poetry, and Python code. It serves as a valuable asset for investigating LLM text detection methodologies.
-
 # In[ ]:
 
 
@@ -1447,13 +220,7 @@ ai_and_human = (
     load_normal("Ateeqq/AI-and-Human-Generated-Text", {"abstract": "text"}).cast({"label": pl.Int8}).drop("title")
 )
 logger.info("Loaded AI vs Human text from Ateeqq/AI-and-Human-Generated-Text")
-# ai_and_human.head(5).collect()
-
-
-# In[ ]:
-
-
-# ai_and_human.group_by("label").agg(pl.len()).sort("label").collect()
+print(output_value_counts(ai_and_human))
 
 
 # # [AI generated movie reviews](https://huggingface.co/datasets/Milkyway-islander/AI_Human_generated_movie_reviews)
@@ -1463,61 +230,6 @@ logger.info("Loaded AI vs Human text from Ateeqq/AI-and-Human-Generated-Text")
 # Downloads last month: 29
 # 
 # There are a good verity of AI models used to generate these texts.
-
-# ---
-# dataset_info:
-#   features:
-#   - name: text
-#     dtype: string
-#   - name: labels
-#     dtype: int64
-#   - name: models
-#     dtype: string
-#   - name: __index_level_0__
-#     dtype: int64
-#   splits:
-#   - name: train
-#     num_bytes: 15157689
-#     num_examples: 10460
-#   download_size: 8750952
-#   dataset_size: 15157689
-# configs:
-# - config_name: default
-#   data_files:
-#   - split: train
-#     path: data/train-*
-# task_categories:
-# - text-classification
-# language:
-# - en
-# size_categories:
-# - 10K<n<100K
-# ---
-# # Dataset Card for Dataset Name
-# 
-# 
-# 
-# This dataset card aims to be a base template for new datasets. It has been generated using [this raw template](https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/templates/datasetcard_template.md?plain=1).
-# 
-# ## Dataset Details
-# 
-# ### Dataset Description
-# 
-# <!-- Provide a longer summary of what this dataset is. -->
-# 
-# The "AI_Human_generated_movie_reviews" dataset consists of 5.23k AI-generated movie reviews alongside 5.23k human-written reviews from the Stanford IMDB dataset. The AI reviews were created using several models, including Gemini 1.5 Pro, GPT-3.5-Turbo, and GPT-4.0-Turbo-Preview, via the OpenAI API. Quality control measures were applied during generation, producing 3-5 reviews per session with multiple sessions (ranging from 20 to 100) for each review. Reviews with an average word length under 215 or over 345 were excluded from the dataset.
-# 
-# 
-# - **Curated by:** [More Information Needed]
-# - **Funded by [optional]:** [More Information Needed]
-# - **Shared by [optional]:** [Amber Zhan]
-# - **Language(s) (NLP):** [English]
-# - **License:** [More Information Needed]
-# 
-# ## Dataset Structure
-# 
-# Dataset has 3 columns and 10460 rows. 
-# 
 
 # In[ ]:
 
@@ -1529,13 +241,7 @@ ai_movie_reviews = (
     .drop("__index_level_0__")
 )
 logger.info("Loaded AI vs Human movie reviews")
-# ai_movie_reviews.head(5).collect()
-
-
-# In[ ]:
-
-
-# ai_movie_reviews.group_by("models").agg(pl.len()).sort("models").collect()
+print(output_value_counts(ai_movie_reviews))
 
 
 # # [Human vs AI Sentences](https://huggingface.co/datasets/shahxeebhassan/human_vs_ai_sentences)
@@ -1544,69 +250,12 @@ logger.info("Loaded AI vs Human movie reviews")
 # Likes: 9
 # Downloads last month: 151
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# language:
-# - en
-# size_categories:
-# - 100K<n<1M
-# ---
-# ### Dataset Description
-# This dataset contains 105,000 sentences, each labeled as either human-written (`0`) or AI-generated (`1`). It is designed for text classification tasks, particularly for distinguishing between human and AI-generated text.
-# 
-# ### Dataset Structure
-# - **Number of Instances**: 105,000 sentences
-# - **Labels**: 
-#   - `0`: Human-written
-#   - `1`: AI-generated
-# 
-# ### Usage
-# This dataset can be used to train models for text classification tasks. Below is an example of how to load and use the dataset with the Hugging Face `datasets` library:
-# 
-# ```python
-# from datasets import load_dataset
-# 
-# dataset = load_dataset("shahxeebhassan/human_vs_ai_sentences")
-# ```
-# 
-# ### Data Fields
-# - **text**: The text of the sentence.
-# - **label**: The label indicating whether the sentence is human-written (`0`) or AI-generated (`1`).
-# 
-# ### License
-# This dataset is licensed under the MIT License.
-# 
-# ### Task Categories
-# - Text Classification
-# 
-# ### Languages
-# - English (`en`)
-# 
-# ### Size Categories
-# - 100K < n < 1M
-# 
-# ### Source Data
-# The sentences in this dataset were collected from various sources to ensure a diverse range of topics and writing styles.
-# 
-# ### Acknowledgements
-# This dataset was created to support research and development in the field of AI and text classification.
-# 
-# ---
-
 # In[ ]:
 
 
 human_vs_ai_sentences = load_normal("shahxeebhassan/human_vs_ai_sentences").cast({"label": pl.Int8})
 logger.info("Loaded Human vs AI sentences")
-# human_vs_ai_sentences.head(5).collect()
-
-
-# In[ ]:
-
-
-# human_vs_ai_sentences.group_by("label").agg(pl.len()).sort("label").collect()
+print(output_value_counts(human_vs_ai_sentences))
 
 
 # # [Human Raid](https://huggingface.co/datasets/charisgao/human-raid)
@@ -1616,20 +265,6 @@ logger.info("Loaded Human vs AI sentences")
 # Downloads last month: 10
 # 
 # Unsure about this one as it seems to be data taken from diffrent sources `reddit`, `recipes`, `reviews` which could quite easily be AI generated
-
-# configs:
-#   - config_name: default
-#     data_files:
-#       - split: train
-#         path: data/human_data_v0.csv
-# license: mit
-# task_categories:
-#   - text-classification
-# language:
-#   - en
-# pretty_name: RAID-human
-# size_categories:
-#   - 1M<n<10M
 
 # In[ ]:
 
@@ -1654,289 +289,106 @@ logger.info("Loaded Human vs AI sentences")
 
 
 def load_ai_vs_human_collection(dataset_name: str) -> pl.LazyFrame:
-    ds = load_normal(dataset_name, clean=False)
+    ds = load_normal(dataset_name, clean=False, drop_nulls=False)
     dataset_name = dataset_name.rsplit("/", maxsplit=1)[-1]
     return (
-        ds.rename({"ai": "1", "human": "0"})
+        ds
+        .rename({"ai": "1", "human": "0"})
         .select(["1", "0"])
         .unpivot()
         .rename({"variable": "label", "value": "text"})
         .with_columns(dataset=pl.lit(dataset_name))
         .cast({"label": pl.Int8})
         .pipe(clean_text)
+        .drop_nulls(subset="text")
     )
 
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# - text-generation
-# language:
-# - en
-# pretty_name: AI vs Human CNN Daily News
-# size_categories:
-# - 1K<n<10K
-# ---
-# 
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
 # 
 # ## Dataset Description
 # This dataset contains pairs of original articles and their AI-generated completions.
 # 
-# ## Data Fields
-# - `human`: The original complete article
-# - `ai`: The AI-generated completion of a truncated version using GPT-3.5 Turbo
 # 
-# ## Usage
-#     
 
 # In[ ]:
 
 
 ai_vs_human_gpt35t = load_ai_vs_human_collection("ilyasoulk/ai-vs-human")
 logger.info("Loaded AI vs Human GPT-3.5-Turbo text")
-# ai_vs_human_gpt35t.head(5).collect()
+print(output_value_counts(ai_vs_human_gpt35t))
 
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# - text-generation
-# language:
-# - en
-# pretty_name: AI vs Human CNN Daily News
-# size_categories:
-# - 1K<n<10K
-# ---
+# 
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
 # 
-# ## Dataset Description
-# This dataset showcases pairs of truncated articles and their respective completions, crafted either by humans or an AI language model. 
-# Each article was randomly truncated between 25% and 50% of its length. 
-# The language model was then tasked with generating a completion that mirrored the characters count of the original human-written continuation.
-# 
-# ## Data Fields
-# - 'human': The original human-authored continuation of the truncated article, preserved in its entirety.
-# - 'ai': The AI-generated continuation of the truncated article, designed to match the original in length and coherence.
-# 
-# ## Model and Sampling Parameters
-# The model used to generate the AI completions was HuggingFaceTB/SmolLM2-360M-Instruct.
-# 
-# The sampling parameters used were:
-# {'frequency_penalty': 0.2, 'max_tokens': 1000, 'presence_penalty': 0.5, 'temperature': 0.5}
-# 
-# ## License
-# MIT License
-#     
 
 # In[ ]:
 
 
 ai_vs_human_smolLM2 = load_ai_vs_human_collection("zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-360M-Instruct")  # noqa: N816
 logger.info("Loaded AI vs Human SmolLM2 text")
-# ai_vs_human_smolLM2.head(5).collect()
+print(output_value_counts(ai_vs_human_smolLM2))
 
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# - text-generation
-# language:
-# - en
-# pretty_name: AI vs Human CNN Daily News
-# size_categories:
-# - 1K<n<10K
-# ---
+# 
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
 # 
-# ## Dataset Description
-# This dataset showcases pairs of truncated articles and their respective completions, crafted either by humans or an AI language model. 
-# Each article was randomly truncated between 25% and 50% of its length. 
-# The language model was then tasked with generating a completion that mirrored the characters count of the original human-written continuation.
-# 
-# ## Data Fields
-# - 'human': The original human-authored continuation of the truncated article, preserved in its entirety.
-# - 'ai': The AI-generated continuation of the truncated article, designed to match the original in length and coherence.
-# 
-# ## Model and Sampling Parameters
-# The model used to generate the AI completions was HuggingFaceTB/SmolLM2-1.7B-Instruct.
-# 
-# The sampling parameters used were:
-# {'frequency_penalty': 0.2, 'max_tokens': 1000, 'presence_penalty': 0.5, 'temperature': 0.5}
-# 
-# ## License
-# MIT License
-#     
 
 # In[ ]:
 
 
 ai_vs_human_smolLM2_1_7B = load_ai_vs_human_collection("zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-1.7B-Instruct")  # noqa: N816
 logger.info("Loaded AI vs Human SmolLM2 1.7B text")
-# ai_vs_human_smolLM2_1_7B.head(5).collect()
+print(output_value_counts(ai_vs_human_smolLM2_1_7B))
 
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# - text-generation
-# language:
-# - en
-# pretty_name: AI vs Human CNN Daily News
-# size_categories:
-# - 1K<n<10K
-# ---
+# 
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
 # 
-# ## Dataset Description
-# This dataset showcases pairs of truncated articles and their respective completions, crafted either by humans or an AI language model. 
-# Each article was randomly truncated between 25% and 50% of its length. 
-# The language model was then tasked with generating a completion that mirrored the characters count of the original human-written continuation.
-# 
-# ## Data Fields
-# - 'human': The original human-authored continuation of the truncated article, preserved in its entirety.
-# - 'ai': The AI-generated continuation of the truncated article, designed to match the original in length and coherence.
-# 
-# ## Model and Sampling Parameters
-# The model used to generate the AI completions was Qwen/Qwen2.5-1.5B-Instruct.
-# 
-# The sampling parameters used were:
-# {'frequency_penalty': 0.2, 'max_tokens': 1000, 'presence_penalty': 0.5, 'temperature': 0.5}
-# 
-# ## License
-# MIT License
-#     
 
 # In[ ]:
 
 
 ai_vs_human_qwen = load_ai_vs_human_collection("zcamz/ai-vs-human-Qwen-Qwen2.5-1.5B-Instruct")
 logger.info("Loaded AI vs Human Qwen text")
-# ai_vs_human_qwen.head(5).collect()
+print(output_value_counts(ai_vs_human_qwen))
 
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# - text-generation
-# language:
-# - en
-# pretty_name: AI vs Human CNN Daily News
-# size_categories:
-# - 1K<n<10K
-# ---
+# 
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
 # 
-# ## Dataset Description
-# This dataset showcases pairs of truncated articles and their respective completions, crafted either by humans or an AI language model. 
-# Each article was randomly truncated between 25% and 50% of its length. 
-# The language model was then tasked with generating a completion that mirrored the characters count of the original human-written continuation.
-# 
-# ## Data Fields
-# - 'human': The original human-authored continuation of the truncated article, preserved in its entirety.
-# - 'ai': The AI-generated continuation of the truncated article, designed to match the original in length and coherence.
-# 
-# ## Model and Sampling Parameters
-# The model used to generate the AI completions was google/gemma-2-2b-it.
-# 
-# The sampling parameters used were:
-# {'frequency_penalty': 0.2, 'max_tokens': 1000, 'presence_penalty': 0.5, 'temperature': 0.5}
-# 
-# ## License
-# MIT License
-#     
 
 # In[ ]:
 
 
 ai_vs_human_gemma = load_ai_vs_human_collection("zcamz/ai-vs-human-google-gemma-2-2b-it")
 logger.info("Loaded AI vs Human Gemma text")
-# ai_vs_human_gemma.head(5).collect()
+print(output_value_counts(ai_vs_human_gemma))
 
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# - text-generation
-# language:
-# - en
-# pretty_name: AI vs Human CNN Daily News
-# size_categories:
-# - 1K<n<10K
-# ---
+# 
 # # AI vs Human dataset on the [CNN Daily mails](https://huggingface.co/datasets/abisee/cnn_dailymail)
 # 
-# ## Dataset Description
-# This dataset showcases pairs of truncated articles and their respective completions, crafted either by humans or an AI language model. 
-# Each article was randomly truncated between 25% and 50% of its length. 
-# The language model was then tasked with generating a completion that mirrored the characters count of the original human-written continuation.
-# 
-# ## Data Fields
-# - 'human': The original human-authored continuation of the truncated article, preserved in its entirety.
-# - 'ai': The AI-generated continuation of the truncated article, designed to match the original in length and coherence.
-# 
-# ## Model and Sampling Parameters
-# The model used to generate the AI completions was meta-llama/Llama-3.2-1B-Instruct.
-# 
-# The sampling parameters used were:
-# {'frequency_penalty': 0.2, 'max_tokens': 1000, 'presence_penalty': 0.5, 'temperature': 0.5}
-# 
-# ## License
-# MIT License
-#     
 
 # In[ ]:
 
 
 ai_vs_human_llama = load_ai_vs_human_collection("zcamz/ai-vs-human-meta-llama-Llama-3.2-1B-Instruct")
 logger.info("Loaded AI vs Human Llama text")
-# ai_vs_human_llama.head(5).collect()
+print(output_value_counts(ai_vs_human_llama))
 
 
-# ---
-# license: mit
-# task_categories:
-# - text-classification
-# - text-generation
-# language:
-# - en
-# pretty_name: AI vs Human OpenWebTxt
-# size_categories:
-# - 1K<n<10K
-# ---
+# 
 # # AI vs Human dataset on the [OpenWebTxt](https://huggingface.co/datasets/stas/openwebtext-10k)
 # 
-# ## Dataset Description
-# This dataset showcases pairs of truncated text and their respective completions, crafted either by humans or an AI language model. 
-# Each article was randomly truncated between 25% and 50% of its length. 
-# The language model was then tasked with generating a completion that mirrored the characters count of the original human-written continuation.
-# 
-# ## Data Fields
-# - 'human': The original human-authored continuation of the truncated text, preserved in its entirety.
-# - 'ai': The AI-generated continuation of the truncated text, designed to match the original in length and coherence.
-# 
-# ## Model and Sampling Parameters
-# The model used to generate the AI completions was meta-llama/Llama-3.1-8B-Instruct.
-# 
-# The sampling parameters used were:
-# {'frequency_penalty': 0.2, 'max_tokens': 1000, 'presence_penalty': 0.5, 'temperature': 0.5}
-# 
-# ## License
-# MIT License
-#     
 
 # In[ ]:
 
 
 ai_vs_human_llama_8B = load_ai_vs_human_collection("ilyasoulk/ai-vs-human-meta-llama-Llama-3.1-8B-Instruct")  # noqa: N816
 logger.info("Loaded AI vs Human Llama 8B text")
-# ai_vs_human_llama_8B.head(5).collect()
+print(output_value_counts(ai_vs_human_llama_8B))
 
 
 # ## [LM Arena Search](https://huggingface.co/datasets/lmarena-ai/search-arena-24k)
@@ -1949,7 +401,7 @@ def load_lm_arena(dataset_name: str, *, clean: bool = False) -> pl.LazyFrame:
     ds_name = dataset_name.rsplit("/", maxsplit=1)[-1]
 
     lf = (
-        load_normal(dataset_name, clean=False)
+        load_normal(dataset_name, clean=False, drop_nulls=False)
         .rename({"messages_a": "conversation_a", "messages_b": "conversation_b"}, strict=False)
         .select(pl.col("conversation_a"), pl.col("conversation_b"))
         .unpivot()
@@ -1961,6 +413,7 @@ def load_lm_arena(dataset_name: str, *, clean: bool = False) -> pl.LazyFrame:
         .filter(pl.col("role") == "assistant")
         .select("text")
         .with_columns(label=pl.lit(1, dtype=pl.Int8), dataset=pl.lit(ds_name))
+        .drop_nulls(subset="text")
     )
     if clean:
         lf = lf.pipe(clean_text)
@@ -1972,7 +425,7 @@ def load_lm_arena(dataset_name: str, *, clean: bool = False) -> pl.LazyFrame:
 
 search_arena = load_lm_arena("lmarena-ai/search-arena-24k")
 logger.info("Loaded Search Arena text")
-# search_arena.head(5).collect()
+print(output_value_counts(search_arena))
 
 
 # # [Arena Expert 5k](https://huggingface.co/datasets/lmarena-ai/arena-expert-5k)
@@ -1983,8 +436,6 @@ logger.info("Loaded Search Arena text")
 import ast
 import contextlib
 import re
-
-import numpy as np
 
 
 def _find_matching(s: str, start: int, open_ch: str, close_ch: str) -> int:
@@ -2123,7 +574,7 @@ def _parse_batch(series: pl.Series) -> pl.Series:
 
 
 expert_arena = (
-    load_normal("lmarena-ai/arena-expert-5k", clean=False)
+    load_normal("lmarena-ai/arena-expert-5k", clean=False, drop_nulls=False)
     .rename({"messages_a": "conversation_a", "messages_b": "conversation_b"}, strict=False)
     .select(
         # parse each conversation column separately so map_batches receives one column at a time
@@ -2181,9 +632,8 @@ expert_arena = (
     .select(pl.col("text"))
     .pipe(clean_text)
     .with_columns(label=pl.lit(1, dtype=pl.Int8), dataset=pl.lit("arena-expert-5k"))
+    .drop_nulls(subset="text")
 )
-# expert_arena.head(5).collect()
-# .cast({"conversation_a": pl.List(pl.Struct), "conversation_b": pl.List(pl.Utf8)}, strict=False)
 
 
 # ## [LM Arena human prefrence](https://huggingface.co/datasets/lmarena-ai/arena-human-preference-140k)
@@ -2204,7 +654,63 @@ human_preference_140k = (
     .with_columns(label=pl.lit(1, dtype=pl.Int8), dataset=pl.lit("arena-human-preference-140k"))
 )
 logger.info("Loaded Human Preference 140k text")
-# human_preference_140k.head(5).collect()
+print(output_value_counts(human_preference_140k))
+
+
+# # [Human Essays](https://huggingface.co/datasets/artfultom/human-essays)
+
+# In[ ]:
+
+
+human_essays = (
+    pl
+    .concat([
+        load_normal("artfultom/human-essays", subset_name="asap2 essays"),
+        load_normal("artfultom/human-essays", subset_name="ivy panda essays"),
+        load_normal("artfultom/human-essays", subset_name="persuade essays"),
+    ])
+    .with_columns(label=pl.lit(0, dtype=pl.Int8))
+    .select(["text", "dataset", "label"])
+)
+logger.info("Loaded human essays")
+print(output_value_counts(human_essays))
+
+
+# # [LLM Generated Essays](https://huggingface.co/datasets/artfultom/llm-generated-essays)
+# 
+# 37,488 records
+
+# In[ ]:
+
+
+llm_essays = pl.concat([
+    load_normal("artfultom/llm-generated-essays", subset_name="one prompt").select("text", "dataset", "model"),
+    load_normal("artfultom/llm-generated-essays", subset_name="two prompts").select("text", "dataset", "model"),
+]).with_columns(label=pl.lit(1, dtype=pl.Int8))
+logger.info("Loaded LLM-generated essays")
+print(output_value_counts(llm_essays))
+
+
+# In[ ]:
+
+
+general_knowledge = (
+    load_normal("MuskumPillerum/General-Knowledge", {"Answer": "text"})
+    .with_columns(label=pl.lit(1, dtype=pl.Int8))
+    .select(["text", "dataset", "label"])
+)
+logger.info("Loaded general knowledge questions and answers")
+print(output_value_counts(general_knowledge))
+
+
+# In[ ]:
+
+
+daigt_v2 = (
+    load_normal("thedrcat/daigt-v2-train-dataset", file_name="train_v2_drcat_02.csv", clean=False)
+).with_columns(pl.col("label").cast(pl.Int8))
+logger.info("Loaded DAIGT v2 dataset")
+print(output_value_counts(daigt_v2))
 
 
 # # [Raid Bench](https://huggingface.co/datasets/liamdugan/raid)
@@ -2217,7 +723,8 @@ from polars_splitters import sample
 df: pl.LazyFrame = load_dataset("liamdugan/raid")["train"].to_polars().lazy()  # type: ignore[reportAttributeAccessIssue]
 
 human, ai = (
-    df.select("model", "attack", "domain", "generation")
+    df
+    .select("model", "attack", "domain", "generation")
     .rename({"generation": "text"})
     .with_columns(pl.when(pl.col("model") == "human").then(0).otherwise(1).alias("label").cast(pl.Int8))
     .filter(pl.col("model").is_in(["human", "gpt4", "cohere-chat", "chatgpt", "gpt3", "llama-chat", "mistral-chat"]))
@@ -2231,9 +738,15 @@ fraction = target_rows / ai_rows
 
 ai = sample(ai, fraction=fraction, stratify_by=["domain", "model", "attack"], seed=SEED).sample(target_rows, seed=SEED)
 raid = (
-    pl.concat([human.lazy(), ai.lazy()]).select(["text", "label"]).pipe(clean_text).with_columns(dataset=pl.lit("raid"))
+    pl
+    .concat([human.lazy(), ai.lazy()])
+    .select(["text", "label"])
+    .pipe(clean_text)
+    .with_columns(dataset=pl.lit("raid"))
+    .drop_nulls(subset="text")
 )
 logger.info("Loaded Raid Bench text")
+print(output_value_counts(raid))
 
 
 # ## AI vs Human
@@ -2310,119 +823,79 @@ logger.info("Loaded Raid Bench text")
 # 
 # 320_916 (160452 human, 160464 AI) samples of AI vs Human text
 
-# # Dataset curation
+# # Dataset curation v2.3.0
 # 
-# I want random samples from diffrent datasets.
+# Two-dataset approach for better model validation:
 # 
-# I want 200k samples total with a 50/50 split between human written and AI generated text.
+# ## Dataset 1: Primary Curated (train.parquet + test.parquet)
+# Target: 500k samples (250k human / 250k AI)
+# - Carefully balanced across datasets and genres
+# - No single dataset > 30% of total
+# - Train/Test split: 80/20
 # 
-# So I will take:
+# ### Allocation Strategy:
 # 
-# ## AI vs Human datasets 
+# **RAID Bench:** 75,000 per class (30% of total)
+# - Benchmark dataset with adversarial attacks
+# - Increased from v2.2.0 (was 85k = 42.8%)
 # 
-# > Contains a good verity of AI models used to generate these texts.
+# **Essays (NEW):**
+# - Human essays: 40,000 (academic writing, avoid topic overfitting)
+# - LLM essays: 37,488 (all available)
+# - DAIGT v2 student essays: 25,000 human + 17,497 AI (all available)
+# - Total essays: ~120k (24% of dataset)
 # 
-# Human samples: 35,000
-# AI samples: 35,000
+# **News:**
+# - Newswire: 50,000 (historical, 1878-1977)
+# - AG News: 20,000 (modern news)
 # 
+# **Arena datasets (recent models):**
+# - Human Preference 140k: 50,000
+# - Search Arena 24k: 30,000
+# - Expert Arena 5k: ~10,000 (all available)
 # 
-# ## AI-vs-human Sentences
+# **AI vs Human Collection (CNN DailyMail):**
+# - 7 datasets × ~5-10k each = ~69k total
 # 
-# Take a sample of 10,000 from each class.
+# **Other datasets:**
+# - Human vs Machine: 15,000 per class
+# - Human vs AI Sentences: 7,500 per class
+# - AI Movie Reviews: 5,230 per class (at limit)
+# - AI-and-Human-Text: 14,331 per class (at limit)
+# - IMDB: 10,000
+# - Rotten Tomatoes: 7,500
+# - English Quotes: 2,508 (at limit)
+# - General Knowledge: 10,000 (NEW, limited to avoid formulaic style)
 # 
-# Human samples: 5,000    - 40,000 total
-# AI samples: 5,000       - 40,000 total
+# ## Dataset 2: Secondary Validation (validation.parquet)
+# Target: ~96k samples from leftovers
+# - Built from remaining samples after primary curation
+# - Tests generalization to "more of the same"
+# - Less carefully curated, minor imbalance OK
 # 
+# ### Composition:
+# - RAID leftovers: 30k per class
+# - Human vs Machine leftovers: 12k per class
+# - Arena leftovers: 20k (AI only)
+# - AI vs Human Collection: ~12k (whatever remains)
 # 
-# ## AI generated movie reviews
-# Take a sample of 5,000 from each class.
-# Human samples: 5,000    - 45,000 total
-# AI samples: 5,000       - 45,000 total
-# 
-# 
-# ## AI-and-Human-Generated-Text
-# Take a sample of 10,000 from each class.
-# 
-# Human samples: 10,000   - 55,000 total
-# AI samples: 10,000      - 55,000 total
-# 
-# ## Human vs Machine
-# Take a sample of 10,000 from each class.
-# 
-# Human samples: 10,000   - 65,000 total
-# AI samples: 10,000      - 65,000 total
-# 
-# ## IMDB
-# Take a sample of 5,000 human written movie reviews.
-# 
-# Human samples: 5,000    - 70,000 total
-# AI samples: N/A     - 65,000 total
-# 
-# 
-# ## AG News
-# Take a sample of 10,000 human written news articles.
-# 
-# Human samples: 10,000   - 80,000 total
-# AI samples: N/A     - 65,000 total
-# 
-# ## Rotten Tomatoes Movie Reviews
-# Take a sample of 5,000 human written movie reviews.
-# Human samples: 5,000    - 85,000 total
-# AI samples: N/A     - 65,000 total
-# 
-# ## Newswire
-# Take a sample of 27,492 human written news articles.
-# 
-# Human samples: 27,492   - 112,492 total
-# AI samples: N/A     - 65,000 total
-# 
-# ## English Quote
-# Take all 2,508 human written quotes.
-# 
-# Human samples: 2,508    - 115,000 total
-# AI samples: N/A     - 65,000 total
-# 
-# 
-# 
-# ## LM Arena Datasets
-# 
-# ### Arena Expert 5k
-# Take 10,000 of AI generated data (2 x 5,128 samples).
-# 
-# Human samples: N/A     - 115,000 total
-# AI samples: 10,000     - 75,000 total
-# 
-# ### Search Arena 24k
-# Take a sample of 20,000 of AI generated data (2 x 10,000 samples).
-# 
-# Human samples: N/A     - 115,000 total
-# AI samples: 20,000     - 95,000 total
-# 
-# ### Arena Human Preference 140k
-# Take a sample of 20,000 of AI generated data (2 x 10,000 samples).
-# 
-# Human samples: N/A     - 115,000 total
-# AI samples: 20,000     - 115,000 total
-# 
-# ### Raid Bench Summary
-# Take a sample of 170,000 of AI vs Human text (85,000 from each class).
-# 
-# Human samples: 85,000   - 200,000 total
-# AI samples: 85,000      - 200,000 total
+# **Purpose:** If model performs similarly on both test sets, it generalizes well beyond the curated distribution.
 
 # In[ ]:
 
 
 def strat_sample(df: pl.LazyFrame, n_per_stratum: int, stratify_by: str = "label") -> pl.LazyFrame:
     sample_h = (
-        df.filter(pl.col(stratify_by) == 0)
+        df
+        .filter(pl.col(stratify_by) == 0)
         .unique(maintain_order=True)
         .collect()
         .sample(n=n_per_stratum, seed=SEED, shuffle=True)
         .lazy()
     )
     sample_a = (
-        df.filter(pl.col(stratify_by) == 1)
+        df
+        .filter(pl.col(stratify_by) == 1)
         .unique(maintain_order=True)
         .collect()
         .sample(n=n_per_stratum, seed=SEED, shuffle=True)
@@ -2438,12 +911,35 @@ def sample(df: pl.LazyFrame, n: int) -> pl.LazyFrame:
 # In[ ]:
 
 
-logger.info("Combining datasets...")
-df = (
-    pl.concat(
-        [
-            # AI vs Human datasets
-            *[
+logger.info("Combining datasets for primary curated dataset...")
+df_primary = (
+    (
+        pl
+        .concat(
+            [
+                # RAID - increased to 75k per class (30% of 500k total)
+                strat_sample(raid, n_per_stratum=75_000),
+                # Essays - NEW additions
+                sample(human_essays, 40_000),  # Human essays (avoid topic overfitting)
+                llm_essays,  # All 37,488 LLM essays
+                # DAIGT v2 - NEW addition (student essays)
+                sample(daigt_v2.filter(pl.col("label") == 0), 25_000),  # Human student essays
+                daigt_v2.filter(pl.col("label") == 1),  # All 17,497 AI student essays
+                # General Knowledge - NEW (limited to 10k to avoid formulaic style)
+                sample(general_knowledge, 10_000),
+                # Newswire - increased from 35k to 50k
+                sample(newswire, 50_000),
+                # AG News - increased from 15k to 20k
+                sample(ag, 20_000),
+                # IMDB - increased from 7.5k to 10k
+                sample(imdb, 10_000),
+                # Rotten Tomatoes
+                sample(rt, 7_500),
+                # Arena datasets - increased significantly
+                sample(human_preference_140k, 50_000),  # Up from 20k
+                sample(search_arena, 30_000),  # Up from 20k
+                expert_arena,  # All ~10k
+                # AI vs Human Collection
                 ai_vs_human_llama_8B,
                 ai_vs_human_gemma,
                 strat_sample(ai_vs_human_gpt35t, 4_500),
@@ -2451,38 +947,39 @@ df = (
                 ai_vs_human_qwen,
                 ai_vs_human_smolLM2,
                 ai_vs_human_smolLM2_1_7B,
+                # Other balanced datasets
+                strat_sample(human_vs_ai_sentences, 7_500),
+                ai_movie_reviews,  # All available (at limit)
+                ai_and_human,  # All available (at limit)
+                strat_sample(human_vs_machine, n_per_stratum=15_000),
+                # Human-only at limits
+                english_quotes,  # All 2,508
             ],
-            # There are duplicates in the Human vs AI sentences dataset
-            # (specifically for the human class so we will
-            # oversample below on the human data so when we drop duplicates later we still have enough human data)
-            strat_sample(human_vs_ai_sentences, 5_500),
-            strat_sample(ai_movie_reviews, n_per_stratum=5_000),
-            # Human and AI generated text datasets
-            strat_sample(ai_and_human, n_per_stratum=10_000),
-            strat_sample(human_vs_machine, n_per_stratum=10_000),
-            # Human text datasets
-            *[sample(imdb, 7_500), sample(ag, 15_000), sample(rt, 7_500), sample(newswire, 35_492), english_quotes],
-            # AI text datasets
-            *[sample(expert_arena, 10_000), sample(search_arena, 20_000), sample(human_preference_140k, 20_000)],
-            strat_sample(raid, n_per_stratum=85_000),
-        ],
-        how="diagonal",
+            how="diagonal",
+        )
+        .drop("models", "model", strict=False)
+        .unique(["text", "label"], maintain_order=True)
+        .cast({"dataset": pl.Categorical})
     )
-    .drop("models")
-    .unique(["text", "label"], maintain_order=True)
-    .cast({"dataset": pl.Categorical})
+    .collect()
+    .lazy()
 )
+
+logger.info("Primary dataset combined.")
+logger.info(f"Total samples: {df_primary.select(pl.len()).collect()[0, 0]}")
+logger.info("Label distribution:")
+print(df_primary.group_by("label").agg(pl.len()).sort("label").collect())
 
 
 # In[ ]:
 
 
-logger.info("Saving curated dataset to Parquet...")
-df.sink_parquet(DATA_PATH)
-df = pl.scan_parquet(DATA_PATH)
-logger.info("Curated dataset saved.")
+logger.info("Saving primary curated dataset to Parquet...")
+df_primary.sink_parquet(DATA_PATH)
+df_primary = pl.scan_parquet(DATA_PATH)
+logger.info("Primary dataset saved.")
 logger.info("Dataset summary:")
-summary = df.group_by("label").agg(pl.len()).sort("label").collect()
+summary = df_primary.group_by("label").agg(pl.len()).sort("label").collect()
 logger.info(f"{summary}")
 
 
@@ -2491,8 +988,13 @@ logger.info(f"{summary}")
 
 from polars_splitters import split_into_train_eval
 
-logger.info("Splitting into train and eval sets...")
-df_train, df_test = split_into_train_eval(df.collect(), eval_rel_size=0.2, stratify_by=["dataset", "label"], seed=SEED)
+logger.info("Splitting primary dataset into train and eval sets...")
+df_train, df_test = split_into_train_eval(
+    df_primary.collect(), eval_rel_size=0.2, stratify_by=["dataset", "label"], seed=SEED
+)
+
+logger.info(f"Train size: {len(df_train)}")
+logger.info(f"Test size: {len(df_test)}")
 
 
 # In[ ]:
@@ -2512,5 +1014,314 @@ df_test.sample(fraction=1, shuffle=True, seed=SEED).write_parquet(TEST_PATH)
 # In[ ]:
 
 
-logger.info("Data splitting and saving complete.")
+logger.info("Building secondary validation dataset from leftovers...")
+
+# Get primary texts as a set for efficient filtering
+primary_texts = set(df_primary.select("text").collect().to_series().to_list())
+
+df_validation = (
+    pl
+    .concat(
+        [
+            # RAID leftovers (30k per class)
+            raid
+            .filter(~pl.col("text").is_in(primary_texts))
+            .collect()
+            .partition_by("label")[0]
+            .sample(30_000, seed=SEED)
+            .lazy(),
+            raid
+            .filter(~pl.col("text").is_in(primary_texts))
+            .collect()
+            .partition_by("label")[1]
+            .sample(30_000, seed=SEED)
+            .lazy(),
+            # Arena leftovers (AI only)
+            human_preference_140k
+            .filter(~pl.col("text").is_in(primary_texts))
+            .collect()
+            .sample(12_000, seed=SEED)
+            .lazy(),
+            search_arena.filter(~pl.col("text").is_in(primary_texts)).collect().sample(8_000, seed=SEED).lazy(),
+            # Human vs Machine leftovers
+            human_vs_machine
+            .filter(~pl.col("text").is_in(primary_texts))
+            .collect()
+            .partition_by("label")[0]
+            .sample(12_000, seed=SEED)
+            .lazy(),
+            human_vs_machine
+            .filter(~pl.col("text").is_in(primary_texts))
+            .collect()
+            .partition_by("label")[1]
+            .sample(12_000, seed=SEED)
+            .lazy(),
+            # AI vs Human Collection leftovers (take all remaining)
+            *[
+                ds.filter(~pl.col("text").is_in(primary_texts))
+                for ds in [
+                    ai_vs_human_llama_8B,
+                    ai_vs_human_gemma,
+                    ai_vs_human_gpt35t,
+                    ai_vs_human_llama,
+                    ai_vs_human_qwen,
+                    ai_vs_human_smolLM2,
+                    ai_vs_human_smolLM2_1_7B,
+                ]
+            ],
+        ],
+        how="diagonal",
+    )
+    .drop("models", "model", strict=False)
+    .unique(["text", "label"], maintain_order=True)
+    .cast({"dataset": pl.Categorical})
+)
+
+logger.info("Secondary validation dataset built.")
+logger.info(f"Total samples: {df_validation.select(pl.len()).collect()[0, 0]}")
+logger.info("Label distribution:")
+print(df_validation.group_by("label").agg(pl.len()).sort("label").collect())
+
+
+# In[ ]:
+
+
+logger.info("Saving validation set to Parquet...")
+df_validation.sink_parquet(VALIDATION_PATH)
+df_validation = pl.scan_parquet(VALIDATION_PATH)
+
+
+# In[ ]:
+
+
+logger.info("Dataset curation complete!")
+logger.info("Files created:")
+logger.info(f"  - Primary dataset: {DATA_PATH}")
+logger.info(f"  - Train set: {TRAIN_PATH}")
+logger.info(f"  - Test set: {TEST_PATH}")
+logger.info(f"  - Validation set: {VALIDATION_PATH}")
+
+
+# In[ ]:
+
+
+# ==============================================================================
+# Markdown Bias Analysis (Dataset Property)
+# ==============================================================================
+
+logger.info("\n" + "=" * 80)
+logger.info("MARKDOWN BIAS ANALYSIS")
+logger.info("=" * 80)
+
+# Define markdown patterns
+MARKDOWN_PATTERNS = {
+    "heading": r"^#+\s+",  # # Heading, ## Subheading
+    "bold_asterisk": r"\*\*[^*]+\*\*",  # **bold**
+    "italic_asterisk": r"(?<!\*)\*(?!\*)[\w\s]+\*(?!\*)",  # *italic*
+    "code_block": r"```",  # ```code```
+    "inline_code": r"`[^`]+`",  # `code`
+    "list_item": r"^\s*[-*+]\s+",  # - item, * item
+    "numbered_list": r"^\s*\d+\.\s+",  # 1. item
+    "blockquote": r"^>\s+",  # > quote
+}
+
+
+def has_markdown(text: str) -> tuple[bool, dict[str, int]]:
+    """Check if text contains markdown patterns."""
+    pattern_counts = {}
+    has_any = False
+
+    for pattern_name, pattern in MARKDOWN_PATTERNS.items():
+        count = len(re.findall(pattern, text, re.MULTILINE | re.DOTALL))
+        pattern_counts[pattern_name] = count
+        if count > 0:
+            has_any = True
+
+    return has_any, pattern_counts
+
+
+# Analyze training set
+logger.info("Analyzing training set for markdown bias...")
+train_markdown_stats: dict[str, dict[str, int | dict[str, int]]] = {}
+
+for text, label in zip(df_train["text"].to_list(), df_train["label"].to_list(), strict=True):
+    label_key = "ai" if label == 1 else "human"
+    has_md, counts = has_markdown(text)
+
+    if label_key not in train_markdown_stats:
+        train_markdown_stats[label_key] = {"total": 0, "with_markdown": 0, "patterns": {}}
+
+    train_markdown_stats[label_key]["total"] += 1  # type: ignore[operator]
+    if has_md:
+        train_markdown_stats[label_key]["with_markdown"] += 1  # type: ignore[operator]
+
+    for pattern, count in counts.items():
+        if pattern not in train_markdown_stats[label_key]["patterns"]:  # type: ignore[operator]
+            train_markdown_stats[label_key]["patterns"][pattern] = 0  # type: ignore[index, assignment]
+        train_markdown_stats[label_key]["patterns"][pattern] += count  # type: ignore[index, operator]
+
+# Compute percentages
+ai_total = train_markdown_stats["ai"]["total"]  # type: ignore[assignment]
+human_total = train_markdown_stats["human"]["total"]  # type: ignore[assignment]
+ai_with_md = train_markdown_stats["ai"]["with_markdown"]  # type: ignore[assignment]
+human_with_md = train_markdown_stats["human"]["with_markdown"]  # type: ignore[assignment]
+
+ai_pct = (ai_with_md / ai_total) * 100  # type: ignore[operator]
+human_pct = (human_with_md / human_total) * 100  # type: ignore[operator]
+
+logger.info("\nMarkdown usage in training data:")
+logger.info(f"  AI samples with markdown: {ai_with_md}/{ai_total} ({ai_pct:.2f}%)")
+logger.info(f"  Human samples with markdown: {human_with_md}/{human_total} ({human_pct:.2f}%)")
+logger.info(f"  Bias ratio (AI/Human): {ai_pct / human_pct:.2f}x")
+
+# Pattern-specific breakdown
+logger.info("\nPer-pattern breakdown (count per sample):")
+pattern_stats = {}
+for pattern_name in MARKDOWN_PATTERNS:
+    ai_count = train_markdown_stats["ai"]["patterns"].get(pattern_name, 0) / ai_total  # type: ignore[operator]
+    human_count = train_markdown_stats["human"]["patterns"].get(pattern_name, 0) / human_total  # type: ignore[operator]
+    logger.info(f"  {pattern_name:20s}: AI={ai_count:.3f}, Human={human_count:.3f}")
+    pattern_stats[pattern_name] = {"ai": round(ai_count, 4), "human": round(human_count, 4)}
+
+# Save markdown bias for dataset metadata
+markdown_bias = {
+    "ai_pct": round(ai_pct, 2),
+    "human_pct": round(human_pct, 2),
+    "ratio": round(ai_pct / human_pct if human_pct > 0 else 0, 2),
+    "pattern_breakdown": pattern_stats,
+}
+
+logger.info("=" * 80 + "\n")
+
+
+# In[ ]:
+
+
+# ==============================================================================
+# Export Dataset Metadata
+# ==============================================================================
+
+
+logger.info("\n" + "=" * 80)
+logger.info("GENERATING DATASET METADATA")
+logger.info("=" * 80)
+
+
+def get_dataset_composition(df: pl.LazyFrame) -> dict:
+    """Extract dataset composition with counts per source dataset and label."""
+    composition_df = df.group_by(["dataset", "label"]).agg(pl.len().alias("count")).collect().sort(["dataset", "label"])
+
+    composition = {}
+    for row in composition_df.iter_rows(named=True):
+        dataset_name = row["dataset"]
+        label = row["label"]
+        count = row["count"]
+
+        if dataset_name not in composition:
+            composition[dataset_name] = {"count": 0, "human": 0, "ai": 0}
+
+        composition[dataset_name]["count"] += count
+        if label == 0:
+            composition[dataset_name]["human"] += count
+        else:
+            composition[dataset_name]["ai"] += count
+
+    return composition
+
+
+def get_class_balance(df: pl.LazyFrame) -> dict:
+    """Calculate class balance (proportion of human vs AI)."""
+    counts = df.group_by("label").agg(pl.len().alias("count")).collect().sort("label")
+    total = sum(row["count"] for row in counts.iter_rows(named=True))
+
+    balance = {}
+    for row in counts.iter_rows(named=True):
+        label = "human" if row["label"] == 0 else "ai"
+        balance[label] = round(row["count"] / total, 4)
+
+    return balance
+
+
+def compute_text_statistics(texts: list[str]) -> dict:
+    """Compute statistical summary for text lengths and token counts."""
+    # Text lengths (characters)
+    text_lengths = [len(text) for text in texts]
+
+    # Token counts (requires tokenization)
+    logger.info(f"Tokenizing {len(texts)} texts for statistics...")
+    tokens = tokenize(texts)
+    token_counts = [len(t) for t in tokens]
+
+    def stats_dict(values: list[int]) -> dict:
+        arr = np.array(values)
+        return {
+            "mean": round(float(np.mean(arr)), 2),
+            "std": round(float(np.std(arr)), 2),
+            "min": int(np.min(arr)),
+            "max": int(np.max(arr)),
+            "p50": int(np.percentile(arr, 50)),
+            "p95": int(np.percentile(arr, 95)),
+        }
+
+    return {"text_lengths_chars": stats_dict(text_lengths), "token_counts": stats_dict(token_counts)}
+
+
+# Collect dataset composition
+logger.info("Collecting dataset composition...")
+dataset_composition = {
+    "train": get_dataset_composition(df_train.lazy()),
+    "test": get_dataset_composition(df_test.lazy()),
+    "validation": get_dataset_composition(df_validation),
+}
+
+# Collect class balance
+class_balance = {
+    "train": get_class_balance(df_train.lazy()),
+    "test": get_class_balance(df_test.lazy()),
+    "validation": get_class_balance(df_validation),
+}
+
+# Compute text statistics (sampling for validation to avoid long computation)
+logger.info("Computing text statistics...")
+train_stats = compute_text_statistics(df_train["text"].to_list())
+test_stats = compute_text_statistics(df_test["text"].to_list())
+
+validation_count = df_validation.select(pl.len()).collect()[0, 0]
+val_sample_size = min(50_000, validation_count)
+val_texts = df_validation.collect().sample(val_sample_size, seed=SEED)["text"].to_list()
+logger.info(f"Computing validation stats on {val_sample_size} samples...")
+val_stats = compute_text_statistics(val_texts)
+
+
+# Create dataset metadata
+dataset_metadata = {
+    "dataset_version": str(RETRAINED_MODEL_VERSION),
+    "created_timestamp": datetime.now(UTC).isoformat(),
+    "preprocessing_version": __version__,
+    "seed": SEED,
+    "sample_counts": {
+        "train": len(df_train),
+        "test": len(df_test),
+        "validation": validation_count,
+        "total": len(df_train) + len(df_test) + validation_count,
+    },
+    "dataset_composition": dataset_composition,
+    "class_balance": class_balance,
+    "statistics": {"train": train_stats, "test": test_stats, "validation": val_stats},
+    "markdown_bias": markdown_bias,
+}
+
+# Save metadata
+metadata_path = DATA_DIR / "dataset_metadata.json"
+with metadata_path.open("w", encoding="utf-8") as f:
+    json.dump(dataset_metadata, f, indent=2)
+
+logger.info(f"Saved dataset metadata to {metadata_path}")
+logger.info(f"Dataset version: {RETRAINED_MODEL_VERSION}")
+logger.info(
+    f"Total datasets: train={len(dataset_composition['train'])}, "
+    f"test={len(dataset_composition['test'])}, "
+    f"validation={len(dataset_composition['validation'])}"
+)
+logger.info("=" * 80 + "\n")
 

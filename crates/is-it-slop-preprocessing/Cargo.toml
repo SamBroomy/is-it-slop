@@ -4,11 +4,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Preprocessing step for is-it-slop package, providing fast TF-IDF vectorization."
+description = "Preprocessing for is-it-slop: fast TF-IDF vectorization."
 repository.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
+rust-version.workspace = true
 
 [lib]
 name = "is_it_slop_preprocessing"
@@ -21,10 +22,12 @@ bincode = { workspace = true, optional = true }
 bpe-openai = { workspace = true }
 dashmap = { workspace = true, features = ["rayon"] }
 indicatif = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
 mimalloc = { workspace = true, optional = true }
+ndarray = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
-# pyo3-log = { workspace = true, optional = true }
+pyo3-log = { workspace = true, optional = true }
 rayon = { workspace = true }
 regex = { workspace = true }
 rkyv = { workspace = true, optional = true }
@@ -41,7 +44,7 @@ python = [
     "numpy",
     "progress-bars",
     "pyo3",
-    # "pyo3-log",
+    "pyo3-log",
     "rkyv",
     "serde",
 ]
@@ -50,11 +53,13 @@ mimalloc = ["dep:mimalloc"]
 progress-bars = ["dep:indicatif"]
 rkyv = ["dep:rkyv"]
 serde = ["dep:serde", "dep:serde_json"]
+# EXPERIMENTAL: Statistical features (burstiness, entropy, etc.) for research
+statistical-features = ["dep:ndarray", "dep:itertools"]
 
 all-testable = ["serde", "rkyv", "bincode"]
 
 [dev-dependencies]
-csv = "1.4"
+csv = { workspace = true }
 mimalloc = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 

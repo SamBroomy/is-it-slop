@@ -4,7 +4,7 @@
 //! including text cleaning, tokenization, chunking, vectorization, ONNX inference,
 //! and aggregation.
 
-use is_it_slop::{AggregationMethod, Classification, MODEL_VERSION, Predictor};
+use is_it_slop::{AggregationMethod, Classification, MODEL_VERSION, Predictor, Threshold};
 
 /// Test basic single-text prediction
 #[test]
@@ -294,11 +294,7 @@ fn test_predict_whitespace_only() {
     let predictor = Predictor::new();
     let result = predictor.predict(text);
 
-    // Should either succeed with valid result or handle gracefully
-    assert!(
-        result.is_ok(),
-        "Whitespace-only text should be handled gracefully"
-    );
+    assert!(result.is_err(), "Whitespace-only text should be rejected");
 }
 
 /// Test prediction with HTML entities
@@ -451,8 +447,8 @@ fn test_custom_threshold() {
     let text = "Test custom threshold.";
 
     // Create predictors with different thresholds
-    let predictor_low = Predictor::new().with_threshold(0.1);
-    let predictor_high = Predictor::new().with_threshold(0.9);
+    let predictor_low = Predictor::new().with_threshold(Threshold::new(0.1));
+    let predictor_high = Predictor::new().with_threshold(Threshold::new(0.9));
 
     let class_low = predictor_low.classify(text).unwrap();
     let class_high = predictor_high.classify(text).unwrap();

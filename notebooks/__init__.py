@@ -9,7 +9,7 @@ import polars as pl
 from semver import Version
 
 SEED: Final[int] = 42
-MODEL_VERSION = "2.0.0"
+MODEL_VERSION = "2.1.0"
 RETRAINED_MODEL_VERSION = Version.parse(MODEL_VERSION)
 
 # Get from command line argument or set to True to force retraining
@@ -31,10 +31,12 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PATH = DATA_DIR / "curated_dataset.parquet"
 TRAIN_PATH = DATA_DIR / "train.parquet"
 TEST_PATH = DATA_DIR / "test.parquet"
+VALIDATION_PATH = DATA_DIR / "validation.parquet"
 
 df = pl.scan_parquet(DATA_PATH)
 df_train = pl.scan_parquet(TRAIN_PATH)
 df_test = pl.scan_parquet(TEST_PATH)
+df_validation = pl.scan_parquet(VALIDATION_PATH)
 
 
 MODEL_DIR = ROOT_DIR / "crates" / "is-it-slop" / "model_artifacts" / str(RETRAINED_MODEL_VERSION)
@@ -77,6 +79,7 @@ __all__ = [
     "SEED",
     "TEST_PATH",
     "TRAIN_PATH",
+    "VALIDATION_PATH",
     "VECTORIZER_BIN_PATH",
     "VECTORIZER_JSON_PATH",
     "LinearClassifier",
@@ -84,4 +87,5 @@ __all__ = [
     "df",
     "df_test",
     "df_train",
+    "df_validation",
 ]
