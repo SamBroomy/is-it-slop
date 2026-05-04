@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0-alpha.2](https://github.com/SamBroomy/is-it-slop/compare/v0.6.0-alpha.1...v0.6.0-alpha.2) - 2026-05-04
+
+### Other
+
+- remove mimalloc
+- remove mimalloc to fix static TLS allocate error
+
 ## [0.6.0-alpha.1](https://github.com/SamBroomy/is-it-slop/compare/v0.6.0-alpha.0...v0.6.0-alpha.1) - 2026-05-04
 
 ### Other
