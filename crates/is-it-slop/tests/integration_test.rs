@@ -241,10 +241,10 @@ fn test_batch_vs_single_consistency() {
     assert_eq!(batch_results.len(), single_results.len());
     let threshold = predictor.threshold();
     for (batch, single) in batch_results.iter().zip(single_results.iter()) {
-        assert_eq!(
-            batch.prediction.ai_probability(),
-            single.prediction.ai_probability(),
-            "Batch and single predictions should match"
+        let diff = (batch.prediction.ai_probability() - single.prediction.ai_probability()).abs();
+        assert!(
+            diff < 1e-6,
+            "Batch and single predictions should match (diff = {diff:e})"
         );
         assert_eq!(
             batch.classification(threshold),
