@@ -22,7 +22,6 @@ keywords = [
     "AI-text-detector",
     "Machine-learning",
     "onnx",
-    "pyo3",
     "text-classification",
     "ai-slop-detector",
 ]
