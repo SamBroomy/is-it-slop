@@ -35,6 +35,7 @@
 !/crates/is-it-slop/model_artifacts/.gitkeep
 !.pre-commit-config.yaml
 !/.github/workflows/**/*.yaml
+!/.github/workflows/**/*.md
 !release-plz.toml
 !/crates/**/CHANGELOG.md
 /notebooks/raid_bench.*

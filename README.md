@@ -181,7 +181,7 @@ This also avoids complex sklearn-to-ONNX preprocessing conversion while keeping 
 
 ## Architecture
 
-```
+```text
 crates/
 ├── is-it-slop-preprocessing/  # Text → TF-IDF pipeline (PyO3 bindings for training)
 │   ├── cleaner.rs            # Two-stage text cleaning
