@@ -16,6 +16,7 @@ exclude = ["model_artifacts/**"]
 
 [lib]
 name = "is_it_slop"
+filename = "is_it_slop_lib"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
@@ -75,7 +76,7 @@ ignored = ["directories", "flate2", "tar", "tempfile", "ureq"]
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
-pkg-fmt = "tar.gz"
+pkg-fmt = "tgz"
 
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
