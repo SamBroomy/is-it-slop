@@ -96,7 +96,7 @@ package-artifacts:
         exit 1
     fi
 
-    ART_DIR="crates/is-it-slop/model_artifacts/${MODEL_VERSION}"
+    ART_DIR="model_artifacts/${MODEL_VERSION}"
     if [ ! -d "${ART_DIR}" ]; then
         echo "No artifacts directory found at ${ART_DIR}"
         exit 1
@@ -155,7 +155,7 @@ package-artifacts:
         cp "${ART_DIR}/${f}" "${TEMP_DIR}/${MODEL_VERSION}/"
     done
 
-    TAR_PATH="crates/is-it-slop/model_artifacts/model-v${MODEL_VERSION}.tar.gz"
+    TAR_PATH="model_artifacts/model-v${MODEL_VERSION}.tar.gz"
     echo "Creating tarball at ${TAR_PATH}..."
     rm -f "${TAR_PATH}"
     # Use COPYFILE_DISABLE to prevent macOS from adding resource forks
@@ -272,7 +272,7 @@ check-model-version:
     #!/usr/bin/env bash
     set -euo pipefail
     MODEL_VERSION=$(grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1 | cut -d'"' -f2)
-    ART_DIR="crates/is-it-slop/model_artifacts/${MODEL_VERSION}"
+    ART_DIR="model_artifacts/${MODEL_VERSION}"
 
     echo "=== Model Version Safety Check ==="
     echo "Current MODEL_VERSION: ${MODEL_VERSION}"
@@ -347,7 +347,7 @@ create-model-release: check-model-version
     #!/usr/bin/env bash
     set -euo pipefail
     MODEL_VERSION=$(grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1 | cut -d'"' -f2)
-    MODEL_TAR_PATH="crates/is-it-slop/model_artifacts/model-v${MODEL_VERSION}.tar.gz"
+    MODEL_TAR_PATH="model_artifacts/model-v${MODEL_VERSION}.tar.gz"
     DATA_TAR_PATH="data/data-v${MODEL_VERSION}.tar"
 
     if [ ! -f "${MODEL_TAR_PATH}" ]; then
@@ -397,7 +397,7 @@ test-artifact-download:
 
     echo "=== Testing artifact download ==="
 
-    LOCAL_ART_DIR="crates/is-it-slop/model_artifacts/${MODEL_VERSION}"
+    LOCAL_ART_DIR="model_artifacts/${MODEL_VERSION}"
     BACKUP_DIR=""
 
     # Cleanup function - always restore artifacts on exit

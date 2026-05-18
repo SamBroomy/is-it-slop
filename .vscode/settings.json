@@ -1,0 +1,11 @@
+{
+    "python.analysis.extraPaths": [
+        "./python",
+        "./notebooks",
+        "./python/is-it-slop",
+        "./python/is-it-slop-preprocessing"
+    ],
+    // "rust-analyzer.cargo.features": [
+    //     "python"
+    // ]
+}

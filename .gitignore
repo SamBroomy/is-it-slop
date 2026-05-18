@@ -32,11 +32,14 @@
 !/notebooks/__init__.py
 !/.cargo/config.toml
 !/python/**/README.md
-!/crates/is-it-slop/model_artifacts/.gitkeep
 !.pre-commit-config.yaml
 !/.github/workflows/**/*.yaml
 !/.github/workflows/**/*.md
 !release-plz.toml
 !/crates/**/CHANGELOG.md
 /notebooks/raid_bench.*
-!taplo.toml
+!.taplo.toml
+!.vscode/settings.json
+!assets/pink-307853.svg
+!model_artifacts/.gitkeep
+!data/.gitkeep

@@ -215,7 +215,14 @@ fn main() {
 
     // Source artifacts directory (local dev or env override)
     let source_artifacts_dir = env::var("MODEL_ARTIFACTS_DIR").map_or_else(
-        |_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("model_artifacts"),
+        |_| {
+            // Model artifacts are at workspace root, not in crate directory
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent() // crates/
+                .and_then(|p| p.parent()) // workspace root
+                .expect("Unable to find workspace root")
+                .join("model_artifacts")
+        },
         PathBuf::from,
     );
 
