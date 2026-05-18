@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0-alpha.4](https://github.com/SamBroomy/is-it-slop/compare/v0.6.0-alpha.3...v0.6.0-alpha.4) - 2026-05-18
+
+### Other
+
+- cleanup of files and dirs
+- workflow, documentation, display output
+
 ## [0.6.0-alpha.3](https://github.com/SamBroomy/is-it-slop/compare/v0.6.0-alpha.2...v0.6.0-alpha.3) - 2026-05-05
 
 ### Other
