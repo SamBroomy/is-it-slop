@@ -36,12 +36,13 @@ ahash = { version = "0.8.12", features = ["serde"] }
 anyhow = "1.0.100"
 bincode = { version = "=2.0.1", features = ["serde"] }
 bpe-openai = "0.3.0"
-clap = { version = "4.5.53", features = ["derive"] }
+clap = { version = "4.5.53", features = ["derive", "env"] }
 dashmap = "6.1.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
 itertools = "0.14.0"
 ndarray = "0.17"
 numpy = "0.28"
+owo-colors = { version = "4.3", features = ["supports-colors"] }
 # ONNX Runtime with pure Rust tract backend for smaller binary size
 ort = { version = "=2.0.0-rc.12", default-features = false, features = [
     "download-binaries",

@@ -146,6 +146,13 @@ pub fn predict(
 
     let chunks = TOKEN_CHUNKER.chunk(tokens);
 
+    // Capture token count for single-chunk documents
+    let single_chunk_token_count = if chunks.len() == 1 {
+        Some(chunks[0].len())
+    } else {
+        None
+    };
+
     let chunk_features = PRE_PROCESSOR.vectorize_from_tokens(&chunks);
     let input_tensor = prepare_input_for_inference(&chunk_features)?;
 
@@ -154,7 +161,9 @@ pub fn predict(
         run_inference_batch(&mut model, input_tensor)
     }?;
 
-    Ok(UnifiedPrediction::new(output, agg_method))
+    let mut prediction = UnifiedPrediction::new(output, agg_method);
+    prediction.single_chunk_token_count = single_chunk_token_count;
+    Ok(prediction)
 }
 
 /// Predict classifications for multiple texts.
@@ -219,9 +228,16 @@ pub fn predict_batch(
     // Keep track of chunk counts per input for later aggregation.
     let total_chunks: usize = chunked_inputs.iter().map(Vec::len).sum();
     let mut chunk_counts = Vec::with_capacity(chunked_inputs.len());
+    let mut single_chunk_token_counts = Vec::with_capacity(chunked_inputs.len());
     let mut all_chunks = Vec::with_capacity(total_chunks);
     for chunks in &chunked_inputs {
         chunk_counts.push(chunks.len());
+        // Track token counts for single-chunk documents
+        if chunks.len() == 1 {
+            single_chunk_token_counts.push(Some(chunks[0].len()));
+        } else {
+            single_chunk_token_counts.push(None);
+        }
         all_chunks.extend_from_slice(chunks);
     }
 
@@ -239,10 +255,13 @@ pub fn predict_batch(
         let mut offset = 0;
         chunk_counts
             .iter()
-            .map(|&count| {
+            .zip(single_chunk_token_counts.iter())
+            .map(|(&count, &token_count)| {
                 let chunk_preds = output[offset..offset + count].to_vec();
                 offset += count;
-                UnifiedPrediction::new(chunk_preds, agg_method)
+                let mut prediction = UnifiedPrediction::new(chunk_preds, agg_method);
+                prediction.single_chunk_token_count = token_count;
+                prediction
             })
             .collect()
     };

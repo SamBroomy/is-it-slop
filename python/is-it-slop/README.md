@@ -64,7 +64,7 @@ for text, result in zip(texts, results):
 The package includes a CLI that can be used after installation:
 
 ```bash
-# Default: human-readable with probabilities and confidence metrics
+# Default: classification bar with confidence metrics
 is-it-slop "Your text here"
 
 # Classification label only
@@ -79,6 +79,9 @@ is-it-slop "Text" --label --score
 is-it-slop "Text" --score
 # Output: 0.2340
 
+# Exit code mode (0=AI, 1=Human, 2=error)
+is-it-slop "Text" --classify
+
 # Full JSON output
 is-it-slop "Text" --json
 
@@ -90,6 +93,12 @@ is-it-slop -b texts.txt
 
 # Custom threshold
 is-it-slop "Text" --threshold 0.7
+
+# Verbose: show model internals
+is-it-slop "Text" --verbose
+
+# Quiet: bar only, no metrics
+is-it-slop "Text" --quiet
 
 # Read from stdin
 echo "Your text" | is-it-slop

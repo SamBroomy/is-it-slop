@@ -233,6 +233,7 @@ impl Prediction {
             threshold_distance,
             entropy_confidence,
             overall,
+            sample_reliability: 1.0, // Single prediction - no sample size penalty
         }
     }
 
@@ -404,6 +405,10 @@ pub struct ConfidenceMetrics {
     /// Overall confidence score (weighted combination of above)
     /// Range: 0.0-1.0
     pub overall: f32,
+
+    /// Sample reliability (statistical adequacy of sample size)
+    /// Range: 0.0-1.0 (accounts for chunk count, token count, and variance)
+    pub sample_reliability: f32,
 }
 
 impl ConfidenceMetrics {
@@ -421,6 +426,10 @@ pub struct ChunkInfo {
     pub num_chunks: usize,
     /// Agreement score across chunks (0.5-1.0)
     pub chunk_agreement: f32,
+    /// Standard deviation of chunk AI probabilities (None for single chunk)
+    pub chunk_std_dev: Option<f32>,
+    /// Token count for single-chunk documents (None for multi-chunk)
+    pub token_count: Option<usize>,
 }
 /// Extended prediction with chunk-level analysis
 /// Document-level prediction combining multiple chunk predictions.
@@ -458,6 +467,8 @@ pub struct UnifiedPrediction {
     pub aggregation_method: AggregationMethod,
     /// Agreement score across chunks (0.5-1.0)
     pub chunk_agreement: f32,
+    /// Token count for single-chunk documents (None for multi-chunk)
+    pub single_chunk_token_count: Option<usize>,
 }
 
 impl UnifiedPrediction {
@@ -477,6 +488,7 @@ impl UnifiedPrediction {
             chunk_predictions,
             aggregation_method,
             chunk_agreement,
+            single_chunk_token_count: None,
         }
     }
 
@@ -494,6 +506,15 @@ impl UnifiedPrediction {
         // chunk_agreement = 0.5 (50/50 split)     → reduce confidence
         metrics.overall *= self.chunk_agreement;
 
+        // Calculate sample reliability and fold into overall
+        let chunk_std_dev = self.calculate_chunk_std_dev();
+        metrics.sample_reliability = calculate_sample_reliability(
+            self.chunk_predictions.len(),
+            self.single_chunk_token_count,
+            chunk_std_dev,
+        );
+        metrics.overall *= metrics.sample_reliability;
+
         metrics
     }
 
@@ -503,6 +524,8 @@ impl UnifiedPrediction {
         ChunkInfo {
             num_chunks: self.chunk_predictions.len(),
             chunk_agreement: self.chunk_agreement,
+            chunk_std_dev: self.calculate_chunk_std_dev(),
+            token_count: self.single_chunk_token_count,
         }
     }
 
@@ -511,6 +534,61 @@ impl UnifiedPrediction {
     pub fn classification(&self, threshold: Threshold) -> Classification {
         self.prediction.classification(threshold)
     }
+
+    /// Calculate the standard deviation of chunk AI probabilities.
+    /// Returns None for single-chunk documents.
+    fn calculate_chunk_std_dev(&self) -> Option<f32> {
+        if self.chunk_predictions.len() < 2 {
+            return None;
+        }
+
+        let ai_probs: Vec<f32> = self
+            .chunk_predictions
+            .iter()
+            .map(Prediction::ai_probability)
+            .collect();
+
+        let mean = ai_probs.iter().sum::<f32>() / ai_probs.len() as f32;
+        let variance =
+            ai_probs.iter().map(|p| (p - mean).powi(2)).sum::<f32>() / ai_probs.len() as f32;
+
+        Some(variance.sqrt()) // Standard deviation
+    }
+}
+
+/// Calculate sample adequacy based on chunk count and token count.
+/// For single-chunk documents, applies compound penalty based on token count.
+/// For multi-chunk documents, uses exponential curve based on chunk count.
+fn sample_adequacy(num_chunks: usize, token_count: Option<usize>) -> f32 {
+    if num_chunks == 1 {
+        // Single chunk: apply token-level penalty
+        if let Some(tokens) = token_count {
+            let chunk_adequacy = 1.0_f32 - (-1.0_f32 / 2.0_f32).exp(); // ~0.39 base for n=1
+            let token_adequacy = (tokens as f32 / 150.0_f32).min(1.0_f32);
+            return chunk_adequacy * token_adequacy;
+        }
+    }
+
+    // Multi-chunk: only chunk count matters
+    let n = num_chunks as f32;
+    1.0_f32 - (-n / 2.0_f32).exp()
+}
+
+/// Calculate variance penalty based on chunk prediction spread.
+/// Uses exponential decay so penalty smoothly approaches 0 without a hard cutoff.
+/// Returns 1.0 for single chunks (no variance), decreases for high variance.
+fn variance_penalty(chunk_std_dev: Option<f32>) -> f32 {
+    chunk_std_dev.map_or(1.0, |std_dev| (-std_dev * 3.0).exp())
+}
+
+/// Calculate overall sample reliability score.
+/// Combines sample adequacy (chunk/token count) with variance penalty.
+fn calculate_sample_reliability(
+    num_chunks: usize,
+    token_count: Option<usize>,
+    chunk_std_dev: Option<f32>,
+) -> f32 {
+    sample_adequacy(num_chunks, token_count) * variance_penalty(chunk_std_dev)
 }
 
 #[cfg(test)]
@@ -750,11 +828,16 @@ mod tests {
 
         let metrics = unified.confidence_metrics(threshold);
 
-        // High agreement (all chunks agree) should not penalize confidence
+        // High agreement (all chunks agree) boosts confidence, but
+        // overall now folds in sample_reliability (n=3 chunks)
         assert!(unified.chunk_agreement > 0.9, "Agreement should be high");
         assert!(
-            metrics.overall > 0.7,
-            "Overall confidence should be high with agreement"
+            metrics.overall > 0.4,
+            "Overall confidence should account for sample reliability"
+        );
+        assert!(
+            metrics.sample_reliability > 0.6,
+            "Sample reliability should be high with multiple agreeing chunks"
         );
     }
 
@@ -770,14 +853,14 @@ mod tests {
 
         let metrics = unified.confidence_metrics(threshold);
 
-        // Low agreement (50/50 split) should penalize confidence
+        // Low agreement (50/50 split) should penalize confidence heavily
         assert!(
             (unified.chunk_agreement - 0.5).abs() < 1e-6,
             "Agreement should be 0.5"
         );
         assert!(
-            metrics.overall < 0.5,
-            "Overall confidence should be penalized for disagreement"
+            metrics.overall < 0.1,
+            "Overall confidence should be severely penalized for disagreement"
         );
     }
 
@@ -881,5 +964,97 @@ mod tests {
         // Halfway between threshold and max
         let pred_mid = Prediction::from_ai_probability(0.75);
         assert!((pred_mid.threshold_distance(threshold) - 0.5).abs() < 1e-6);
+    }
+
+    // Sample Reliability Tests
+
+    #[test]
+    fn test_sample_adequacy_multi_chunk() {
+        assert!((sample_adequacy(2, None) - 0.63).abs() < 0.1);
+        assert!((sample_adequacy(3, None) - 0.78).abs() < 0.1);
+        assert!((sample_adequacy(5, None) - 0.92).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_sample_adequacy_single_chunk_with_tokens() {
+        // Very short: 5 tokens
+        assert!(sample_adequacy(1, Some(5)) < 0.05); // ~1%
+
+        // Short: 30 tokens (minimum)
+        assert!((sample_adequacy(1, Some(30)) - 0.08).abs() < 0.05); // ~8%
+
+        // Medium: 75 tokens
+        assert!((sample_adequacy(1, Some(75)) - 0.20).abs() < 0.05); // ~20%
+
+        // Full chunk: 150 tokens
+        assert!((sample_adequacy(1, Some(150)) - 0.39).abs() < 0.05); // ~39%
+    }
+
+    #[test]
+    fn test_chunk_std_dev_calculation() {
+        let chunks = vec![
+            Prediction::from_ai_probability(0.8),
+            Prediction::from_ai_probability(0.85),
+            Prediction::from_ai_probability(0.9),
+        ];
+        let unified = UnifiedPrediction::new(chunks, AggregationMethod::Mean);
+        let std_dev = unified.calculate_chunk_std_dev();
+        assert!(std_dev.is_some());
+        assert!(std_dev.unwrap() < 0.1);
+    }
+
+    #[test]
+    fn test_sample_reliability_single_chunk_no_token_count() {
+        let chunks = vec![Prediction::from_ai_probability(0.9)];
+        let unified = UnifiedPrediction::new(chunks, AggregationMethod::Mean);
+        // No token count set - should use base adequacy only
+        let metrics = unified.confidence_metrics(Threshold::default());
+        assert!((metrics.sample_reliability - 0.39).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_sample_reliability_single_chunk_very_short() {
+        let chunks = vec![Prediction::from_ai_probability(0.9)];
+        let mut unified = UnifiedPrediction::new(chunks, AggregationMethod::Mean);
+        unified.single_chunk_token_count = Some(5); // Very short
+        let metrics = unified.confidence_metrics(Threshold::default());
+        assert!(metrics.sample_reliability < 0.05); // Very low reliability
+    }
+
+    #[test]
+    fn test_sample_reliability_single_chunk_full_size() {
+        let chunks = vec![Prediction::from_ai_probability(0.9)];
+        let mut unified = UnifiedPrediction::new(chunks, AggregationMethod::Mean);
+        unified.single_chunk_token_count = Some(150); // Full chunk
+        let metrics = unified.confidence_metrics(Threshold::default());
+        assert!((metrics.sample_reliability - 0.39).abs() < 0.1); // Moderate reliability
+    }
+
+    #[test]
+    fn test_sample_reliability_multi_chunk_low_variance() {
+        let chunks = vec![
+            Prediction::from_ai_probability(0.88),
+            Prediction::from_ai_probability(0.90),
+            Prediction::from_ai_probability(0.92),
+            Prediction::from_ai_probability(0.89),
+            Prediction::from_ai_probability(0.91),
+        ];
+        let unified = UnifiedPrediction::new(chunks, AggregationMethod::Mean);
+        let metrics = unified.confidence_metrics(Threshold::default());
+        assert!(metrics.sample_reliability > 0.7); // High reliability
+    }
+
+    #[test]
+    fn test_sample_reliability_multi_chunk_high_variance() {
+        let chunks = vec![
+            Prediction::from_ai_probability(0.2),
+            Prediction::from_ai_probability(0.9),
+            Prediction::from_ai_probability(0.3),
+            Prediction::from_ai_probability(0.8),
+            Prediction::from_ai_probability(0.4),
+        ];
+        let unified = UnifiedPrediction::new(chunks, AggregationMethod::Mean);
+        let metrics = unified.confidence_metrics(Threshold::default());
+        assert!(metrics.sample_reliability < 0.5); // Low reliability due to variance
     }
 }

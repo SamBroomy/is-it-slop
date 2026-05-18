@@ -608,7 +608,7 @@ impl RustTfidfVectorizerBuilder {
         Ok(())
     }
 
-    /// Finalize the vectorizer and return a fitted TfidfVectorizer.
+    /// Finalize the vectorizer and return a fitted `TfidfVectorizer`.
     ///
     /// After calling this method, the builder is consumed and cannot be used again.
     ///
@@ -632,26 +632,31 @@ impl RustTfidfVectorizerBuilder {
     /// Get current number of documents processed.
     #[getter]
     fn total_docs(&self) -> usize {
-        self.inner.as_ref().map(|b| b.total_docs()).unwrap_or(0)
+        self.inner
+            .as_ref()
+            .map_or(0, TfidfVectorizerBuilder::total_docs)
     }
 
     /// Get current vocabulary size (before filtering).
     #[getter]
     fn raw_vocab_size(&self) -> usize {
-        self.inner.as_ref().map(|b| b.raw_vocab_size()).unwrap_or(0)
+        self.inner
+            .as_ref()
+            .map_or(0, TfidfVectorizerBuilder::raw_vocab_size)
     }
 
     /// Return a string representation.
     fn __repr__(&self) -> String {
-        if let Some(builder) = &self.inner {
-            format!(
-                "RustTfidfVectorizerBuilder(total_docs={}, raw_vocab_size={})",
-                builder.total_docs(),
-                builder.raw_vocab_size()
-            )
-        } else {
-            "RustTfidfVectorizerBuilder(finalized)".to_string()
-        }
+        self.inner.as_ref().map_or_else(
+            || "RustTfidfVectorizerBuilder(finalized)".to_string(),
+            |builder| {
+                format!(
+                    "RustTfidfVectorizerBuilder(total_docs={}, raw_vocab_size={})",
+                    builder.total_docs(),
+                    builder.raw_vocab_size()
+                )
+            },
+        )
     }
 }
 
@@ -662,7 +667,7 @@ impl RustTfidfVectorizerBuilder {
 /// * `chunk_tokens_batch` - List of chunked token sequences (list of list of list of tokens)
 ///
 /// # Returns
-/// Numpy array of shape (total_chunks, 9) with combined features
+/// Numpy array of shape (`total_chunks`, 9) with combined features
 ///
 /// # Example
 /// ```python
@@ -676,11 +681,11 @@ impl RustTfidfVectorizerBuilder {
 #[cfg(feature = "statistical-features")]
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-fn rust_extract_combined_batch<'py>(
-    py: Python<'py>,
+fn rust_extract_combined_batch(
+    py: Python<'_>,
     full_texts: Vec<String>,
     chunk_tokens_batch: Vec<Vec<Vec<u32>>>,
-) -> Bound<'py, numpy::PyArray2<f32>> {
+) -> Bound<'_, numpy::PyArray2<f32>> {
     use crate::pre_processor::extract_combined_batch;
 
     // Release GIL during computation

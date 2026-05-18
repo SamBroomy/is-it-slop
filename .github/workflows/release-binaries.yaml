@@ -27,13 +27,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04
 
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04
-
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-
-          - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
 
           - target: aarch64-apple-darwin
@@ -58,9 +52,6 @@ jobs:
       - uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.target }}
-
-      - run: echo "RUSTFLAGS=${RUSTFLAGS} -C target-feature=+crt-static -C link-self-contained=yes" >>"${GITHUB_ENV}"
-        if: contains(matrix.target, '-linux-musl')
 
       - uses: taiki-e/upload-rust-binary-action@v1
         with:

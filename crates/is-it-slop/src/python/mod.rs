@@ -37,8 +37,8 @@ use crate::{Threshold, pipeline::PipelineError};
 ///     `human_probability` (float): Probability that the text is human-written (0.0 to 1.0)
 ///     `ai_probability` (float): Probability that the text is AI-generated (0.0 to 1.0)
 ///     classification (str): Classification label ("Human" or "AI")
-///     num_chunks (int): Number of text chunks processed
-///     chunk_agreement (float): Agreement score across chunks (0.5-1.0)
+///     `num_chunks` (int): Number of text chunks processed
+///     `chunk_agreement` (float): Agreement score across chunks (0.5-1.0)
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 struct PredictionResult {
@@ -169,7 +169,7 @@ fn is_this_slop_batch(
 fn cli_main() -> PyResult<()> {
     use clap::Parser;
 
-    use crate::cli::{Cli, run};
+    use crate::cli::{Cli, RunOutcome, run};
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -179,7 +179,7 @@ fn cli_main() -> PyResult<()> {
     })?;
 
     match run(&cli) {
-        Ok(()) => {}
+        Ok(RunOutcome::Normal | RunOutcome::ClassifyAi | RunOutcome::ClassifyHuman) => {}
         Err(e) => {
             eprintln!("Error: {e:#}");
             return Err(PyErr::new::<pyo3::exceptions::PySystemExit, _>(1));

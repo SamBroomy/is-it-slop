@@ -155,7 +155,7 @@ pub fn compute_sentence_length_cv(text: &str) -> f32 {
 
     let mean = lengths.iter().sum::<f32>() / lengths.len() as f32;
 
-    if mean == 0.0 {
+    if mean < f32::EPSILON {
         return 0.0;
     }
 
@@ -224,6 +224,7 @@ pub fn compute_word_frequency_entropy(text: &str) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 

@@ -29,6 +29,7 @@ thiserror = { workspace = true }
 # CLI-only dependenciess
 anyhow = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
+owo-colors = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 # Python bindings dependencies
 pyo3 = { workspace = true, optional = true }
@@ -48,7 +49,7 @@ required-features = ["cli"]
 default = ["cli"]
 python = ["pyo3"]
 pyo3 = ["dep:pyo3"]
-cli = ["dep:clap", "serde", "dep:anyhow"]
+cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors"]
 serde = ["dep:serde", "dep:serde_json"]
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []

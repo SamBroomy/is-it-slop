@@ -24,6 +24,15 @@ impl Classification {
     pub fn is_ai(&self) -> bool {
         matches!(self, Self::AI)
     }
+
+    /// Returns the opposite classification.
+    #[must_use]
+    pub fn opposite(&self) -> Self {
+        match self {
+            Self::Human => Self::AI,
+            Self::AI => Self::Human,
+        }
+    }
 }
 
 impl fmt::Display for Classification {

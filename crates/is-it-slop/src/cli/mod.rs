@@ -8,7 +8,7 @@
 //! is-it-slop "some text"
 //! is-it-slop --label "some text"
 //! is-it-slop --score "some text"      # bare float for scripting
-//! is-it-slop --label --score "text"   # "Human 0.2340"
+//! is-it-slop --classify "text"        # exit 0=AI, 1=Human, 2=error
 //! is-it-slop --json "some text"       # full JSON
 //! is-it-slop --jsonl "some text"      # JSON line (for streaming)
 //! echo "text" | is-it-slop
@@ -18,26 +18,123 @@
 //! is-it-slop --jsonl -b texts.txt     # streaming JSONL batch
 //! ```
 
-use std::{io::Read, path::PathBuf};
+use std::{
+    io::{IsTerminal, Read},
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{
+    Parser,
+    builder::{
+        Styles,
+        styling::{AnsiColor, Effects},
+    },
+};
+use owo_colors::{OwoColorize, Style};
 
-use crate::{Predictor, Threshold, UnifiedPrediction};
+const STYLE_HEADER: Style = Style::new().bold();
+const STYLE_WARN: Style = Style::new().yellow();
+const STYLE_OVERALL_LABEL: Style = Style::new().bold();
+const STYLE_AI_LABEL: Style = Style::new().cyan().bold();
+const STYLE_HUMAN_LABEL: Style = Style::new().truecolor(0xFF, 0x8C, 0x00).bold();
+const STYLE_AI_BAR: Style = Style::new().cyan();
+const STYLE_HUMAN_BAR: Style = Style::new().truecolor(0xFF, 0x8C, 0x00);
+
+use crate::{Classification, Predictor, Threshold, UnifiedPrediction};
 
 fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
     s.try_into()
 }
 
-/// Command-line arguments for the is-it-slop text classifier
+const AFTER_LONG_HELP: &str = "\
+\u{1b}[1;33mConfidence Metrics:\u{1b}[0m
+  Confidence metrics range from 0-100%. Higher = more certain.
+
+  \u{1b}[1mModel\u{1b}[0m       Probability of the predicted class. 50% = coin flip, 100% = certain.
+  \u{1b}[1mSample\u{1b}[0m      Quality of input data. Penalizes very short texts, single chunks,
+              and inconsistent chunk predictions. Low values = get more text.
+  \u{1b}[1mOverall\u{1b}[0m     Model prediction quality × chunk agreement × data adequacy.
+              Use this as the primary confidence indicator.
+
+  Use --verbose to also show:
+
+\u{1b}[1mChunk Analysis\u{1b}[0m (multi-chunk documents, >150 tokens):
+    \u{1b}[1mChunks\u{1b}[0m       Number of overlapping 150-token chunks analyzed.
+    \u{1b}[1mAgreement\u{1b}[0m    How consistently chunks agree on classification.
+                1.0 = unanimous, 0.5 = 50/50 split.
+    \u{1b}[1mStd dev\u{1b}[0m      Standard deviation of chunk probabilities.
+
+\u{1b}[1mText Analysis\u{1b}[0m (single-chunk documents, ≤150 tokens):
+    \u{1b}[1mTokens\u{1b}[0m       Number of BPE tokens in the input. Short texts
+                (<75 tokens) produce less reliable predictions.
+
+\u{1b}[1mAdditional Metrics:\u{1b}[0m
+    \u{1b}[1mThreshold\u{1b}[0m    Distance from the classification boundary.
+                100% = far from the decision line, 0% = on the threshold.
+    \u{1b}[1mEntropy\u{1b}[0m      Certainty of the model's probability distribution.
+                100% = highly peaked (confident), 0% = uniform (coin flip).
+";
+
+fn output_welcome() {
+    let version = env!("CARGO_PKG_VERSION");
+    let name = env!("CARGO_PKG_NAME")
+        .if_supports_color(owo_colors::Stream::Stdout, |s| s.bold())
+        .to_string();
+    println!(
+        "{name} v{version} — {}",
+        section("Detect AI-generated text")
+    );
+    println!();
+    println!("{}", section("Usage:"));
+    println!("  is-it-slop [OPTIONS] [TEXT]...");
+    println!();
+    println!("{}", section("Examples:"));
+    println!("  is-it-slop \"Hello world\"              Classify text directly");
+    println!("  is-it-slop -f essay.txt               Classify from file");
+    println!("  is-it-slop -b texts.txt               Batch classify (one per line)");
+    println!("  echo \"text\" | is-it-slop              Pipe text on stdin");
+    println!("  is-it-slop --help                     See all options & metric glossary");
+}
+
+/// Outcome of `run()`, distinguishing normal mode from single-text `--classify`.
+#[derive(Debug, Clone, Copy)]
+pub enum RunOutcome {
+    /// Normal operation (exit 0 on success, 1 on error).
+    Normal,
+    /// Single-text --classify: prediction was AI (exit 0).
+    ClassifyAi,
+    /// Single-text --classify: prediction was Human (exit 1).
+    ClassifyHuman,
+}
+
+/// Command-line arguments for the is-it-slop text classifier.
 #[derive(Parser)]
-#[command(name = "is-it-slop")]
-#[command(version, about = "Detect AI-generated text", long_about = None)]
+#[command(
+    name = env!("CARGO_PKG_NAME"),
+    author = env!("CARGO_PKG_AUTHORS"),
+    bin_name = env!("CARGO_PKG_NAME"),
+    version = env!("CARGO_PKG_VERSION"),
+    about = "Detect AI-generated text",
+    long_about = "Detect AI-generated text using machine learning.\n\n\
+        Analyze text from positional arguments, files, or stdin to determine\n\
+        whether it was written by a human or generated by AI.",
+    after_long_help = AFTER_LONG_HELP,
+    styles = Styles::styled()
+        .error(AnsiColor::Red.on_default() | Effects::BOLD)
+        .header(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .invalid(AnsiColor::Red.on_default())
+        .literal(AnsiColor::Green.on_default())
+        .placeholder(AnsiColor::Cyan.on_default())
+        .usage(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .valid(AnsiColor::Green.on_default()),
+
+)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
-    /// Text to analyze (reads from stdin if not provided, or use "-")
-    #[arg(value_name = "TEXT")]
-    pub text: Vec<String>,
+    /// Text to analyze
+    #[arg(value_name = "TEXT", conflicts_with_all = ["file", "batch"])]
+    pub text: Option<String>,
 
     /// Read text from file
     #[arg(short, long, value_name = "PATH", conflicts_with_all = ["text", "batch"])]
@@ -48,22 +145,43 @@ pub struct Cli {
     pub batch: Option<PathBuf>,
 
     /// Output as JSON
-    #[arg(long, conflicts_with_all = ["label", "score", "jsonl"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["label", "score", "jsonl", "classify"]
+    )]
     pub json: bool,
 
     /// Output as JSON lines (one JSON object per line)
-    #[arg(long, conflicts_with_all = ["json", "label", "score"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["json", "label", "score", "classify"]
+    )]
     pub jsonl: bool,
 
     /// Output only the classification label (Human or AI)
-    #[arg(long, conflicts_with = "json")]
+    #[arg(long, conflicts_with_all = ["json", "classify"])]
     pub label: bool,
 
     /// Output only the AI probability score (0.0-1.0)
-    #[arg(long, conflicts_with = "json")]
+    #[arg(long, conflicts_with_all = ["json", "classify"])]
     pub score: bool,
 
-    /// Classification threshold [default: model default]
+    /// Output 0 (AI) or 1 (Human). Exit code matches output; 2 on error.
+    #[arg(
+        long,
+        conflicts_with_all = ["json", "jsonl", "label", "score"]
+    )]
+    pub classify: bool,
+
+    /// Disable colored output
+    #[arg(
+        long,
+        env = "NO_COLOR",
+        value_parser = clap::builder::FalseyValueParser::new(),
+    )]
+    pub no_color: bool,
+
+    /// Classification threshold
     #[arg(
         short = 't',
         long,
@@ -71,11 +189,19 @@ pub struct Cli {
         value_parser = parse_threshold
     )]
     pub threshold: Threshold,
+
+    /// Show threshold distance and entropy confidence in addition to standard metrics
+    #[arg(short = 'v', long, conflicts_with_all = ["json", "jsonl", "label", "score", "classify"])]
+    pub verbose: bool,
+
+    /// Only output the classification bar, no metrics or analysis
+    #[arg(short = 'q', long, conflicts_with_all = ["verbose", "json", "jsonl", "label", "score", "classify"])]
+    pub quiet: bool,
 }
 
 fn read_inputs(cli: &Cli) -> Result<Vec<String>> {
-    if !cli.text.is_empty() {
-        return Ok(cli.text.clone());
+    if let Some(text) = &cli.text {
+        return Ok(vec![text.clone()]);
     }
 
     if let Some(path) = &cli.file {
@@ -107,7 +233,11 @@ fn read_inputs(cli: &Cli) -> Result<Vec<String>> {
         return Ok(texts);
     }
 
-    // Read from stdin
+    if std::io::stdin().is_terminal() {
+        output_welcome();
+        std::process::exit(0);
+    }
+
     let mut buffer = String::new();
     std::io::stdin()
         .read_to_string(&mut buffer)
@@ -115,47 +245,292 @@ fn read_inputs(cli: &Cli) -> Result<Vec<String>> {
     Ok(vec![buffer])
 }
 
+fn render_bar(value: f32) -> String {
+    let width = 20;
+    let filled = (value * width as f32).round() as usize;
+    let filled = filled.min(width);
+    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
+}
+
+fn section(text: &str) -> String {
+    text.if_supports_color(owo_colors::Stream::Stdout, |s| s.style(STYLE_HEADER))
+        .to_string()
+}
+
+fn warn(text: &str) -> String {
+    text.if_supports_color(owo_colors::Stream::Stdout, |s| s.style(STYLE_WARN))
+        .to_string()
+}
+
+fn confidence_rgb(value: f32) -> (u8, u8, u8) {
+    let t = value.clamp(0.0, 1.0);
+    let r = (130.0 + t * (204.0 - 130.0)) as u8;
+    let g = (55.0 + t * (153.0 - 55.0)) as u8;
+    let b = (185.0 + t * (255.0 - 185.0)) as u8;
+    (r, g, b)
+}
+
+fn rose_rgb(t: f32) -> (u8, u8, u8) {
+    let t = t.clamp(0.0, 1.0);
+    let r = (185.0 + t * (255.0 - 185.0)) as u8;
+    let g = (75.0 + t * (176.0 - 75.0)) as u8;
+    let b = (115.0 + t * (204.0 - 115.0)) as u8;
+    (r, g, b)
+}
+
+fn rose_val(text: &str, t: f32) -> String {
+    let (r, g, b) = rose_rgb(t);
+    text.if_supports_color(owo_colors::Stream::Stdout, |s| s.truecolor(r, g, b))
+        .to_string()
+}
+
+fn steel_val(value: f32) -> String {
+    let t = ((value - 0.5) / 0.5).clamp(0.0, 1.0);
+    let r = (80.0 + t * (180.0 - 80.0)) as u8;
+    let g = (130.0 + t * (220.0 - 130.0)) as u8;
+    let b = (190.0 + t * (255.0 - 190.0)) as u8;
+    format!("{:>5.1}%", value * 100.0)
+        .if_supports_color(owo_colors::Stream::Stdout, |s| s.truecolor(r, g, b))
+        .to_string()
+}
+
+fn metric_val(value: f32) -> String {
+    let (r, g, b) = confidence_rgb(value);
+    format!("{:>5.1}%", value * 100.0)
+        .if_supports_color(owo_colors::Stream::Stdout, |s| s.truecolor(r, g, b))
+        .to_string()
+}
+
+// "Human" (5 chars) is the widest label; BAR_WIDTH matches render_bar's visual width.
+const LABEL_WIDTH: usize = 5;
+const BAR_WIDTH: usize = 20;
+
+fn output_compact(
+    prediction: &UnifiedPrediction,
+    threshold: Threshold,
+    prefix: &str,
+    verbose: bool,
+    quiet: bool,
+) {
+    let human_prob = prediction.prediction.human_probability();
+    let ai_prob = prediction.prediction.ai_probability();
+    let metrics = prediction.confidence_metrics(threshold);
+    let class = prediction.classification(threshold);
+    let other_label = class.opposite();
+
+    let (bar_value, bar_style) = match class {
+        Classification::Human => (human_prob, STYLE_HUMAN_BAR),
+        Classification::AI => (ai_prob, STYLE_AI_BAR),
+    };
+    let bar = render_bar(bar_value);
+    let bar_colored = bar
+        .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(bar_style))
+        .to_string();
+
+    // Left = predicted class probability, right = other class probability.
+    let left_pct = format!("{:.1}%", bar_value * 100.0);
+    let right_pct = format!("{:.1}%", (1.0 - bar_value) * 100.0);
+
+    let left_label = {
+        let (text, style) = match class {
+            Classification::AI => ("AI", STYLE_AI_LABEL),
+            Classification::Human => ("Human", STYLE_HUMAN_LABEL),
+        };
+        format!("{text:>LABEL_WIDTH$}")
+            .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(style))
+            .to_string()
+    };
+    let right_label = {
+        let (text, style) = match other_label {
+            Classification::AI => ("AI", STYLE_AI_LABEL),
+            Classification::Human => ("Human", STYLE_HUMAN_LABEL),
+        };
+        format!("{text:<LABEL_WIDTH$}")
+            .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(style))
+            .to_string()
+    };
+
+    println!();
+    println!("{prefix}  {left_label}  [{bar_colored}]  {right_label}");
+
+    // Indent to align percentages inside the [ ]:
+    // prefix.len() + 2sp + LABEL_WIDTH + 2sp + "[" = prefix.len() + LABEL_WIDTH + 5
+    let pct_indent = " ".repeat(prefix.len() + LABEL_WIDTH + 5);
+    let pct_right_width = BAR_WIDTH - left_pct.len();
+    println!("{pct_indent}{left_pct}{right_pct:>pct_right_width$}");
+
+    if quiet {
+        return;
+    }
+
+    if verbose {
+        if prediction.chunk_predictions.len() > 1 {
+            let chunk_info = prediction.chunk_info();
+            println!();
+            println!("{}", section("Chunk Analysis"));
+            let chunks_t = ((chunk_info.num_chunks as f32 - 4.0) / 6.0).clamp(0.0, 1.0);
+            let agreement_t = ((chunk_info.chunk_agreement - 0.5) / 0.5).clamp(0.0, 1.0);
+            println!(
+                "  {:<12} {}",
+                "Chunks",
+                rose_val(&chunk_info.num_chunks.to_string(), chunks_t)
+            );
+            println!(
+                "  {:<12} {}",
+                "Agreement",
+                rose_val(
+                    &format!("{:.1}%", chunk_info.chunk_agreement * 100.0),
+                    agreement_t
+                )
+            );
+            if let Some(std_dev) = chunk_info.chunk_std_dev {
+                println!(
+                    "  {:<12} {}",
+                    "Std dev",
+                    rose_val(&format!("{std_dev:.3}"), 0.5)
+                );
+            }
+            if chunk_info.chunk_agreement < 0.7 {
+                println!();
+                println!("{}", warn("Chunks disagree — mixed content detected"));
+            }
+        } else if let Some(tokens) = prediction.single_chunk_token_count {
+            println!();
+            println!("{}", section("Text Analysis"));
+            let tokens_t =
+                (tokens as f32 / crate::model::TOKEN_CHUNKER.chunk_size as f32).clamp(0.0, 1.0);
+            println!(
+                "  {:<12} {}",
+                "Tokens",
+                rose_val(&format!("{tokens} (single chunk)"), tokens_t)
+            );
+            if tokens < 30 {
+                println!();
+                println!("{}", warn("Very short text — prediction highly unreliable"));
+            } else if tokens < 75 {
+                println!();
+                println!("{}", warn("Short text — limited statistical reliability"));
+            }
+        }
+
+        println!();
+        println!("{}", section("Additional Metrics"));
+        println!(
+            "  {:<12} {}",
+            "Threshold",
+            steel_val(metrics.threshold_distance)
+        );
+        println!(
+            "  {:<12} {}",
+            "Entropy",
+            steel_val(metrics.entropy_confidence)
+        );
+    }
+
+    println!();
+    println!("{}", section("Confidence Metrics"));
+    println!("  {:<12} {}", "Model", metric_val(metrics.model_confidence));
+    println!(
+        "  {:<12} {}",
+        "Sample",
+        metric_val(metrics.sample_reliability)
+    );
+    let overall_label = format!("{:<12}", "Overall")
+        .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(STYLE_OVERALL_LABEL))
+        .to_string();
+    println!("  {overall_label} {}", metric_val(metrics.overall));
+
+    // Prediction quality = the model's certainty about the classification itself,
+    // independent of how much data we had. This is what "uncertain prediction" means.
+    let prediction_quality = metrics.model_confidence * 0.5
+        + metrics.threshold_distance * 0.25
+        + metrics.entropy_confidence * 0.25;
+
+    if metrics.sample_reliability < 0.5 {
+        println!();
+        println!(
+            "{}",
+            warn("Low sample reliability — consider providing more text")
+        );
+    } else if prediction_quality < 0.6 {
+        println!();
+        println!("{}", warn("Low confidence — prediction uncertain"));
+    }
+}
+
 /// Run the CLI with the given arguments.
 ///
 /// Prints results to stdout. Errors are returned to the caller for display.
-pub fn run(cli: &Cli) -> Result<()> {
+///
+/// Returns `RunOutcome` so `main()` can set the correct exit code
+/// for single-text `--classify` mode.
+pub fn run(cli: &Cli) -> Result<RunOutcome> {
     let texts = read_inputs(cli)?;
 
-    if texts.is_empty() {
-        anyhow::bail!(
-            "No input text provided. Use positional arguments, --file, --batch, or pipe text to stdin."
-        );
+    if cli.no_color {
+        owo_colors::set_override(false);
     }
 
     let predictor = Predictor::default().with_threshold(cli.threshold);
 
-    if texts.len() == 1 {
-        let prediction = predictor.predict(&texts[0])?;
-        output_single(&prediction, cli, 0)?;
-        return Ok(());
-    }
+    if cli.batch.is_some() {
+        eprintln!("Processing {} texts...", texts.len());
+        let predictions = predictor.predict_batch(&texts)?;
+        eprintln!("Done.");
 
-    eprintln!("Processing {} texts...", texts.len());
-    let predictions = predictor.predict_batch(&texts)?;
-    eprintln!("Done.");
+        if cli.classify {
+            for (i, pred) in predictions.iter().enumerate() {
+                let prefix = format!("[{}] ", i + 1);
+                match pred.classification(cli.threshold) {
+                    Classification::AI => println!("{prefix}0"),
+                    Classification::Human => println!("{prefix}1"),
+                }
+            }
+            return Ok(RunOutcome::Normal);
+        }
 
-    if cli.json {
-        output_batch_json(&predictions, cli.threshold)?;
-    } else if cli.jsonl {
-        output_batch_jsonl(&predictions, cli.threshold)?;
-    } else {
-        for (i, pred) in predictions.iter().enumerate() {
-            if cli.label || cli.score {
-                output_single(pred, cli, i)?;
-            } else {
-                println!("--- [{}/{}] ---", i + 1, predictions.len());
-                output_single(pred, cli, i)?;
-                println!();
+        if cli.json {
+            output_batch_json(&predictions, cli.threshold)?;
+        } else if cli.jsonl {
+            output_batch_jsonl(&predictions, cli.threshold)?;
+        } else {
+            for (i, pred) in predictions.iter().enumerate() {
+                if cli.label || cli.score {
+                    output_single(pred, cli, i)?;
+                } else {
+                    println!("--- [{}/{}] ---", i + 1, predictions.len());
+                    output_single(pred, cli, i)?;
+                    println!();
+                }
             }
         }
+
+        return Ok(RunOutcome::Normal);
     }
 
-    Ok(())
+    // Single input mode
+    let text = texts
+        .first()
+        .expect("read_inputs guarantees at least one text for non-batch inputs");
+    let prediction = predictor.predict(text)?;
+
+    if cli.classify {
+        let class = prediction.classification(cli.threshold);
+        println!(
+            "{}",
+            match class {
+                Classification::AI => "0",
+                Classification::Human => "1",
+            }
+        );
+        return Ok(match class {
+            Classification::AI => RunOutcome::ClassifyAi,
+            Classification::Human => RunOutcome::ClassifyHuman,
+        });
+    }
+
+    output_single(&prediction, cli, 0)?;
+    Ok(RunOutcome::Normal)
 }
 
 fn prediction_json(prediction: &UnifiedPrediction, threshold: Threshold) -> serde_json::Value {
@@ -203,38 +578,7 @@ fn output_single(prediction: &UnifiedPrediction, cli: &Cli, index: usize) -> Res
     } else if cli.score {
         println!("{}{:.4}", prefix, prediction.prediction.ai_probability());
     } else {
-        // Human-readable (default)
-        let ai_prob = prediction.prediction.ai_probability();
-        let human_prob = prediction.prediction.human_probability();
-        let metrics = prediction.confidence_metrics(cli.threshold);
-        let class = prediction.classification(cli.threshold);
-
-        println!("Classification: {class}");
-        println!("Probabilities:");
-        println!("  Human: {:.1}%", human_prob * 100.0);
-        println!("  AI:    {:.1}%", ai_prob * 100.0);
-        println!();
-        println!("Confidence Metrics:");
-        println!("  Model:     {:.1}%", metrics.model_confidence * 100.0);
-        println!("  Threshold: {:.1}%", metrics.threshold_distance * 100.0);
-        println!("  Entropy:   {:.1}%", metrics.entropy_confidence * 100.0);
-        println!("  Overall:   {:.1}%", metrics.overall * 100.0);
-
-        if prediction.chunk_predictions.len() > 1 {
-            let chunk_info = prediction.chunk_info();
-            println!();
-            println!("Chunk Analysis:");
-            println!("  Chunks:    {}", chunk_info.num_chunks);
-            println!("  Agreement: {:.1}%", chunk_info.chunk_agreement * 100.0);
-            if chunk_info.chunk_agreement < 0.7 {
-                println!("  ⚠️  Chunks disagree - mixed content detected");
-            }
-        }
-
-        if metrics.overall < 0.6 {
-            println!();
-            println!("⚠️  Low confidence - prediction uncertain");
-        }
+        output_compact(prediction, cli.threshold, &prefix, cli.verbose, cli.quiet);
     }
     Ok(())
 }

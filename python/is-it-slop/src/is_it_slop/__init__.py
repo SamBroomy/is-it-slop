@@ -28,8 +28,14 @@ Quick Start (CLI)
 After installation, use the `is-it-slop` command:
 
     $ is-it-slop "Your text here"
-    Classification: AI
-    ...
+
+      AI  [██████████████░░░░░░]  Human
+           67.8%          32.2%
+
+    Confidence Metrics
+      Model       62.9%
+      Sample      88.5%
+      Overall     71.2%
 
     $ is-it-slop "Your text" --label
     Human

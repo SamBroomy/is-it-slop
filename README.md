@@ -82,20 +82,18 @@ cargo add is-it-slop
 
 ### Command Line
 
-Default output is human-readable with probabilities and confidence metrics:
+Default output shows a classification bar with confidence metrics:
 
 ```bash
 $ is-it-slop "Your text here"
-Classification: Human
-Probabilities:
-  Human: 91.2%
-  AI:    8.8%
 
-Confidence Metrics:
-  Model:     91.2%
-  Threshold: 87.3%
-  Entropy:   64.1%
-  Overall:   83.5%
+  Human  [███████████████████░]  AI
+          95.1%           4.9%
+
+Confidence Metrics
+  Model       95.1%
+  Sample      87.3%
+  Overall     85.1%
 ```
 
 Other output modes:
@@ -113,16 +111,29 @@ Human (0.0880)
 $ is-it-slop "Your text" --score
 0.0880
 
+# Exit code mode (0=AI, 1=Human, 2=error)
+$ is-it-slop "Your text" --classify
+
 # Full JSON (includes chunk predictions and confidence metrics)
 $ is-it-slop "Your text" --json
-{"status":"ok","class":"Human",...}
+
+# JSON lines format (for streaming)
+$ is-it-slop "Your text" --jsonl
 
 # Batch from file (auto-detects .json vs line-delimited)
 $ is-it-slop -b texts.txt
 
 # Custom classification threshold
 $ is-it-slop "Your text" --threshold 0.7
+
+# Verbose: show model internals (threshold, entropy)
+$ is-it-slop "Your text" --verbose
+
+# Quiet: bar only, no metrics
+$ is-it-slop "Your text" --quiet
 ```
+
+Run `is-it-slop --help` for all options.
 
 ### Python
 

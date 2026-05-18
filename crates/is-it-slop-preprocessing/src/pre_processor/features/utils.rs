@@ -73,6 +73,7 @@ pub fn extract_punctuation(text: &str) -> Vec<char> {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use std::collections::HashMap;
 
