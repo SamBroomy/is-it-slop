@@ -42,24 +42,12 @@
 curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
 ```
 
-This will install to `~/.local/bin`. After installation, add to your PATH if not already present:
+> This will install to `~/.local/bin`.
 
-```shell
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Or install a specific version:
-
-```shell
-curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh -s -- v0.6.0
-```
-
-**Via Python/PyPI** (recommended — includes both CLI and library):
+### **Python** (CLI + library)
 
 ```shell
 pip install is-it-slop
-# or with pipx:
-pipx install is-it-slop
 # or with uv:
 uv tool install is-it-slop
 # or run directly:
@@ -68,72 +56,46 @@ uvx is-it-slop "Your text here"
 uv add is-it-slop
 ```
 
-**Via Homebrew** (macOS and Linux):
+### **Homebrew** (macOS/Linux)
 
 ```shell
 brew tap SamBroomy/is-it-slop
 brew install is-it-slop
 ```
 
-**Via cargo-binstall** (pre-built binaries, no compilation):
+### **Rust/Cargo**
+
+Pre-built binary via `cargo-binstall` (recommended for Rust users):
 
 ```shell
-cargo binstall is-it-slop
+cargo binstall is-it-slop                         # pre-built
 ```
 
-**Via cargo install** (build from source):
+Build from source (requires [Rust toolchain](https://www.rust-lang.org/tools/install)):
 
 ```shell
-cargo install is-it-slop --locked --features cli
+cargo install is-it-slop --locked --features cli   # from source
 ```
 
-Model artifacts (~11.4 MB) download automatically during build and are embedded in the binary. No runtime downloads, no Python required.
+> Model artifacts (~11.4 MB) download automatically during build and are embedded in the binary. No runtime downloads, no Python required.
 
-### Python Library
+### Library Install
+
+#### Python Library
 
 ```shell
-uv add is-it-slop
-# or
 pip install is-it-slop
+# or with uv:
+uv add is-it-slop
 ```
 
-### Rust Library
+#### Rust Library
 
 ```shell
 cargo add is-it-slop
 ```
 
-## Upgrading
-
-If you installed via the shell script or cargo-binstall, upgrade to the latest version with:
-
-```shell
-is-it-slop self update
-```
-
-Or re-run the install script:
-
-```shell
-curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
-```
-
-For package manager installations (pip, uv, Homebrew, Cargo), use your package manager:
-
-```shell
-pip install --upgrade is-it-slop
-# or
-uv tool upgrade is-it-slop
-# or
-brew upgrade is-it-slop
-# or
-cargo install is-it-slop --locked --force --features cli
-```
-
-## Quick Start
-
-### Command Line
-
-Default output shows a classification bar with confidence metrics:
+## Usage
 
 ```bash
 $ is-it-slop "Your text here"
@@ -192,9 +154,8 @@ Run `is-it-slop --help` for all options.
 from is_it_slop import is_this_slop
 
 result = is_this_slop("Your text here")
-print(result.classification)   # 'Human' or 'AI'
+print(result.classification)     # 'Human' or 'AI'
 print(f"AI: {result.ai_probability:.1%}")  # AI: 8.8%
-print(f"Chunks: {result.num_chunks}, Agreement: {result.chunk_agreement:.1%}")
 ```
 
 ### Rust
@@ -205,6 +166,29 @@ use is_it_slop::Predictor;
 let predictor = Predictor::new();
 let result = predictor.predict("Your text here")?;
 println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
+```
+
+## Upgrading
+
+If you installed via the shell script or cargo-binstall, upgrade to the latest version with:
+
+```shell
+is-it-slop self update
+```
+
+Or re-run the install script:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+```
+
+For package manager installations (pip, uv, Homebrew, Cargo), use your package manager's upgrade command:
+
+```shell
+pip install --upgrade is-it-slop       # Python
+uv tool install is-it-slop@latest      # uv
+brew upgrade is-it-slop                # Homebrew
+cargo install is-it-slop --locked --force --features cli  # Cargo
 ```
 
 ## How It Works
