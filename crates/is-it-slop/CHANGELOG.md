@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0-beta.1](https://github.com/SamBroomy/is-it-slop/compare/v0.6.0-beta.0...v0.6.0-beta.1) - 2026-06-01
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.6.0-alpha.5](https://github.com/SamBroomy/is-it-slop/compare/v0.6.0-alpha.4...v0.6.0-alpha.5) - 2026-06-01
 
 ### Fixed
