@@ -195,13 +195,13 @@ cargo install is-it-slop --locked --force --features cli  # Cargo
 
 **Training (Python):**
 
-```
+```text
 Texts → Clean → Tokenize (BPE) → Chunk → TF-IDF → Stacked Ensemble → ONNX
 ```
 
 **Inference (Rust):**
 
-```
+```text
 Text → Clean → Tokenize → Chunk (150 tokens, 15 overlap) → TF-IDF per chunk → ONNX → Aggregate → Result
 ```
 
@@ -315,7 +315,7 @@ The diagram shows the full ONNX graph: input → 5 parallel classifiers → prob
 # Build
 cargo build --release -p is-it-slop --features cli
 
-# Test (295 tests)
+# Test
 just test
 
 # Full CI check (fmt + clippy + tests)
