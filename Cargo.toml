@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing"]
 
 [workspace.package]
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 edition = "2024"
 rust-version = "1.95"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
@@ -29,7 +29,7 @@ keywords = [
 
 [workspace.dependencies]
 is-it-slop = { path = "crates/is-it-slop" }
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.6.0-beta.1" }
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.6.0-beta.2" }
 
 
 ahash = { version = "0.8.12", features = ["serde"] }
