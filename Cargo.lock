@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "is-it-slop"
-version = "0.6.0-alpha.4"
+version = "0.6.0-alpha.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "is-it-slop-preprocessing"
-version = "0.6.0-alpha.4"
+version = "0.6.0-alpha.5"
 dependencies = [
  "ahash",
  "bincode",
