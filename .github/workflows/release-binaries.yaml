@@ -59,6 +59,6 @@ jobs:
           target: ${{ matrix.target }}
           tar: all
           zip: windows
-          features: cli
+          features: cli,self-update
           profile: dist
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -68,10 +68,12 @@ tracing-subscriber = "0.3.20"
 # dev-dependencies
 csv = "1.4.0"
 directories = "6"
+dirs = "6.0"
 flate2 = "1.1.5"
 tar = "0.4.45"
 tempfile = "3.23.0"
 ureq = "3.1.4"
+which = "8.0"
 
 [profile.profiling]
 debug = true

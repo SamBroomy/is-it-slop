@@ -40,43 +40,43 @@ build-bindings:
     uv run --directory python/is-it-slop maturin develop --release --uv
 
 build-cli-release:
-    cargo build --profile dist --features cli --bin is-it-slop
+    cargo build --profile dist --features cli,self-update --bin is-it-slop
 
 # Run CLI with different output formats and options
 run-cli:
     @echo "=== Running is-it-slop examples ==="
     @echo ""
     @echo "1. Default output (human-readable):"
-    cargo run --release --features cli --bin is-it-slop -- "This is a test text to check if it's AI generated."
+    cargo run --release --features cli,self-update --bin is-it-slop -- "This is a test text to check if it's AI generated."
     @echo ""
     @echo "2. Classification label only:"
-    cargo run --release --features cli --bin is-it-slop -- --label "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- --label "This is a test text."
     @echo ""
     @echo "3. Label with score:"
-    cargo run --release --features cli --bin is-it-slop -- --label --score "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- --label --score "This is a test text."
     @echo ""
     @echo "4. JSON format:"
-    cargo run --release --features cli --bin is-it-slop -- --json "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- --json "This is a test text."
     @echo ""
     @echo "5. JSONL format (streaming):"
-    cargo run --release --features cli --bin is-it-slop -- --jsonl "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- --jsonl "This is a test text."
     @echo ""
     @echo "6. Bare score for scripting:"
-    cargo run --release --features cli --bin is-it-slop -- --score "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- --score "This is a test text."
     @echo ""
     @echo "=== Examples complete ==="
 
 # Build the CLI in dist mode (optimized for distribution)
 build-cli:
-    cargo build --profile dist --features cli --bin is-it-slop
+    cargo build --profile dist --features cli,self-update --bin is-it-slop
 
 # Run a quick test with custom text
 test-cli TEXT:
-    cargo run --release --features cli --bin is-it-slop -- "{{ TEXT }}" --format json --verbose
+    cargo run --release --features cli,self-update --bin is-it-slop -- "{{ TEXT }}" --format json --verbose
 
 # Show CLI help
 cli-help:
-    cargo run --features cli --bin is-it-slop -- --help
+    cargo run --features cli,self-update --bin is-it-slop -- --help
 
 # =============================================================================
 # Model Artifacts Management
@@ -453,7 +453,7 @@ build-python-wheels:
 # Quick install CLI from source
 [group('dev')]
 install-cli:
-    cargo install --path crates/is-it-slop --features cli --force
+    cargo install --path crates/is-it-slop --features cli,self-update --force
 
 # Test binary packaging locally (without uploading)
 [group('dev')]
@@ -461,7 +461,7 @@ test-binary-package TARGET:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Building for target: {{ TARGET }}"
-    cargo build --profile dist --features cli --target {{ TARGET }}
+    cargo build --profile dist --features cli,self-update --target {{ TARGET }}
 
     # Determine binary name (add .exe for Windows)
     # Note: dist profile outputs to target/{TARGET}/dist/ not release/
@@ -634,4 +634,4 @@ sync-notebooks: notebooks-to-scripts
 
 # We can see if an essay is AI-generated or not.
 is-the-essay-slop:
-    cargo run --release --features cli --bin is-it-slop -- "This article was very thought provoking and caused me to thoroughly evaluate the idea of gender and the role it plays in our society. The article discussed peers using teasing as a way to enforce gender norms. I do not necessarily see this as a problem. God made male and female and made us differently from each other on purpose and for a purpose. God is very intentional with what He makes, and I believe trying to change that would only do more harm. Gender roles and tendencies should not be considered “stereotypes”. Women naturally want to do womanly things because God created us with those womanly desires in our hearts. The same goes for men. God created men in the image of His courage and strength, and He created women in the image of His beauty. He intentionally created women differently than men and we should live our lives with that in mind. It is frustrating to me when I read articles like this and discussion posts from my classmates of so many people trying to conform to the same mundane opinion, so they do not step on people’s toes. I think that is a cowardly and insincere way to live. It is important to use the freedom of speech we have been given in this country, and I personally believe that eliminating gender in our society would be detrimental, as it pulls us farther from God’s original plan for humans. It is perfectly normal for kids to follow gender “stereotypes” because that is how God made us. The reason so many girls want to feel womanly and care for others in a motherly way is not because they feel pressured to fit into social norms. It is because God created and chose them to reflect His beauty and His compassion in that way. In Genesis, God says that it is not good for man to be alone, so He created a helper for man (which is a woman). Many people assume the word “helper” in this context to be condescending and offensive to women. However, the original word in Hebrew is “ezer kenegdo” and that directly translates to “helper equal to”. Additionally, God describes Himself in the Bible using “ezer kenegdo”, or “helper”, and He describes His Holy Spirit as our Helper as well. This shows the importance God places on the role of the helper (women’s roles). God does not view women as less significant than men. He created us with such intentionally and care and He made women in his image of being a helper, and in the image of His beauty. If leaning into that role means I am “following gender stereotypes” then I am happy to be following a stereotype that aligns with the gifts and abilities God gave me as a woman. I do not think men and women are pressured to be more masculine or feminine. I strongly disagree with the idea from the article that encouraging acceptance of diverse gender expressions could improve students’ confidence. Society pushing the lie that there are multiple genders and everyone should be whatever they want to be is demonic and severely harms American youth. I do not want kids to be teased or bullied in school. However, pushing the lie that everyone has their own truth and everyone can do whatever they want and be whoever they want is not biblical whatsoever. The Bible says that our lives are not our own but that our lives and bodies belong to the Lord for His glory. I live my life based on this truth and firmly believe that there would be less gender issues and insecurities in children if they were raised knowing that they do not belong to themselves, but they belong to the Lord. Overall, reading articles such as this one encourage me to one day raise my children knowing that they have a Heavenly Father who loves them and cherishes them deeply and that having their identity firmly rooted in who He is will give them the satisfaction and acceptance that the world can never provide for them. My prayer for the world and specifically for American society and youth is that they would not believe the lies being spread from Satan that make them believe they are better off as another gender than what God made them. I pray that they feel God’s love and acceptance as who He originally created them to be." --format json --verbose
+    cargo run --release --features cli,self-update --bin is-it-slop -- "This article was very thought provoking and caused me to thoroughly evaluate the idea of gender and the role it plays in our society. The article discussed peers using teasing as a way to enforce gender norms. I do not necessarily see this as a problem. God made male and female and made us differently from each other on purpose and for a purpose. God is very intentional with what He makes, and I believe trying to change that would only do more harm. Gender roles and tendencies should not be considered “stereotypes”. Women naturally want to do womanly things because God created us with those womanly desires in our hearts. The same goes for men. God created men in the image of His courage and strength, and He created women in the image of His beauty. He intentionally created women differently than men and we should live our lives with that in mind. It is frustrating to me when I read articles like this and discussion posts from my classmates of so many people trying to conform to the same mundane opinion, so they do not step on people’s toes. I think that is a cowardly and insincere way to live. It is important to use the freedom of speech we have been given in this country, and I personally believe that eliminating gender in our society would be detrimental, as it pulls us farther from God’s original plan for humans. It is perfectly normal for kids to follow gender “stereotypes” because that is how God made us. The reason so many girls want to feel womanly and care for others in a motherly way is not because they feel pressured to fit into social norms. It is because God created and chose them to reflect His beauty and His compassion in that way. In Genesis, God says that it is not good for man to be alone, so He created a helper for man (which is a woman). Many people assume the word “helper” in this context to be condescending and offensive to women. However, the original word in Hebrew is “ezer kenegdo” and that directly translates to “helper equal to”. Additionally, God describes Himself in the Bible using “ezer kenegdo”, or “helper”, and He describes His Holy Spirit as our Helper as well. This shows the importance God places on the role of the helper (women’s roles). God does not view women as less significant than men. He created us with such intentionally and care and He made women in his image of being a helper, and in the image of His beauty. If leaning into that role means I am “following gender stereotypes” then I am happy to be following a stereotype that aligns with the gifts and abilities God gave me as a woman. I do not think men and women are pressured to be more masculine or feminine. I strongly disagree with the idea from the article that encouraging acceptance of diverse gender expressions could improve students’ confidence. Society pushing the lie that there are multiple genders and everyone should be whatever they want to be is demonic and severely harms American youth. I do not want kids to be teased or bullied in school. However, pushing the lie that everyone has their own truth and everyone can do whatever they want and be whoever they want is not biblical whatsoever. The Bible says that our lives are not our own but that our lives and bodies belong to the Lord for His glory. I live my life based on this truth and firmly believe that there would be less gender issues and insecurities in children if they were raised knowing that they do not belong to themselves, but they belong to the Lord. Overall, reading articles such as this one encourage me to one day raise my children knowing that they have a Heavenly Father who loves them and cherishes them deeply and that having their identity firmly rooted in who He is will give them the satisfaction and acceptance that the world can never provide for them. My prayer for the world and specifically for American society and youth is that they would not believe the lies being spread from Satan that make them believe they are better off as another gender than what God made them. I pray that they feel God’s love and acceptance as who He originally created them to be." --format json --verbose

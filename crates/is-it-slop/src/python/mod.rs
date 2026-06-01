@@ -169,7 +169,7 @@ fn is_this_slop_batch(
 fn cli_main() -> PyResult<()> {
     use clap::Parser;
 
-    use crate::cli::{Cli, RunOutcome, run};
+    use crate::cli::{Cli, Commands, RunOutcome, run};
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -177,6 +177,25 @@ fn cli_main() -> PyResult<()> {
         let _ = e.print();
         PyErr::new::<pyo3::exceptions::PySystemExit, _>(e.exit_code())
     })?;
+
+    // Handle self subcommands for Python installations
+    if let Some(command) = &cli.command {
+        match command {
+            Commands::Self_(namespace) => match namespace.command {
+                crate::cli::SelfCommand::Update => {
+                    eprintln!(
+                        "Error: The 'self update' command is not available for Python installations."
+                    );
+                    eprintln!();
+                    eprintln!("Please upgrade using your package manager:");
+                    eprintln!("  pip install --upgrade is-it-slop");
+                    eprintln!("  # or");
+                    eprintln!("  uv tool upgrade is-it-slop");
+                    return Err(PyErr::new::<pyo3::exceptions::PySystemExit, _>(1));
+                }
+            },
+        }
+    }
 
     match run(&cli) {
         Ok(RunOutcome::Normal | RunOutcome::ClassifyAi | RunOutcome::ClassifyHuman) => {}

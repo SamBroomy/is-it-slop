@@ -1,0 +1,89 @@
+name: Update Homebrew Tap
+
+on:
+  workflow_run:
+    workflows: ["CLI Binaries"]
+    types: [completed]
+
+jobs:
+  update-tap:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine tag
+        id: tag
+        run: echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v6
+        with:
+          repository: SamBroomy/homebrew-is-it-slop
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Generate formula
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          VERSION="${TAG}"
+          VERSION_NO_V="${VERSION#v}"
+          BASE="https://github.com/SamBroomy/is-it-slop/releases/download/${VERSION}"
+
+          sha() {
+            curl -fsSL "${BASE}/is-it-slop-${1}.tar.gz" | sha256sum | cut -d' ' -f1
+          }
+
+          SHA_AARCH64_DARWIN=$(sha aarch64-apple-darwin)
+          SHA_AARCH64_LINUX=$(sha aarch64-unknown-linux-gnu)
+          SHA_X86_64_LINUX=$(sha x86_64-unknown-linux-gnu)
+
+          mkdir -p Formula
+
+          cat > Formula/is-it-slop.rb << ENDOFFORMULA
+          class IsItSlop < Formula
+            desc "Detect AI-generated text"
+            homepage "https://github.com/SamBroomy/is-it-slop"
+            license "MIT"
+            version "${VERSION_NO_V}"
+
+            on_macos do
+              on_arm do
+                url "${BASE}/is-it-slop-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_AARCH64_DARWIN}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${BASE}/is-it-slop-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_AARCH64_LINUX}"
+              end
+              on_intel do
+                url "${BASE}/is-it-slop-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_X86_64_LINUX}"
+              end
+            end
+
+            def install
+              bin.install "is-it-slop"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/is-it-slop --version")
+            end
+          end
+          ENDOFFORMULA
+
+          echo "Generated formula:"
+          cat Formula/is-it-slop.rb
+
+      - name: Commit and push
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Formula/is-it-slop.rb
+          git diff --staged --quiet || {
+            git commit -m "is-it-slop ${TAG}"
+            git push
+          }

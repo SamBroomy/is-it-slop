@@ -36,6 +36,24 @@
 
 ### Command Line Tool
 
+**Quick Install** (shell script — downloads pre-built binary):
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+```
+
+This will install to `~/.local/bin`. After installation, add to your PATH if not already present:
+
+```shell
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Or install a specific version:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh -s -- v0.6.0
+```
+
 **Via Python/PyPI** (recommended — includes both CLI and library):
 
 ```shell
@@ -48,6 +66,13 @@ uv tool install is-it-slop
 uvx is-it-slop "Your text here"
 # or add to project:
 uv add is-it-slop
+```
+
+**Via Homebrew** (macOS and Linux):
+
+```shell
+brew tap SamBroomy/is-it-slop
+brew install is-it-slop
 ```
 
 **Via cargo-binstall** (pre-built binaries, no compilation):
@@ -76,6 +101,32 @@ pip install is-it-slop
 
 ```shell
 cargo add is-it-slop
+```
+
+## Upgrading
+
+If you installed via the shell script or cargo-binstall, upgrade to the latest version with:
+
+```shell
+is-it-slop self update
+```
+
+Or re-run the install script:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+```
+
+For package manager installations (pip, uv, Homebrew, Cargo), use your package manager:
+
+```shell
+pip install --upgrade is-it-slop
+# or
+uv tool upgrade is-it-slop
+# or
+brew upgrade is-it-slop
+# or
+cargo install is-it-slop --locked --force --features cli
 ```
 
 ## Quick Start

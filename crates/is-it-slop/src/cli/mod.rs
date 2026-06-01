@@ -25,7 +25,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::{
-    Parser,
+    Args, Parser, Subcommand,
     builder::{
         Styles,
         styling::{AnsiColor, Effects},
@@ -42,6 +42,12 @@ const STYLE_AI_BAR: Style = Style::new().cyan();
 const STYLE_HUMAN_BAR: Style = Style::new().truecolor(0xFF, 0x8C, 0x00);
 
 use crate::{Classification, Predictor, Threshold, UnifiedPrediction};
+
+// Submodules
+#[cfg(not(feature = "self-update"))]
+pub mod install_source;
+#[cfg(feature = "self-update")]
+pub mod self_update;
 
 fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
     s.try_into()
@@ -108,6 +114,29 @@ pub enum RunOutcome {
     ClassifyHuman,
 }
 
+/// Top-level commands for is-it-slop
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Manage the is-it-slop executable
+    #[command(name = "self")]
+    Self_(SelfNamespace),
+}
+
+/// Self management namespace
+#[derive(Args)]
+pub struct SelfNamespace {
+    /// Self subcommand to execute
+    #[command(subcommand)]
+    pub command: SelfCommand,
+}
+
+/// Self subcommands
+#[derive(Subcommand)]
+pub enum SelfCommand {
+    /// Update to the latest version
+    Update,
+}
+
 /// Command-line arguments for the is-it-slop text classifier.
 #[derive(Parser)]
 #[command(
@@ -132,6 +161,10 @@ pub enum RunOutcome {
 )]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
+    /// Subcommands
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
     /// Text to analyze
     #[arg(value_name = "TEXT", conflicts_with_all = ["file", "batch"])]
     pub text: Option<String>,

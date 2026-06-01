@@ -1,4 +1,4 @@
 [alias]
 # Run the CLI with features enabled automatically
-run-cli = "run --profile dist --features cli --bin is-it-slop"
-build-cli-release = "build --profile dist --features cli --bin is-it-slop"
+run-cli = "run --profile dist --features cli,self-update --bin is-it-slop"
+build-cli-release = "build --profile dist --features cli,self-update --bin is-it-slop"
