@@ -95,6 +95,23 @@ uv add is-it-slop
 cargo add is-it-slop
 ```
 
+#### Android (via JitPack)
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+
+// app/build.gradle.kts
+dependencies {
+    implementation("io.github.codewithtamim:is-it-slop:1.0.0")
+}
+```
+
 ## Usage
 
 ```bash
@@ -166,6 +183,32 @@ use is_it_slop::Predictor;
 let predictor = Predictor::new();
 let result = predictor.predict("Your text here")?;
 println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
+```
+
+### Android (Kotlin)
+
+```kotlin
+import io.github.codewithtamim.IsItSlop
+
+// Predict with default threshold
+val result = IsItSlop.predict("Your text here")
+println(result.classification) // "AI" or "Human"
+println(result.aiProbability)  // 0.0 - 1.0
+println(result.humanProbability)
+
+// Predict with custom threshold
+val result = IsItSlop.predictWithThreshold("Text", 0.7f)
+
+// Simple classification label
+val label = IsItSlop.classify("Text") // "AI" or "Human"
+
+// Batch prediction
+val results = IsItSlop.predictBatch(listOf("Text A", "Text B"))
+
+// Result helpers
+result.isAi     // Boolean
+result.isHuman  // Boolean
+result.isError  // Boolean
 ```
 
 ## Upgrading
