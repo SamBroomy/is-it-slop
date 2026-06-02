@@ -20,7 +20,7 @@ push to main
 | **PR Checks** | `CI.yaml` | `push: main` (path-filtered), `pull_request` | Rust fmt/clippy/tests/docs + Python maturin build + pytest |
 | **Crates.io Publish** | `release-plz.yaml` | `push: main` | Opens version-bump PRs (`release-pr` job); on merge: publishes to crates.io, creates git tag + GitHub Release (`release` job) |
 | **PyPI Publish** | `release.yaml` | `release: published`, `workflow_dispatch` | Builds wheels for 12 targets (3 OS × 4 platforms) via maturin, publishes to PyPI via `uv publish` |
-| **Release Assets** | `release-assets.yaml` | `release: published`, `workflow_dispatch` | Cross-compiles `is-it-slop` CLI for 5 targets + Android AAR (aarch64), attaches to the GitHub Release |
+| **Release Assets** | `release-assets.yaml` | `release: published`, `workflow_dispatch` | Cross-compiles `is-it-slop` CLI for 5 targets + Android AAR + .so (aarch64-linux-android), attaches to the GitHub Release |
 
 ## How releases work
 

@@ -463,21 +463,33 @@ build-android-so:
     @echo "✅ Built: target/aarch64-linux-android/dist/libis_it_slop.so"
 
 # Build Android AAR (requires .so built first + Kotlin compiler)
-# Install kotlin: brew install kotlin  (macOS) or  sudo snap install kotlin  (Linux)
+# Set ANDROID_NDK_HOME to your NDK path and CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER.
+# Install kotlin: brew install kotlin  (macOS) or  sudo snap install kotlin --classic  (Linux)
 [group('dev')]
 build-android-aar: build-android-so
-    @command -v kotlinc >/dev/null 2>&1 || { \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v kotlinc >/dev/null 2>&1 || { \
         echo "kotlinc not found. Install: brew install kotlin (macOS) or sudo snap install kotlin (Linux)"; \
         exit 1; \
     }
-    @echo "Packaging AAR..."
+    test -n "${ANDROID_NDK_HOME:-}" || { \
+        echo "ANDROID_NDK_HOME is not set. Set it to your NDK path."; \
+        exit 1; \
+    }
+    echo "Packaging AAR..."
     kotlinc android/SlopDetector.kt -d /tmp/is-it-slop-classes.jar
     rm -rf /tmp/is-it-slop-aar && mkdir -p /tmp/is-it-slop-aar/jniLibs/arm64-v8a
     cp target/aarch64-linux-android/dist/libis_it_slop.so /tmp/is-it-slop-aar/jniLibs/arm64-v8a/
+    if [ "$(uname)" = Darwin ]; then HOST=darwin-x86_64; else HOST=linux-x86_64; fi
+    cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$HOST/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" /tmp/is-it-slop-aar/jniLibs/arm64-v8a/
     cp /tmp/is-it-slop-classes.jar /tmp/is-it-slop-aar/classes.jar
     printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ai.isitlop" />' > /tmp/is-it-slop-aar/AndroidManifest.xml
-    cd /tmp/is-it-slop-aar && zip -qr /tmp/is-it-slop.aar . && cd -
-    @echo "✅ Built: /tmp/is-it-slop.aar ($(du -h /tmp/is-it-slop.aar | cut -f1))"
+    cd /tmp/is-it-slop-aar && zip -qr /tmp/is-it-slop-aarch64-linux-android.aar . && cd -
+    cp target/aarch64-linux-android/dist/libis_it_slop.so is-it-slop-aarch64-linux-android.so
+    mv /tmp/is-it-slop-aarch64-linux-android.aar is-it-slop-aarch64-linux-android.aar
+    echo "✅ Built: is-it-slop-aarch64-linux-android.aar ($(du -h is-it-slop-aarch64-linux-android.aar | cut -f1))"
+    echo "✅ Built: is-it-slop-aarch64-linux-android.so ($(du -h is-it-slop-aarch64-linux-android.so | cut -f1))"
 
 # Build all Python wheels locally (for testing)
 [group('dev')]

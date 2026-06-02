@@ -171,12 +171,12 @@ println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
 
 ### Android
 
-Download `is-it-slop.aar` from the [latest release](https://github.com/SamBroomy/is-it-slop/releases/latest)
+Download `is-it-slop-aarch64-linux-android.aar` from the [latest release](https://github.com/SamBroomy/is-it-slop/releases/latest)
 and drop it into `app/libs/`, then add to `app/build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation(files("libs/is-it-slop.aar"))
+    implementation(files("libs/is-it-slop-aarch64-linux-android.aar"))
 }
 ```
 
