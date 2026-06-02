@@ -259,14 +259,17 @@ crates/
 │   ├── chunker.rs            # Token-based chunking
 │   ├── ngrams.rs             # Token n-gram extraction
 │   └── vectorizer/           # TF-IDF vectorizer with rkyv serialization
-└── is-it-slop/               # ONNX inference + CLI
+└── is-it-slop/               # ONNX inference + CLI + bindings
     ├── bin/                  # CLI binary entrypoint
     ├── cli/                  # Command-line argument parsing
     ├── model/                # Embedded artifacts (build.rs downloads)
     ├── pipeline/             # Prediction, aggregation, error types
+    ├── python/               # PyO3 bindings (PyPI package)
+    ├── kotlin/               # JNI bindings (Android .so / .aar)
     └── lib.rs                # Predictor, Threshold, public re-exports
 
 python/                       # Two PyO3 packages (inference + preprocessing)
+android/                      # Kotlin wrapper for Android JNI
 notebooks/                    # Dataset curation + training
 ```
 
