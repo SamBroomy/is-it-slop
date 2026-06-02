@@ -30,7 +30,8 @@
 - **Portable**: Single ~60 MB binary with embedded model and no Python runtime required
 - **Accurate**: 95.6% accuracy on holdout test set (F1 0.958, MCC 0.912)
 - **Chunk-aware**: Handles long documents via overlapping 150-token chunks with weighted aggregation
-- **Cross-platform**: macOS (ARM64), Linux (x86_64, ARM64), Windows (x86_64)
+- **Cross-platform**: macOS (ARM64), Linux (x86_64, ARM64), Windows (x86_64, ARM64)
+- **Multiple interfaces**: Command-line tool, Python library, Rust library, Android AAR
 
 ## Installation
 
