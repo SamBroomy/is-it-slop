@@ -65,6 +65,8 @@ thiserror = "2.0.18"
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = "0.3.20"
 
+jni = "0.21"
+
 # dev-dependencies
 csv = "1.4.0"
 directories = "6"

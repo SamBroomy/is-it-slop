@@ -1,0 +1,12 @@
+before_install:
+  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+  - source "$HOME/.cargo/env"
+  - rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+  - cargo install cargo-ndk
+  - export ANDROID_NDK_HOME=$ANDROID_NDK
+
+install:
+  - ./gradlew buildRustLibrary
+
+jdk:
+  - openjdk17

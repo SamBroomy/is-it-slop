@@ -38,6 +38,21 @@ which = { workspace = true }
 # Python bindings dependencies
 pyo3 = { workspace = true, optional = true }
 # pyo3-log = { workspace = true, optional = true }
+# JNI bindings for Android
+jni = { workspace = true, optional = true }
+
+# On Android: use load-dylib instead of download-binaries
+# ONNX Runtime shared library must be bundled in the Android APK
+# api-24 is needed because `load-dynamic` compiles all EP modules, and
+# ort-sys fields like SessionOptionsAppendExecutionProvider_VitisAI require
+# api-18+. Without api-24 those fields are missing from OrtApi at compile time.
+[target.'cfg(target_os = "android")'.dependencies]
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "ndarray",
+    "load-dynamic",
+    "tracing",
+    "api-24",
+] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -56,6 +71,9 @@ serde = ["dep:serde", "dep:serde_json"]
 self-update = []
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
+# JNI bindings for Android integration.
+# Build with: --no-default-features --features android
+android = ["serde", "dep:jni"]
 
 
 all-testable = ["cli"] # add other features here, but NOT python
