@@ -6,7 +6,8 @@ before_install:
   - export ANDROID_NDK_HOME=$ANDROID_NDK
 
 install:
-  - ./gradlew buildRustLibrary
+  - ./gradlew :app:buildRustLibrary
+  - ./gradlew :app:assembleRelease
 
 jdk:
   - openjdk17
