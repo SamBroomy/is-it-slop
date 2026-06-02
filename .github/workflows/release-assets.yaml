@@ -95,7 +95,7 @@ jobs:
             --profile dist
 
       - name: Install Kotlin compiler
-        run: sudo snap install kotlin
+        uses: fwilhe2/setup-kotlin@main
 
       - name: Package AAR
         run: |
