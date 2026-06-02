@@ -108,7 +108,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("io.github.codewithtamim:is-it-slop:1.0.0")
+    implementation("com.github.codewithtamim:is-it-slop:v1.0.0")
 }
 ```
 
