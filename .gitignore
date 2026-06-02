@@ -44,3 +44,4 @@
 !assets/pink-307853.svg
 !model_artifacts/.gitkeep
 !data/.gitkeep
+!/android/**/*.kt

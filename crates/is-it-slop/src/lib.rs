@@ -55,6 +55,9 @@ mod python;
 #[cfg(feature = "cli")]
 pub mod cli;
 
+#[cfg(feature = "jni")]
+mod kotlin;
+
 pub mod model;
 pub mod pipeline;
 

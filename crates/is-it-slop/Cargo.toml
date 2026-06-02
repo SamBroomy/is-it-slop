@@ -38,6 +38,8 @@ which = { workspace = true }
 # Python bindings dependencies
 pyo3 = { workspace = true, optional = true }
 # pyo3-log = { workspace = true, optional = true }
+# Android JNI bindings
+jni = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -56,6 +58,9 @@ serde = ["dep:serde", "dep:serde_json"]
 self-update = []
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
+
+# Android JNI bindings for mobile integration
+jni = ["dep:jni", "serde"]
 
 
 all-testable = ["cli"] # add other features here, but NOT python

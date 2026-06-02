@@ -2,7 +2,7 @@ name: Update Homebrew Tap
 
 on:
   workflow_run:
-    workflows: ["CLI Binaries"]
+    workflows: ["Release Assets"]
     types: [completed]
 
 jobs:

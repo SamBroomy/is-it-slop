@@ -39,6 +39,7 @@ bpe-openai = "0.3.0"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 dashmap = "6.1.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
+jni = "0.21"
 itertools = "0.14.0"
 ndarray = "0.17"
 numpy = "0.28"

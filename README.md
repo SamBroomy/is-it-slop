@@ -168,6 +168,29 @@ let result = predictor.predict("Your text here")?;
 println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
 ```
 
+### Android
+
+Download `is-it-slop.aar` from the [latest release](https://github.com/SamBroomy/is-it-slop/releases/latest)
+and drop it into `app/libs/`, then add to `app/build.gradle.kts`:
+
+```kotlin
+dependencies {
+    implementation(files("libs/is-it-slop.aar"))
+}
+```
+
+```kotlin
+import ai.isitlop.SlopDetector
+
+val result = SlopDetector.predict("Some text")
+// {"aiProbability":0.92,"humanProbability":0.08,"classification":"AI","numChunks":1,"chunkAgreement":1.0}
+
+val label = SlopDetector.classify("Some text")
+// "Human" or "AI"
+
+val results = SlopDetector.predictBatch("""["text 1","text 2"]""")
+```
+
 ## Upgrading
 
 If you installed via the shell script or cargo-binstall, upgrade to the latest version with:
