@@ -74,7 +74,7 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@nightly
         with:
           targets: aarch64-linux-android
 
