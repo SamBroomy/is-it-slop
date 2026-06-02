@@ -3,11 +3,12 @@ before_install:
   - source "$HOME/.cargo/env"
   - rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
   - cargo install cargo-ndk
-  - export ANDROID_NDK_HOME=$ANDROID_NDK
+  - yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" > /dev/null 2>&1
+  - export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
 
 install:
   - ./gradlew :app:buildRustLibrary
-  - ./gradlew :app:assembleRelease
+  - ./gradlew :app:publishReleasePublicationToMavenLocal
 
 jdk:
   - openjdk17
