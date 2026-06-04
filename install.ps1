@@ -45,14 +45,18 @@ function Get-Architecture {
 function Get-LatestVersion {
     Write-Info "Fetching latest release information..."
     $apiUrl = "https://api.github.com/repos/$Repo/releases/latest"
+    $headers = @{}
+    if ($env:GITHUB_TOKEN) {
+        $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+    }
     try {
-        $release = Invoke-RestMethod -Uri $apiUrl -Method Get
+        $release = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers
         if (-not $release.tag_name) {
             throw "No version found in release"
         }
         return $release.tag_name
     } catch {
-        throw "Could not determine latest version: $_"
+        throw "Could not determine latest version: $_`n`nThis may be due to GitHub API rate limiting. Try:`n  1. Wait a minute and try again`n  2. Set `$env:GITHUB_TOKEN to use an authenticated request`n  3. Specify a version explicitly:`n     `$env:ISITSLOP_VERSION='v0.6.3'; Invoke-RestMethod https://... | Invoke-Expression"
     }
 }
 
