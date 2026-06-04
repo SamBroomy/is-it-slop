@@ -222,7 +222,7 @@ install_binary() {
   info "Version: ${BLUE}${version}${RESET}"
 
   # Check for existing installation
-  check_existing_installation
+  check_existing_installation || true
 
   # Create temporary directory
   temp_dir=$(mktemp -d)

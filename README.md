@@ -43,7 +43,13 @@
 curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
 ```
 
-> This will install to `~/.local/bin`.
+**Windows Quick Install** (PowerShell — downloads pre-built binary):
+
+```powershell
+Invoke-RestMethod https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.ps1 | Invoke-Expression
+```
+
+> Both install to `~/.local/bin`.
 
 ### **Python** (CLI + library)
 
@@ -69,13 +75,13 @@ brew install is-it-slop
 Pre-built binary via `cargo-binstall` (recommended for Rust users):
 
 ```shell
-cargo binstall is-it-slop                         # pre-built
+cargo binstall is-it-slop
 ```
 
 Build from source (requires [Rust toolchain](https://www.rust-lang.org/tools/install)):
 
 ```shell
-cargo install is-it-slop --locked --features cli   # from source
+cargo install is-it-slop --locked --features cli
 ```
 
 > Model artifacts (~11.4 MB) download automatically during build and are embedded in the binary. No runtime downloads, no Python required.
@@ -203,7 +209,12 @@ is-it-slop self update
 Or re-run the install script:
 
 ```shell
+# Linux / macOS / WSL
 curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+```
+```powershell
+# Windows PowerShell
+Invoke-RestMethod https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.ps1 | Invoke-Expression
 ```
 
 For package manager installations (pip, uv, Homebrew, Cargo), use your package manager's upgrade command:

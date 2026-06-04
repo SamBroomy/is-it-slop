@@ -15,6 +15,7 @@
 !/Cargo.lock
 !justfile
 !install.sh
+!install.ps1
 !rust-toolchain.toml
 !rustfmt.toml
 !ruff.toml
