@@ -40,6 +40,10 @@ rustJni {
     }
 }
 
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
+    dependsOn(tasks.named("rust-jni-compile"))
+}
+
 dependencies {
     implementation(libs.onnxruntime.android)
     implementation(libs.androidx.core.ktx)
