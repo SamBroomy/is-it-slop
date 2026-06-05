@@ -1,8 +1,7 @@
 use jni::objects::{JClass, JString};
 use jni::sys::{jfloat, jstring};
 use jni::JNIEnv;
-
-use crate::{Predictor, Threshold};
+use is_it_slop::{Predictor, Threshold};
 
 fn new_predictor() -> Predictor {
     Predictor::new()
@@ -29,7 +28,7 @@ fn run_predict(predictor: &Predictor, text: &str) -> String {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_thebytearray_android_IsItSlop_nativePredict(
+pub extern "system" fn Java_io_github_codewithtamim_IsItSlop_nativePredict(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     text: JString<'_>,
@@ -53,7 +52,7 @@ pub extern "system" fn Java_org_thebytearray_android_IsItSlop_nativePredict(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_thebytearray_android_IsItSlop_nativePredictWithThreshold(
+pub extern "system" fn Java_io_github_codewithtamim_IsItSlop_nativePredictWithThreshold(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     text: JString<'_>,
@@ -78,7 +77,7 @@ pub extern "system" fn Java_org_thebytearray_android_IsItSlop_nativePredictWithT
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_thebytearray_android_IsItSlop_nativeClassify(
+pub extern "system" fn Java_io_github_codewithtamim_IsItSlop_nativeClassify(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     text: JString<'_>,
@@ -105,7 +104,7 @@ pub extern "system" fn Java_org_thebytearray_android_IsItSlop_nativeClassify(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_thebytearray_android_IsItSlop_nativePredictBatch(
+pub extern "system" fn Java_io_github_codewithtamim_IsItSlop_nativePredictBatch(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     texts_json: JString<'_>,

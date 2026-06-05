@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "is-it-slop-jni"
+version = "0.6.3"
+edition = "2024"
+
+[lib]
+name = "is_it_slop"
+crate-type = ["cdylib"]
+
+[dependencies]
+is-it-slop = { path = "../../../crates/is-it-slop", package = "is-it-slop" }
+jni = "0.21"
+serde_json = "1.0"

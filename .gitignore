@@ -47,10 +47,13 @@
 !data/.gitkeep
 !/android/
 !/android/**/*.kt
+!/android/**/*.rs
 !/android/**/*.toml
 !/android/**/proguard-rules.pro
 !/android/**/*.xml
 !/android/**/*.png
+/android/**/.cargo/
+/android/**/target/
 /android/**/jniLibs/
 !/build.gradle.kts
 !/settings.gradle.kts
@@ -58,3 +61,4 @@
 !/gradlew.bat
 !/gradle/**
 !/jitpack.yml
+!gradle.properties

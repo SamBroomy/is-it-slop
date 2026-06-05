@@ -1,13 +1,14 @@
 plugins {
     alias(libs.plugins.android.library)
     id("maven-publish")
+    id("io.github.andrefigas.rustjni") version "0.0.27"
 }
 
 val libraryVersion = "1.0.0"
 
 android {
     namespace = "io.github.codewithtamim"
-    compileSdk = 36
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 24
@@ -23,53 +24,15 @@ android {
     }
 }
 
-val rustJniLibsDir = file("${project.projectDir}/src/main/jniLibs")
-val workspaceRoot = file("${project.projectDir}/../..")
-val cargoHome = System.getenv("CARGO_HOME") ?: "${System.getProperty("user.home")}/.cargo"
-val cargoPath = "$cargoHome/bin/cargo"
-val ndkHome = System.getenv("ANDROID_NDK_HOME")
-
-val buildRustLibrary by tasks.registering(Exec::class) {
-    description = "Build is-it-slop Rust library for Android using cargo-ndk"
-    group = "rust"
-
-    inputs.dir("$workspaceRoot/crates/is-it-slop/src")
-    inputs.file("$workspaceRoot/crates/is-it-slop/Cargo.toml")
-    inputs.file("$workspaceRoot/Cargo.toml")
-    inputs.file("$workspaceRoot/Cargo.lock")
-    outputs.dir(rustJniLibsDir)
-
-    workingDir = workspaceRoot
-    commandLine(
-        cargoPath, "ndk",
-        "-t", "arm64-v8a",
-        "-t", "armeabi-v7a",
-        "-t", "x86_64",
-        "-t", "x86",
-        "-o", rustJniLibsDir,
-        "build", "--release",
-        "-p", "is-it-slop",
-        "--no-default-features",
-        "--features", "android"
-    )
-
-    environment("PATH", System.getenv("PATH") ?: "/usr/bin:/bin")
-    environment("CARGO_HOME", cargoHome)
-    environment("ANDROID_NDK_HOME", ndkHome)
-
-    onlyIf("NDK and cargo-ndk are available") {
-        val ndkDir = if (ndkHome.isNullOrBlank()) null else file(ndkHome)
-        val ndkExists = ndkDir?.exists() == true
-        val cargoExists = file(cargoPath).exists()
-        if (!cargoExists || !ndkExists) {
-            logger.warn("Skipping buildRustLibrary: cargo-ndk available=$cargoExists, NDK available=$ndkExists")
-        }
-        cargoExists && ndkExists
+rustJni {
+    rustPath = "./android/library/rust"
+    ndkVersion = "27.0.12077973"
+    architectures {
+        aarch64_linux_android("aarch64-linux-android24-clang")
+        armv7_linux_androideabi("armv7a-linux-androideabi24-clang")
+        i686_linux_android("i686-linux-android24-clang")
+        x86_64_linux_android("x86_64-linux-android24-clang")
     }
-}
-
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
-    dependsOn(buildRustLibrary)
 }
 
 dependencies {
