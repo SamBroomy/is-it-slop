@@ -75,6 +75,9 @@ stub-model = []
 # Build with: --no-default-features --features android
 android = ["serde", "dep:jni"]
 
+# Android JNI bindings for mobile integration
+jni = ["dep:jni", "serde"]
+
 
 all-testable = ["cli"] # add other features here, but NOT python
 

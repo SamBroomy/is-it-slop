@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.3"
 edition = "2024"
 rust-version = "1.95"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
@@ -29,7 +29,7 @@ keywords = [
 
 [workspace.dependencies]
 is-it-slop = { path = "crates/is-it-slop" }
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.6.0" }
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.6.3" }
 
 
 ahash = { version = "0.8.12", features = ["serde"] }
@@ -39,6 +39,7 @@ bpe-openai = "0.3.0"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 dashmap = "6.1.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
+jni = "0.21"
 itertools = "0.14.0"
 ndarray = "0.17"
 numpy = "0.28"
@@ -90,6 +91,7 @@ inherits = "release"
 lto = "fat"
 # Reduce codegen units to 1 for better optimizations
 codegen-units = 1
+opt-level = "z"
 panic = "abort"
 strip = true
 

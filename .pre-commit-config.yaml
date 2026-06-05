@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.9.0
+    rev: 0.9.1
     hooks:
       - id: nbstripout
 
@@ -39,14 +39,14 @@ repos:
         exclude: '^notebooks/.*\.py$' # Exclude synced notebook scripts
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.10.3
+    rev: 0.11.19
     hooks:
       - id: uv-sync
         args: ["--locked", "--all-packages"]
       - id: uv-lock
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.1
+    rev: v0.15.16
     hooks:
       - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]
@@ -122,5 +122,4 @@ repos:
         language: system
         files: '(\.rs$|Cargo\.toml$|Cargo\.lock$)'
         types: [rust, toml]
-        stages: [pre-commit]
         pass_filenames: false

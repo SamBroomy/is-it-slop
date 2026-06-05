@@ -149,9 +149,17 @@ get_latest_version() {
   info "Fetching latest release information..." >&2
 
   if command_exists curl; then
-    version=$(curl --proto '=https' --tlsv1.2 -fsSL "$api_url" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      version=$(curl --proto '=https' --tlsv1.2 -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" "$api_url" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+    else
+      version=$(curl --proto '=https' --tlsv1.2 -fsSL "$api_url" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+    fi
   elif command_exists wget; then
-    version=$(wget --https-only -qO- "$api_url" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      version=$(wget --https-only -qO- --header="Authorization: Bearer ${GITHUB_TOKEN}" "$api_url" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+    else
+      version=$(wget --https-only -qO- "$api_url" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+    fi
   else
     error "curl or wget is required"
     exit 1
@@ -159,6 +167,13 @@ get_latest_version() {
 
   if [ -z "$version" ]; then
     error "Could not determine latest version"
+    printf "\n"
+    info "This may be due to GitHub API rate limiting. Try:"
+    info "  1. Wait a minute and try again"
+    info "  2. Set GITHUB_TOKEN to use an authenticated request:"
+    info "     export GITHUB_TOKEN=ghp_...    # or a fine-grained token"
+    info "  3. Specify a version explicitly:"
+    info "     curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh -s -- v0.6.3"
     exit 1
   fi
 
@@ -222,7 +237,7 @@ install_binary() {
   info "Version: ${BLUE}${version}${RESET}"
 
   # Check for existing installation
-  check_existing_installation
+  check_existing_installation || true
 
   # Create temporary directory
   temp_dir=$(mktemp -d)

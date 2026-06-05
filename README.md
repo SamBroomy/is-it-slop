@@ -30,7 +30,8 @@
 - **Portable**: Single ~60 MB binary with embedded model and no Python runtime required
 - **Accurate**: 95.6% accuracy on holdout test set (F1 0.958, MCC 0.912)
 - **Chunk-aware**: Handles long documents via overlapping 150-token chunks with weighted aggregation
-- **Cross-platform**: macOS (ARM64), Linux (x86_64, ARM64), Windows (x86_64)
+- **Cross-platform**: macOS (ARM64), Linux (x86_64, ARM64), Windows (x86_64, ARM64)
+- **Multiple interfaces**: Command-line tool, Python library, Rust library, Android AAR
 
 ## Installation
 
@@ -42,7 +43,13 @@
 curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
 ```
 
-> This will install to `~/.local/bin`.
+**Windows Quick Install** (PowerShell — downloads pre-built binary):
+
+```powershell
+Invoke-RestMethod https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.ps1 | Invoke-Expression
+```
+
+> Both install to `~/.local/bin`.
 
 ### **Python** (CLI + library)
 
@@ -68,13 +75,13 @@ brew install is-it-slop
 Pre-built binary via `cargo-binstall` (recommended for Rust users):
 
 ```shell
-cargo binstall is-it-slop                         # pre-built
+cargo binstall is-it-slop
 ```
 
 Build from source (requires [Rust toolchain](https://www.rust-lang.org/tools/install)):
 
 ```shell
-cargo install is-it-slop --locked --features cli   # from source
+cargo install is-it-slop --locked --features cli
 ```
 
 > Model artifacts (~11.4 MB) download automatically during build and are embedded in the binary. No runtime downloads, no Python required.
@@ -222,7 +229,12 @@ is-it-slop self update
 Or re-run the install script:
 
 ```shell
+# Linux / macOS / WSL
 curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+```
+```powershell
+# Windows PowerShell
+Invoke-RestMethod https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.ps1 | Invoke-Expression
 ```
 
 For package manager installations (pip, uv, Homebrew, Cargo), use your package manager's upgrade command:
@@ -278,14 +290,17 @@ crates/
 │   ├── chunker.rs            # Token-based chunking
 │   ├── ngrams.rs             # Token n-gram extraction
 │   └── vectorizer/           # TF-IDF vectorizer with rkyv serialization
-└── is-it-slop/               # ONNX inference + CLI
+└── is-it-slop/               # ONNX inference + CLI + bindings
     ├── bin/                  # CLI binary entrypoint
     ├── cli/                  # Command-line argument parsing
     ├── model/                # Embedded artifacts (build.rs downloads)
     ├── pipeline/             # Prediction, aggregation, error types
+    ├── python/               # PyO3 bindings (PyPI package)
+    ├── kotlin/               # JNI bindings (Android .so / .aar)
     └── lib.rs                # Predictor, Threshold, public re-exports
 
 python/                       # Two PyO3 packages (inference + preprocessing)
+android/                      # Kotlin wrapper for Android JNI
 notebooks/                    # Dataset curation + training
 ```
 

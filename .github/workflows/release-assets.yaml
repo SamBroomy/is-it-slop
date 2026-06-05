@@ -1,0 +1,119 @@
+name: Release Assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.6.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  upload-assets:
+    name: ${{ matrix.target }}
+    if: github.repository_owner == 'SamBroomy'
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: is-it-slop
+          target: ${{ matrix.target }}
+          tar: all
+          zip: windows
+          features: cli,self-update
+          profile: dist
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-android:
+    name: Android AAR (aarch64-linux-android)
+    if: github.repository_owner == 'SamBroomy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27d
+
+      - name: Set NDK env
+        run: |
+          echo "ANDROID_NDK_HOME=${{ steps.ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" >> $GITHUB_ENV
+
+      - name: Build Android .so
+        run: |
+          cargo build --target aarch64-linux-android \
+            -p is-it-slop \
+            --no-default-features --features jni \
+            --profile dist
+
+      - name: Install Kotlin compiler
+        uses: fwilhe2/setup-kotlin@main
+
+      - name: Package AAR
+        run: |
+          kotlinc android/SlopDetector.kt -d classes.jar
+          mkdir -p aar/jniLibs/arm64-v8a
+          cp target/aarch64-linux-android/dist/libis_it_slop.so aar/jniLibs/arm64-v8a/
+          cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" aar/jniLibs/arm64-v8a/
+          cp classes.jar aar/
+          printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ai.isitlop" />' > aar/AndroidManifest.xml
+          cd aar && zip -qr ../is-it-slop-aarch64-linux-android.aar . && cd ..
+          cp target/aarch64-linux-android/dist/libis_it_slop.so is-it-slop-aarch64-linux-android.so
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            is-it-slop-aarch64-linux-android.so
+            is-it-slop-aarch64-linux-android.aar
