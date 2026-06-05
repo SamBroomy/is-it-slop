@@ -21,5 +21,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "is-it-slop"
-include(":app")
-project(":app").projectDir = file("android/app")
+include(":library")
+project(":library").projectDir = file("android/library")

@@ -1,15 +1,13 @@
-before_install:
-  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
-  - source "$HOME/.cargo/env"
-  - rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
-  - cargo install cargo-ndk
-  - yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" 2>&1
-  - export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/*/ 2>/dev/null | head -1 | sed 's/\/$//')
-  - echo "NDK home: $ANDROID_NDK_HOME"
-
-install:
-  - if [ -n "$ANDROID_NDK_HOME" ]; then ./gradlew :app:buildRustLibrary; fi
-  - ./gradlew :app:publishReleasePublicationToMavenLocal
-
 jdk:
   - openjdk17
+before_install: |
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+  source "$HOME/.cargo/env"
+  rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+  cargo install cargo-ndk
+  yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" 2>&1
+  export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/*/ 2>/dev/null | head -1 | sed 's/\/$//')
+  echo "NDK home: $ANDROID_NDK_HOME"
+install:
+  - if [ -n "$ANDROID_NDK_HOME" ]; then ./gradlew :library:buildRustLibrary; fi
+  - ./gradlew :library:publishReleasePublicationToMavenLocal
