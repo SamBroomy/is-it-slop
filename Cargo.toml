@@ -89,6 +89,7 @@ inherits = "release"
 lto = "fat"
 # Reduce codegen units to 1 for better optimizations
 codegen-units = 1
+opt-level = "z"
 panic = "abort"
 strip = true
 
