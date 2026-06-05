@@ -9,5 +9,4 @@ before_install: |
   export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/*/ 2>/dev/null | head -1 | sed 's/\/$//')
   echo "NDK home: $ANDROID_NDK_HOME"
 install:
-  - if [ -n "$ANDROID_NDK_HOME" ]; then ./gradlew :library:buildRustLibrary; fi
   - ./gradlew :library:publishReleasePublicationToMavenLocal

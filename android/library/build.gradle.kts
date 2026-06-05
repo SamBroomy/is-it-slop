@@ -29,7 +29,7 @@ val cargoHome = System.getenv("CARGO_HOME") ?: "${System.getProperty("user.home"
 val cargoPath = "$cargoHome/bin/cargo"
 val ndkHome = System.getenv("ANDROID_NDK_HOME")
 
-tasks.register<Exec>("buildRustLibrary") {
+val buildRustLibrary by tasks.registering(Exec::class) {
     description = "Build is-it-slop Rust library for Android using cargo-ndk"
     group = "rust"
 
@@ -56,6 +56,19 @@ tasks.register<Exec>("buildRustLibrary") {
     environment("PATH", System.getenv("PATH") ?: "/usr/bin:/bin")
     environment("CARGO_HOME", cargoHome)
     environment("ANDROID_NDK_HOME", ndkHome)
+
+    onlyIf("NDK and cargo-ndk are available") {
+        val cargoExists = file(cargoPath).exists()
+        val ndkExists = ndkHome != null && file(ndkHome).exists()
+        if (!cargoExists || !ndkExists) {
+            logger.warn("Skipping buildRustLibrary: cargo-ndk available=$cargoExists, NDK available=$ndkExists")
+        }
+        cargoExists && ndkExists
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
+    dependsOn(buildRustLibrary)
 }
 
 dependencies {
