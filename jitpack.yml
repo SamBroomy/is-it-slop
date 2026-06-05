@@ -1,6 +1,7 @@
 jdk:
   - openjdk17
 before_install: |
+  echo "sdk.dir=$ANDROID_HOME" > local.properties
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
   . "$HOME/.cargo/env"
   rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
@@ -13,7 +14,7 @@ before_install: |
       fi
     done
     if [ -n "$SDKMANAGER" ]; then
-      yes | "$SDKMANAGER" "ndk;27.0.12077973" 2>&1
+      JAVA_HOME=$JAVA11_HOME yes | "$SDKMANAGER" "ndk;27.0.12077973" 2>&1
     else
       echo "sdkmanager not found, NDK may already be installed"
     fi
