@@ -58,8 +58,9 @@ val buildRustLibrary by tasks.registering(Exec::class) {
     environment("ANDROID_NDK_HOME", ndkHome)
 
     onlyIf("NDK and cargo-ndk are available") {
+        val ndkDir = if (ndkHome.isNullOrBlank()) null else file(ndkHome)
+        val ndkExists = ndkDir?.exists() == true
         val cargoExists = file(cargoPath).exists()
-        val ndkExists = ndkHome != null && file(ndkHome).exists()
         if (!cargoExists || !ndkExists) {
             logger.warn("Skipping buildRustLibrary: cargo-ndk available=$cargoExists, NDK available=$ndkExists")
         }

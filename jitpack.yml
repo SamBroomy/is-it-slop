@@ -2,11 +2,25 @@ jdk:
   - openjdk17
 before_install: |
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
-  source "$HOME/.cargo/env"
+  . "$HOME/.cargo/env"
   rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
   cargo install cargo-ndk
-  yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" 2>&1
-  export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/*/ 2>/dev/null | head -1 | sed 's/\/$//')
+  if [ -z "$(ls -d $ANDROID_HOME/ndk/27.* 2>/dev/null)" ]; then
+    SDKMANAGER=""
+    for cmd in sdkmanager "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_HOME/tools/bin/sdkmanager"; do
+      if command -v "$cmd" >/dev/null 2>&1 || [ -f "$cmd" ]; then
+        SDKMANAGER="$cmd"
+        break
+      fi
+    done
+    if [ -n "$SDKMANAGER" ]; then
+      echo "Installing NDK via $SDKMANAGER"
+      yes | "$SDKMANAGER" "ndk;27.0.12077973" 2>&1
+    else
+      echo "sdkmanager not found, NDK may already be installed"
+    fi
+  fi
+  export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/*/ 2>/dev/null | head -1)
   echo "NDK home: $ANDROID_NDK_HOME"
 install:
   - ./gradlew :library:publishReleasePublicationToMavenLocal
