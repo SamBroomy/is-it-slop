@@ -1,5 +1,6 @@
 [versions]
 agp = "8.7.3"
+kotlin = "2.0.21"
 coreKtx = "1.18.0"
 onnxRuntime = "1.24.3"
 
@@ -9,4 +10,5 @@ onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime
 
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 
