@@ -34,12 +34,6 @@ crate-type = ["rlib", "cdylib"]
 is-it-slop-preprocessing = { path = "../is-it-slop-preprocessing", version = "=0.6.3", features = ["serde"] }
 
 ndarray = "0.17"
-ort = { version = "=2.0.0-rc.12", default-features = false, features = [
-    "download-binaries",
-    "ndarray",
-    "tls-native",
-    "tracing",
-] }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 sprs = "0.11"
 thiserror = "2.0.18"
@@ -56,8 +50,8 @@ pyo3 = { version = "0.28", default-features = false, features = [
     "extension-module",
     "macros",
 ], optional = true }
-# On Android: use load-dylib instead of download-binaries
-# ONNX Runtime shared library must be bundled in the Android APK
+# On Android: use load-dynamic instead of download-binaries.
+# ONNX Runtime shared library must be bundled in the Android APK.
 # api-24 is needed because `load-dynamic` compiles all EP modules, and
 # ort-sys fields like SessionOptionsAppendExecutionProvider_VitisAI require
 # api-18+. Without api-24 those fields are missing from OrtApi at compile time.
@@ -67,6 +61,14 @@ ort = { version = "=2.0.0-rc.12", default-features = false, features = [
     "load-dynamic",
     "tracing",
     "api-24",
+] }
+# Non-Android: download ONNX Runtime binary at build time with TLS support
+[target.'cfg(not(target_os = "android"))'.dependencies]
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "download-binaries",
+    "ndarray",
+    "tls-native",
+    "tracing",
 ] }
 
 [dev-dependencies]
