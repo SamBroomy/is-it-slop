@@ -1,15 +1,26 @@
 [package]
 name = "is-it-slop"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-license.workspace = true
-description.workspace = true
-repository.workspace = true
-readme.workspace = true
-keywords.workspace = true
-categories.workspace = true
-rust-version.workspace = true
+version = "0.6.3"
+edition = "2024"
+authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
+license = "MIT"
+description = "Detect AI-generated slop text using machine learning."
+repository = "https://github.com/SamBroomy/is-it-slop"
+readme = "README.md"
+keywords = [
+    "AI-text-detector",
+    "Machine-learning",
+    "onnx",
+    "text-classification",
+    "ai-slop-detector",
+]
+categories = [
+    "algorithms",
+    "command-line-utilities",
+    "science",
+    "text-processing",
+]
+rust-version = "1.95"
 # Model artifacts are downloaded at build time if not present
 # See build.rs for download logic
 exclude = ["model_artifacts/**"]
@@ -20,29 +31,48 @@ filename = "is_it_slop_lib"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-is-it-slop-preprocessing = { workspace = true, features = ["serde"] }
+is-it-slop-preprocessing = { path = "../is-it-slop-preprocessing", version = "=0.6.3", features = ["serde"] }
 
-ndarray = { workspace = true }
-ort = { workspace = true }
-serde = { workspace = true, optional = true }
-sprs = { workspace = true }
-thiserror = { workspace = true }
+ndarray = "0.17"
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+sprs = "0.11"
+thiserror = "2.0.18"
 # CLI-only dependencies
-anyhow = { workspace = true, optional = true }
-clap = { workspace = true, optional = true }
-owo-colors = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+anyhow = { version = "1.0.100", optional = true }
+clap = { version = "4.5.53", features = ["derive", "env"], optional = true }
+owo-colors = { version = "4.3", features = ["supports-colors"], optional = true }
+serde_json = { version = "1.0", optional = true }
 # Install source detection dependencies
-dirs = { workspace = true }
-which = { workspace = true }
+dirs = "6.0"
+which = "8.0"
 # Python bindings dependencies
-pyo3 = { workspace = true, optional = true }
-# pyo3-log = { workspace = true, optional = true }
-# Android JNI bindings
-jni = { workspace = true, optional = true }
+pyo3 = { version = "0.28", default-features = false, features = [
+    "extension-module",
+    "macros",
+], optional = true }
+# On Android: use load-dynamic instead of download-binaries.
+# ONNX Runtime shared library must be bundled in the Android APK.
+# api-24 is needed because `load-dynamic` compiles all EP modules, and
+# ort-sys fields like SessionOptionsAppendExecutionProvider_VitisAI require
+# api-18+. Without api-24 those fields are missing from OrtApi at compile time.
+[target.'cfg(target_os = "android")'.dependencies]
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "ndarray",
+    "load-dynamic",
+    "tracing",
+    "api-24",
+] }
+# Non-Android: download ONNX Runtime binary at build time with TLS support
+[target.'cfg(not(target_os = "android"))'.dependencies]
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "download-binaries",
+    "ndarray",
+    "tls-native",
+    "tracing",
+] }
 
 [dev-dependencies]
-serde_json = { workspace = true }
+serde_json = "1.0"
 
 [[bin]]
 name = "is-it-slop"
@@ -58,25 +88,17 @@ serde = ["dep:serde", "dep:serde_json"]
 self-update = []
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
-
-# Android JNI bindings for mobile integration
-jni = ["dep:jni", "serde"]
-
-
 all-testable = ["cli"] # add other features here, but NOT python
 
 [package.metadata.docs.rs]
 features = ["stub-model"]
 
 [build-dependencies]
-directories = { workspace = true }
-flate2 = { workspace = true }
-tar = { workspace = true }
-tempfile = { workspace = true }
-ureq = { workspace = true }
-
-[lints]
-workspace = true
+directories = "6"
+flate2 = "1.1.5"
+tar = "0.4.45"
+tempfile = "3.23.0"
+ureq = "3.1.4"
 
 
 [package.metadata.binstall]

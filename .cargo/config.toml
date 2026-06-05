@@ -2,3 +2,21 @@
 # Run the CLI with features enabled automatically
 run-cli = "run --profile dist --features cli,self-update --bin is-it-slop"
 build-cli-release = "build --profile dist --features cli,self-update --bin is-it-slop"
+
+# Android NDK cross-compilation targets
+# Requires Android NDK to be installed and in PATH.
+# These assume NDK 26+ with the standard clang toolchains.
+# Override by setting CC_<target> env vars, e.g.:
+#   CC_aarch64_linux_android = "$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android21-clang"
+
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android21-clang"
+
+[target.armv7-linux-androideabi]
+linker = "armv7a-linux-androideabi21-clang"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android21-clang"
+
+[target.i686-linux-android]
+linker = "i686-linux-android21-clang"

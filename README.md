@@ -102,6 +102,23 @@ uv add is-it-slop
 cargo add is-it-slop
 ```
 
+#### Android (via JitPack)
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+
+// app/build.gradle.kts
+dependencies {
+    implementation("com.github.sambroomy:is-it-slop:v1.0.0")
+}
+```
+
 ## Usage
 
 ```bash
@@ -175,27 +192,30 @@ let result = predictor.predict("Your text here")?;
 println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
 ```
 
-### Android
-
-Download `is-it-slop-aarch64-linux-android.aar` from the [latest release](https://github.com/SamBroomy/is-it-slop/releases/latest)
-and drop it into `app/libs/`, then add to `app/build.gradle.kts`:
+### Android (Kotlin)
 
 ```kotlin
-dependencies {
-    implementation(files("libs/is-it-slop-aarch64-linux-android.aar"))
-}
-```
+import io.github.codewithtamim.IsItSlop
 
-```kotlin
-import ai.isitlop.SlopDetector
+// Predict with default threshold
+val result = IsItSlop.predict("Your text here")
+println(result.classification) // "AI" or "Human"
+println(result.aiProbability)  // 0.0 - 1.0
+println(result.humanProbability)
 
-val result = SlopDetector.predict("Some text")
-// {"aiProbability":0.92,"humanProbability":0.08,"classification":"AI","numChunks":1,"chunkAgreement":1.0}
+// Predict with custom threshold
+val result = IsItSlop.predictWithThreshold("Text", 0.7f)
 
-val label = SlopDetector.classify("Some text")
-// "Human" or "AI"
+// Simple classification label
+val label = IsItSlop.classify("Text") // "AI" or "Human"
 
-val results = SlopDetector.predictBatch("""["text 1","text 2"]""")
+// Batch prediction
+val results = IsItSlop.predictBatch(listOf("Text A", "Text B"))
+
+// Result helpers
+result.isAi     // Boolean
+result.isHuman  // Boolean
+result.isError  // Boolean
 ```
 
 ## Upgrading
