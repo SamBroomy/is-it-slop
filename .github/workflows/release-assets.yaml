@@ -63,57 +63,14 @@ jobs:
           profile: dist
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  upload-android:
-    name: Android AAR (aarch64-linux-android)
-    if: github.repository_owner == 'SamBroomy'
+  dispatch-android:
+    name: Trigger Android repo sync
+    if: github.repository_owner == 'SamBroomy' && github.event_name == 'release'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: peter-evans/repository-dispatch@v3
         with:
-          ref: ${{ inputs.tag || github.ref }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: aarch64-linux-android
-
-      - name: Install Android NDK
-        id: ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r27d
-
-      - name: Set NDK env
-        run: |
-          echo "ANDROID_NDK_HOME=${{ steps.ndk.outputs.ndk-path }}" >> $GITHUB_ENV
-          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" >> $GITHUB_ENV
-
-      - name: Build Android .so
-        run: |
-          cargo build --target aarch64-linux-android \
-            -p is-it-slop \
-            --no-default-features --features jni \
-            --profile dist
-
-      - name: Install Kotlin compiler
-        uses: fwilhe2/setup-kotlin@main
-
-      - name: Package AAR
-        run: |
-          kotlinc android/SlopDetector.kt -d classes.jar
-          mkdir -p aar/jniLibs/arm64-v8a
-          cp target/aarch64-linux-android/dist/libis_it_slop.so aar/jniLibs/arm64-v8a/
-          cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" aar/jniLibs/arm64-v8a/
-          cp classes.jar aar/
-          printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ai.isitlop" />' > aar/AndroidManifest.xml
-          cd aar && zip -qr ../is-it-slop-aarch64-linux-android.aar . && cd ..
-          cp target/aarch64-linux-android/dist/libis_it_slop.so is-it-slop-aarch64-linux-android.so
-
-      - name: Upload assets to release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: |
-            is-it-slop-aarch64-linux-android.so
-            is-it-slop-aarch64-linux-android.aar
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+          repository: SamBroomy/is-it-slop-android
+          event-type: is-it-slop-released
+          client-payload: '{"version": "${{ github.ref_name }}", "tag": "${{ github.ref_name }}"}'

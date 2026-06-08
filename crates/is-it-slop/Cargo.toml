@@ -37,9 +37,6 @@ dirs = { workspace = true }
 which = { workspace = true }
 # Python bindings dependencies
 pyo3 = { workspace = true, optional = true }
-# pyo3-log = { workspace = true, optional = true }
-# Android JNI bindings
-jni = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -49,21 +46,22 @@ name = "is-it-slop"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
+default = ["download-binaries", "cli"]
 python = ["pyo3"]
 pyo3 = ["dep:pyo3"]
 cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors"]
 serde = ["dep:serde", "dep:serde_json"]
-# Enable self-update for standalone binaries (not package manager installs).
 self-update = []
-# Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
 
-# Android JNI bindings for mobile integration
-jni = ["dep:jni", "serde"]
+# Downloads prebuilt ONNX Runtime binaries at build time (default).
+download-binaries = ["ort/download-binaries", "ort/tls-native"]
 
+# Loads ONNX Runtime dynamically at runtime (for platforms without prebuilt binaries, e.g. Android).
+# The shared library must be bundled by the consumer (e.g. via Gradle/Maven).
+load-dynamic = ["ort/load-dynamic", "ort/api-24"]
 
-all-testable = ["cli"] # add other features here, but NOT python
+all-testable = ["download-binaries", "cli"]
 
 [package.metadata.docs.rs]
 features = ["stub-model"]
