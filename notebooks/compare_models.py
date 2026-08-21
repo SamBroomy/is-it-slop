@@ -40,6 +40,7 @@ from loguru import logger
 from magika_style_train import (
     DATA_DIR,
     Config,
+    artifact_tag,
     encode_corpus,
     per_dataset_f1,
     score,
@@ -183,6 +184,9 @@ def main() -> None:
         help="the Magika-shaped artifact to compare against",
     )
     p.add_argument("--encoding", choices=["bytes", "tokens"], default="tokens")
+    p.add_argument(
+        "--window", type=int, default=Config.window, help="must match the window the Magika artifact was trained with"
+    )
     args = p.parse_args()
 
     for required in (PROD_DIR / "slop-classifier.onnx", PROD_DIR / "tfidf_vectorizer.rkyv", args.magika_onnx):
@@ -190,7 +194,7 @@ def main() -> None:
             msg = f"missing artifact: {required}"
             raise FileNotFoundError(msg)
 
-    cfg = Config(encoding=args.encoding, limit=args.limit)
+    cfg = Config(encoding=args.encoding, window=args.window, limit=args.limit)
     splits = {name: load_split(name, args.limit) for name in ("test", "validation")}
     labels = {name: df["label"].to_numpy() for name, df in splits.items()}
 
@@ -218,7 +222,7 @@ def main() -> None:
     # ---- magika arm -----------------------------------------------------------------------------
     magika_sess = cpu_session(args.magika_onnx)
     magika_input = magika_sess.get_inputs()[0].name
-    tag = cfg.encoding if args.limit is None else f"{cfg.encoding}-{args.limit}"
+    tag = artifact_tag(cfg)
     magika_probs: dict[str, np.ndarray] = {}
     windows_cache: dict[str, np.ndarray] = {}
     for name, df in splits.items():

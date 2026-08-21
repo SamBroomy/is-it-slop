@@ -110,6 +110,20 @@ class Config:
         return BYTE_PAD if self.encoding == "bytes" else self.max_vocab
 
 
+def artifact_tag(cfg: Config) -> str:
+    """Name caches and artifacts after the settings that change their contents.
+
+    The window is only included when it differs from the default, so runs made before it was
+    configurable keep their existing filenames.
+    """
+    parts = [cfg.encoding]
+    if cfg.window != Config.window:
+        parts.append(f"w{cfg.window}")
+    if cfg.limit is not None:
+        parts.append(str(cfg.limit))
+    return "-".join(parts)
+
+
 # --------------------------------------------------------------------------------------------------
 # Encoding: document -> one fixed-size window
 # --------------------------------------------------------------------------------------------------
@@ -479,6 +493,15 @@ def main() -> None:
         help="bytes is faithful to the paper and keeps the model ~1MB; tokens reuses the "
         "production tiktoken pipeline but needs a folded vocab",
     )
+    p.add_argument(
+        "--window",
+        type=int,
+        default=Config.window,
+        help="symbols per block (3 blocks total). Text is ~4.7 bytes per BPE token, so equal windows "
+        "do NOT mean equal text coverage: at 512, the byte arm truncates 48%% of documents and the "
+        "token arm 5%%. To compare representations rather than context length, match the coverage "
+        "(e.g. --encoding tokens --window 328 against --encoding bytes --window 512)",
+    )
     p.add_argument("--epochs", type=int, default=Config.epochs)
     p.add_argument("--batch-size", type=int, default=Config.batch_size)
     p.add_argument("--lr", type=float, default=Config.lr)
@@ -495,7 +518,14 @@ def main() -> None:
     p.add_argument("--workers", type=int, default=0)
     args = p.parse_args()
 
-    cfg = Config(encoding=args.encoding, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, limit=args.limit)
+    cfg = Config(
+        encoding=args.encoding,
+        window=args.window,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        limit=args.limit,
+    )
     torch.manual_seed(cfg.seed)
     np.random.default_rng(cfg.seed)
 
@@ -504,7 +534,7 @@ def main() -> None:
 
     splits = {name: load_split(name, cfg.limit) for name in ("train", "test", "validation")}
 
-    tag = f"{cfg.encoding}{'' if cfg.limit is None else f'-{cfg.limit}'}"
+    tag = artifact_tag(cfg)
     cache_dir = DATA_DIR / "magika_cache"
     features = {
         name: encode_corpus(df["text"].to_list(), cfg, cache_dir / f"{name}-{tag}.npy") for name, df in splits.items()
