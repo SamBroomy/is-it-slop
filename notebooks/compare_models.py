@@ -307,6 +307,15 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     side_by_side.write_csv(OUT_DIR / f"comparison-per-dataset-{tag}.csv")
     (OUT_DIR / f"comparison-{tag}.json").write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
+    # Document-level probabilities, so follow-up analysis (accuracy by length, calibration,
+    # disagreement) does not need another pass over the ensemble.
+    np.savez_compressed(
+        OUT_DIR / f"test-probs-{tag}.npz",
+        production=prod_probs["test"],
+        magika=magika_probs["test"],
+        label=labels["test"],
+        dataset=np.asarray(datasets),
+    )
     logger.info(f"written to {OUT_DIR}")
 
 
