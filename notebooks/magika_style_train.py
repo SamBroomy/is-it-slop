@@ -489,7 +489,10 @@ def main() -> None:
         default=0.99,
         help="precision on the AI class the threshold must hold (Magika's rule)",
     )
-    p.add_argument("--workers", type=int, default=4)
+    # Default 0: the windows are already encoded on disk, so __getitem__ is a memmap read and a
+    # cast. Worker processes would add no throughput, and macOS spawns rather than forks, which
+    # pickles the memmap into a real array in every worker.
+    p.add_argument("--workers", type=int, default=0)
     args = p.parse_args()
 
     cfg = Config(encoding=args.encoding, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, limit=args.limit)
