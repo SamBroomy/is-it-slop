@@ -153,7 +153,13 @@ def artifact_tag(cfg: Config) -> str:
     Non-default values only, so the baseline keeps short, stable filenames.
     """
     parts = [encoding_tag(cfg)]
-    for field, prefix in (("embed_dim", "d"), ("hidden", "h"), ("chunk_loss_weight", "cw"), ("lr", "lr")):
+    for field, prefix in (
+        ("embed_dim", "d"),
+        ("hidden", "h"),
+        ("chunk_loss_weight", "cw"),
+        ("lr", "lr"),
+        ("seed", "s"),
+    ):
         value = getattr(cfg, field)
         if value != getattr(Config, field):
             parts.append(f"{prefix}{value:g}")
@@ -618,6 +624,13 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=Config.batch_size)
     p.add_argument("--lr", type=float, default=Config.lr)
     p.add_argument("--limit", type=int, default=None, help="rows per split, for smoke runs")
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=Config.seed,
+        help="varies init, shuffling and CutMix draws. Repeat a config across seeds to measure "
+        "run-to-run spread; differences smaller than that spread are not results",
+    )
     p.add_argument("--target-precision", type=float, default=0.99)
     args = p.parse_args()
 
@@ -632,6 +645,7 @@ def main() -> None:
         batch_size=args.batch_size,
         lr=args.lr,
         limit=args.limit,
+        seed=args.seed,
     )
     torch.manual_seed(cfg.seed)
     device = pick_device()
