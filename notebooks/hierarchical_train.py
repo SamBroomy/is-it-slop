@@ -87,7 +87,13 @@ class Config:
 
     chunk_size: int = 192
     max_chunks: int = 8
-    """8 x 192 = 1536 tokens, matching the flat token arm's coverage on purpose."""
+    """Training-time chunk budget, not a model limit.
+
+    The trunk runs per chunk and the document pool is a masked reduction over the chunk axis, so the
+    network handles any chunk count; this bound exists because the encoded cache is a rectangular
+    array and because training wants a fixed shape. The exported ONNX takes a dynamic chunk axis.
+    8 x 192 = 1536 tokens, matching the flat token arm's coverage so the two are comparable.
+    """
     min_fill: float = 0.10
     """Drop a trailing chunk this empty; it carries almost no evidence and adds a noisy vote."""
     vocab_size: int = 32768
@@ -469,22 +475,31 @@ class DocumentOnly(nn.Module):
 
 
 def export_hierarchical_onnx(model: nn.Module, cfg: Config, path: Path) -> None:
-    """Export to a single self-contained ONNX file taking [batch, max_chunks, chunk_size].
+    """Export to a single self-contained ONNX file taking [batch, chunks, chunk_size].
+
+    The chunk axis is dynamic. The trunk runs per chunk and the document pool is a masked reduction
+    over the chunk axis, so nothing in the graph is tied to `max_chunks` -- that value is only a
+    training-time budget for the rectangular cache. Inference can therefore pass a document's real
+    chunk count, however large, with no padding at all.
+
+    Caveat: chunk counts far beyond the trained range are extrapolation for the attention pool,
+    which learned to distribute weight over at most `max_chunks` entries.
 
     `external_data=False` matters: the default spills weights to a `.onnx.data` sidecar, and
     `crates/is-it-slop/build.rs` embeds one ONNX file into the binary.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     model.eval().to("cpu")
-    dummy = torch.full((1, cfg.max_chunks, cfg.chunk_size), cfg.pad_id, dtype=torch.long)
-    dummy[0, 0, :] = 0  # at least one real chunk, so masking has a live path to trace
+    # Two chunks, one real and one padding, so both branches of the mask are traced.
+    dummy = torch.full((1, 2, cfg.chunk_size), cfg.pad_id, dtype=torch.long)
+    dummy[0, 0, :] = 0
     torch.onnx.export(
         model,
         (dummy,),
         str(path),
         input_names=["chunks"],
         output_names=["ai_probability"],
-        dynamic_axes={"chunks": {0: "batch"}, "ai_probability": {0: "batch"}},
+        dynamic_axes={"chunks": {0: "batch", 1: "chunks"}, "ai_probability": {0: "batch"}},
         opset_version=18,
         external_data=False,
     )
@@ -531,7 +546,9 @@ def main() -> None:
         "--max-chunks",
         type=int,
         default=Config.max_chunks,
-        help="8 matches the flat token arm's 1536-token coverage; 16 covers 98.8%% of documents whole",
+        help="chunks seen during TRAINING; inference is unbounded because the exported chunk axis "
+        "is dynamic. 8 matches the flat token arm's 1536-token coverage, 16 covers 98.8%% of "
+        "documents whole, 32 covers 99.7%%",
     )
     p.add_argument("--vocab-size", type=int, default=Config.vocab_size)
     p.add_argument("--embed-dim", type=int, default=Config.embed_dim, help="halving this halves the artifact")
