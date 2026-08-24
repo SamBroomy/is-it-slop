@@ -377,11 +377,13 @@ def chunk_cutmix(ids: torch.Tensor, y: torch.Tensor, cfg: Config, generator: tor
     Produces the partially-AI documents the corpus does not contain.
     """
     b, c, _ = ids.shape
-    partner = torch.randperm(b, generator=generator, device=ids.device)
+    # Drawn on CPU and moved: a CPU generator cannot seed an MPS or CUDA tensor directly, and this
+    # keeps the sampled order identical across devices for a given seed.
+    partner = torch.randperm(b, generator=generator).to(ids.device)
     real = (ids != cfg.pad_id).any(dim=-1)
 
     # Take a contiguous run of chunk slots from the partner document.
-    cut = torch.randint(1, c, (1,), generator=generator, device=ids.device).item()
+    cut = int(torch.randint(1, c, (1,), generator=generator).item())
     mixed = ids.clone()
     mixed[:, cut:, :] = ids[partner][:, cut:, :]
 
