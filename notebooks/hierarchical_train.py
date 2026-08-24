@@ -370,11 +370,15 @@ class HierarchicalSlopClassifier(nn.Module):
 
 
 def chunk_cutmix(ids: torch.Tensor, y: torch.Tensor, cfg: Config, generator: torch.Generator) -> tuple:
-    """Splice whole chunks between two documents; the target becomes the proportion of AI chunks.
+    """Splice whole chunks between two documents, returning document and per-chunk targets.
 
     Applied at chunk granularity rather than token granularity because the chunk grid is already the
     unit the document head pools over, so the proportional label is exact rather than approximate.
     Produces the partially-AI documents the corpus does not contain.
+
+    The per-chunk targets are the point. Ordinarily every chunk inherits the document label, which
+    is noisy -- a human document may quote generated text and vice versa. A splice is the one case
+    where each chunk's true origin is known, so it is the only source of clean chunk supervision.
     """
     b, c, _ = ids.shape
     # Drawn on CPU and moved: a CPU generator cannot seed an MPS or CUDA tensor directly, and this
@@ -392,17 +396,31 @@ def chunk_cutmix(ids: torch.Tensor, y: torch.Tensor, cfg: Config, generator: tor
     other = (real_mixed[:, cut:].sum(dim=1)).float()
     total = (own + other).clamp(min=1.0)
     y_mixed = (y * own + y[partner] * other) / total
-    return mixed, y_mixed
+
+    # Each chunk keeps the label of the document it actually came from.
+    y_chunk = y.unsqueeze(1).expand(b, c).clone()
+    y_chunk[:, cut:] = y[partner].unsqueeze(1).expand(b, c - cut)
+    return mixed, y_mixed, y_chunk
 
 
 def losses(
-    doc_logits: torch.Tensor, chunk_logits: torch.Tensor, chunk_real: torch.Tensor, y: torch.Tensor, cfg: Config
+    doc_logits: torch.Tensor,
+    chunk_logits: torch.Tensor,
+    chunk_real: torch.Tensor,
+    y: torch.Tensor,
+    y_chunk: torch.Tensor,
+    cfg: Config,
 ) -> torch.Tensor:
-    """Document loss plus a masked, down-weighted chunk loss over real chunks only."""
+    """Document loss plus a masked, down-weighted chunk loss over real chunks only.
+
+    `y_chunk` is passed separately rather than broadcast from `y` so that a spliced batch can give
+    each chunk the label of the document it came from; broadcasting would hand every chunk the
+    document's mixed fraction and destroy the one clean chunk signal CutMix produces.
+    """
     bce = nn.functional.binary_cross_entropy_with_logits
     doc_loss = bce(doc_logits, y)
 
-    per_chunk = bce(chunk_logits, y.unsqueeze(1).expand_as(chunk_logits), reduction="none")
+    per_chunk = bce(chunk_logits, y_chunk, reduction="none")
     chunk_loss = (per_chunk * chunk_real).sum() / chunk_real.sum().clamp(min=1)
     return doc_loss + cfg.chunk_loss_weight * chunk_loss
 
@@ -438,10 +456,11 @@ def train(
         t0, total, seen = time.time(), 0.0, 0
         for x, y in train_loader:
             x, y = x.to(device), y.to(device)  # ruff: ignore[redefined-loop-name]
+            y_chunk = y.unsqueeze(1).expand(-1, x.shape[1])
             if cfg.cutmix > 0 and torch.rand(1, generator=generator).item() < cfg.cutmix:
-                x, y = chunk_cutmix(x, y, cfg, generator)  # ruff: ignore[redefined-loop-name]
+                x, y, y_chunk = chunk_cutmix(x, y, cfg, generator)  # ruff: ignore[redefined-loop-name]
             opt.zero_grad()
-            loss = losses(*model(x), y, cfg)
+            loss = losses(*model(x), y, y_chunk, cfg)
             loss.backward()
             opt.step()
             total += loss.item() * len(y)
