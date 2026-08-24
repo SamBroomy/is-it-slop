@@ -259,17 +259,25 @@ def encode_corpus(texts: Sequence[str], cfg: Config, lut: np.ndarray, cache: Pat
 
 
 class DocumentDataset(Dataset):
-    def __init__(self, features: np.ndarray, labels: np.ndarray) -> None:
+    """Documents plus the source they came from, which CutMix uses to pick a plausible partner."""
+
+    def __init__(self, features: np.ndarray, labels: np.ndarray, groups: np.ndarray) -> None:
         assert len(features) == len(labels), f"{len(features)} features vs {len(labels)} labels"
+        assert len(features) == len(groups), f"{len(features)} features vs {len(groups)} groups"
         self.features = features
         self.labels = labels
+        self.groups = groups
 
     def __len__(self) -> int:
         return len(self.labels)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = torch.from_numpy(np.asarray(self.features[idx], dtype=np.int64))
-        return x, torch.tensor(float(self.labels[idx]), dtype=torch.float32)
+        return (
+            x,
+            torch.tensor(float(self.labels[idx]), dtype=torch.float32),
+            torch.tensor(int(self.groups[idx]), dtype=torch.long),
+        )
 
 
 # --------------------------------------------------------------------------------------------------
@@ -369,7 +377,33 @@ class HierarchicalSlopClassifier(nn.Module):
 # --------------------------------------------------------------------------------------------------
 
 
-def chunk_cutmix(ids: torch.Tensor, y: torch.Tensor, cfg: Config, generator: torch.Generator) -> tuple:
+def choose_partners(y: torch.Tensor, groups: torch.Tensor, generator: torch.Generator) -> torch.Tensor:
+    """Pick a splice partner per document: opposite label, same source where one is available.
+
+    Opposite label because a same-label splice carries no mixed signal. Same source because pairing
+    across sources welds unrelated topics together, and the model can then score well by spotting
+    the topic seam rather than the writing. Only 51% of training rows come from sources holding both
+    labels, so a same-source opposite-label partner often does not exist in the batch; those fall
+    back to any opposite-label document rather than wasting the splice.
+    """
+    labels = y.detach().cpu()
+    sources = groups.detach().cpu()
+    opposite = labels.unsqueeze(0) != labels.unsqueeze(1)
+    preferred = opposite & (sources.unsqueeze(0) == sources.unsqueeze(1))
+
+    partner = torch.arange(len(labels))
+    for i in range(len(labels)):
+        pool = preferred[i].nonzero(as_tuple=True)[0]
+        if len(pool) == 0:
+            pool = opposite[i].nonzero(as_tuple=True)[0]
+        if len(pool) > 0:
+            partner[i] = pool[torch.randint(len(pool), (1,), generator=generator)]
+    return partner
+
+
+def chunk_cutmix(
+    ids: torch.Tensor, y: torch.Tensor, groups: torch.Tensor, cfg: Config, generator: torch.Generator
+) -> tuple:
     """Splice whole chunks between two documents, returning document and per-chunk targets.
 
     Applied at chunk granularity rather than token granularity because the chunk grid is already the
@@ -383,7 +417,7 @@ def chunk_cutmix(ids: torch.Tensor, y: torch.Tensor, cfg: Config, generator: tor
     b, c, _ = ids.shape
     # Drawn on CPU and moved: a CPU generator cannot seed an MPS or CUDA tensor directly, and this
     # keeps the sampled order identical across devices for a given seed.
-    partner = torch.randperm(b, generator=generator).to(ids.device)
+    partner = choose_partners(y, groups, generator).to(ids.device)
     real = (ids != cfg.pad_id).any(dim=-1)
 
     # Take a contiguous run of chunk slots from the partner document.
@@ -429,7 +463,7 @@ def losses(
 def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> np.ndarray:
     model.eval()
     out = []
-    for x, _ in loader:
+    for x, _, _ in loader:
         doc_logits, _, _ = model(x.to(device))
         out.append(torch.sigmoid(doc_logits).float().cpu().numpy())
     return np.concatenate(out)
@@ -454,11 +488,11 @@ def train(
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         t0, total, seen = time.time(), 0.0, 0
-        for x, y in train_loader:
+        for x, y, groups in train_loader:
             x, y = x.to(device), y.to(device)  # ruff: ignore[redefined-loop-name]
             y_chunk = y.unsqueeze(1).expand(-1, x.shape[1])
             if cfg.cutmix > 0 and torch.rand(1, generator=generator).item() < cfg.cutmix:
-                x, y, y_chunk = chunk_cutmix(x, y, cfg, generator)  # ruff: ignore[redefined-loop-name]
+                x, y, y_chunk = chunk_cutmix(x, y, groups, cfg, generator)  # ruff: ignore[redefined-loop-name]
             opt.zero_grad()
             loss = losses(*model(x), y, y_chunk, cfg)
             loss.backward()
@@ -615,9 +649,13 @@ def main() -> None:
         for name, df in splits.items()
     }
 
+    # Source ids, so CutMix can prefer a partner from the same corpus rather than welding
+    # unrelated topics together.
+    groups = {name: df["dataset"].to_physical().to_numpy() for name, df in splits.items()}
+
     loaders = {
         name: DataLoader(
-            DocumentDataset(features[name], labels[name]),
+            DocumentDataset(features[name], labels[name], groups[name]),
             batch_size=cfg.batch_size,
             shuffle=(name == "train"),
             num_workers=0,
