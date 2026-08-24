@@ -126,12 +126,33 @@ class Config:
         return self.chunk_size // self.group
 
 
-def artifact_tag(cfg: Config) -> str:
+def encoding_tag(cfg: Config) -> str:
+    """Name the encoded cache after only the settings that change its contents.
+
+    Deliberately excludes model-shape settings such as `embed_dim`, so sweeping those reuses the
+    encoding instead of rebuilding it.
+    """
     parts = [f"c{cfg.chunk_size}", f"k{cfg.max_chunks}", f"v{cfg.vocab_size}"]
-    if cfg.cutmix > 0:
-        parts.append(f"cutmix{cfg.cutmix:g}")
+    if cfg.min_fill != Config.min_fill:
+        parts.append(f"f{cfg.min_fill:g}")
     if cfg.limit is not None:
         parts.append(str(cfg.limit))
+    return "-".join(parts)
+
+
+def artifact_tag(cfg: Config) -> str:
+    """Name trained artifacts after everything that changes them.
+
+    Every swept setting must appear here or a sweep silently overwrites its own earlier runs.
+    Non-default values only, so the baseline keeps short, stable filenames.
+    """
+    parts = [encoding_tag(cfg)]
+    for field, prefix in (("embed_dim", "d"), ("hidden", "h"), ("chunk_loss_weight", "cw"), ("lr", "lr")):
+        value = getattr(cfg, field)
+        if value != getattr(Config, field):
+            parts.append(f"{prefix}{value:g}")
+    if cfg.cutmix > 0:
+        parts.append(f"cutmix{cfg.cutmix:g}")
     return "-".join(parts)
 
 
@@ -552,7 +573,7 @@ def main() -> None:
     # Vocabulary is derived from the training split only; deriving it from test would leak.
     lut = build_vocab(splits["train"]["text"].to_list(), cfg, cache_dir / f"vocab-v{cfg.vocab_size}.npy")
     features = {
-        name: encode_corpus(df["text"].to_list(), cfg, lut, cache_dir / f"{name}-{tag}.npy")
+        name: encode_corpus(df["text"].to_list(), cfg, lut, cache_dir / f"{name}-{encoding_tag(cfg)}.npy")
         for name, df in splits.items()
     }
 
