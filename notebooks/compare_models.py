@@ -223,9 +223,13 @@ def time_hierarchical(chunks: np.ndarray, sess: ort.InferenceSession, pad_id: in
 
 
 def score_hierarchical(
-    tags: list[str], splits: dict[str, pl.DataFrame]
+    tags: list[str], splits: dict[str, pl.DataFrame], limit: int | None
 ) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, tuple[ort.InferenceSession, HierConfig, np.ndarray]]]:
     """Score each named hierarchical run, reusing the vocabulary and encoding it trained with.
+
+    `limit` names this comparison's row count so a subsampled pass writes its own caches. The
+    trained config carries `limit=None`, so without this a `--limit` run would overwrite the
+    full-size caches training built with short ones.
 
     Raises:
         FileNotFoundError: if a run's vocabulary cache is missing.
@@ -242,10 +246,11 @@ def score_hierarchical(
             raise FileNotFoundError(msg)
         lut = np.load(vocab_path)
         sess = cpu_session(onnx_path)
+        cache_cfg = dataclasses.replace(cfg, limit=limit)
 
         probs: dict[str, np.ndarray] = {}
         for name, df in splits.items():
-            cache = DATA_DIR / "hierarchical_cache" / f"{name}-{hier_encoding_tag(cfg)}.npy"
+            cache = DATA_DIR / "hierarchical_cache" / f"{name}-{hier_encoding_tag(cache_cfg)}.npy"
             encoded = hier_encode_corpus(df["text"].to_list(), cfg, lut, cache)
             probs[name] = hierarchical_probs(encoded, sess)
             if name == "test":
@@ -402,7 +407,7 @@ def main() -> None:
         magika_probs[name] = out
 
     # ---- hierarchical arms ------------------------------------------------------------------------
-    hier_probs, hier_sessions = score_hierarchical(args.hierarchical, splits)
+    hier_probs, hier_sessions = score_hierarchical(args.hierarchical, splits, args.limit)
 
     # ---- thresholds fitted on validation, applied to test ----------------------------------------
     arms = {"production": prod_probs, "magika": magika_probs, **hier_probs}
