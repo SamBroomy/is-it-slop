@@ -35,7 +35,10 @@ from __future__ import annotations
 # ruff: file-ignore[undocumented-magic-method, undocumented-public-init, assert]
 import argparse
 import json
+import logging
 import time
+import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -54,10 +57,11 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from torch import nn
+from torch.export import Dim
 from torch.utils.data import DataLoader, Dataset
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 SEED = 42
 ROOT_DIR = Path(__file__).parent.parent.resolve()
@@ -410,6 +414,25 @@ def per_dataset_f1(datasets: Sequence[str], y: np.ndarray, probs: np.ndarray, th
 # --------------------------------------------------------------------------------------------------
 
 
+@contextmanager
+def quiet_exporter() -> Iterator[None]:
+    """Mute torch's own export chatter, which is noise the caller cannot act on.
+
+    Two sources: the exporter logs a line per unregistered torchvision op (we have no torchvision and
+    need none), and torch.export's internals raise a FutureWarning about their own `LeafSpec` usage.
+    Scoped to the export call so nothing else in the run is silenced.
+    """
+    registration = logging.getLogger("torch.onnx._internal.exporter._registration")
+    previous = registration.level
+    registration.setLevel(logging.ERROR)
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning, message=".*LeafSpec.*")
+            yield
+    finally:
+        registration.setLevel(previous)
+
+
 def export_onnx(model: nn.Module, cfg: Config, path: Path) -> None:
     """Export to a single self-contained ONNX file.
 
@@ -420,16 +443,20 @@ def export_onnx(model: nn.Module, cfg: Config, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     model.eval().to("cpu")
     dummy = torch.zeros(1, cfg.seq_len, dtype=torch.long)
-    torch.onnx.export(
-        model,
-        (dummy,),
-        str(path),
-        input_names=["window"],
-        output_names=["logits"],
-        dynamic_axes={"window": {0: "batch"}, "logits": {0: "batch"}},
-        opset_version=17,
-        external_data=False,
-    )
+    with quiet_exporter():
+        torch.onnx.export(
+            model,
+            (dummy,),
+            str(path),
+            input_names=["window"],
+            output_names=["logits"],
+            # dynamic_shapes rather than dynamic_axes: the dynamo exporter warns the older form may
+            # violate its constraints. Keyed by the forward parameter name; the window length is
+            # fixed by the trained input grid.
+            dynamic_shapes={"x": {0: Dim("batch", min=1)}},
+            opset_version=18,
+            external_data=False,
+        )
     sidecars = list(path.parent.glob(f"{path.name}.data"))
     assert not sidecars, f"weights spilled to {sidecars}; the artifact is not self-contained"
     logger.info(f"ONNX -> {path} ({path.stat().st_size / 1024:.0f} KB, self-contained)")

@@ -63,11 +63,13 @@ from magika_style_train import (
     DATA_DIR,
     per_dataset_f1,
     pick_device,
+    quiet_exporter,
     score,
     threshold_at_best_f1,
     threshold_at_precision,
 )
 from torch import nn
+from torch.export import Dim
 from torch.utils.data import DataLoader, Dataset
 
 if TYPE_CHECKING:
@@ -554,16 +556,21 @@ def export_hierarchical_onnx(model: nn.Module, cfg: Config, path: Path) -> None:
     # Two chunks, one real and one padding, so both branches of the mask are traced.
     dummy = torch.full((1, 2, cfg.chunk_size), cfg.pad_id, dtype=torch.long)
     dummy[0, 0, :] = 0
-    torch.onnx.export(
-        model,
-        (dummy,),
-        str(path),
-        input_names=["chunks"],
-        output_names=["ai_probability"],
-        dynamic_axes={"chunks": {0: "batch", 1: "chunks"}, "ai_probability": {0: "batch"}},
-        opset_version=18,
-        external_data=False,
-    )
+    with quiet_exporter():
+        torch.onnx.export(
+            model,
+            (dummy,),
+            str(path),
+            input_names=["chunks"],
+            output_names=["ai_probability"],
+            # dynamic_shapes rather than dynamic_axes: the dynamo exporter warns that the older form
+            # may violate its constraints. Keyed by the forward parameter name, and named rather
+            # than Dim.DYNAMIC so the artifact reports "batch"/"n_chunks" instead of generated
+            # symbols. The trailing chunk_size axis is fixed by the trained embedding grid.
+            dynamic_shapes={"chunks": {0: Dim("batch", min=1), 1: Dim("n_chunks", min=1)}},
+            opset_version=18,
+            external_data=False,
+        )
     sidecars = list(path.parent.glob(f"{path.name}.data"))
     assert not sidecars, f"weights spilled to {sidecars}; the artifact is not self-contained"
     logger.info(f"ONNX -> {path} ({path.stat().st_size / 1024:.0f} KB, self-contained)")
