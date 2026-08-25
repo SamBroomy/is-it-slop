@@ -52,6 +52,7 @@ from magika_style_train import (
     threshold_at_best_f1,
     threshold_at_precision,
 )
+from safetensors.torch import load_file
 from sklearn.metrics import roc_auc_score
 
 ROOT_DIR = Path(__file__).parent.parent.resolve()
@@ -242,11 +243,11 @@ def score_hierarchical(
         # Rebuilding the vocabulary here could disagree with the one the run trained against.
         # Read from the bundle rather than the dataset cache, so the comparison uses exactly the
         # vocabulary shipped alongside the graph.
-        vocab_path = HIER_DIR / tag / "token_vocabulary.npy"
+        vocab_path = HIER_DIR / tag / "token_vocabulary.safetensors"
         if not vocab_path.exists():
             msg = f"missing vocabulary {vocab_path}; retrain this tag to write a complete bundle"
             raise FileNotFoundError(msg)
-        lut = np.load(vocab_path)
+        lut = load_file(vocab_path)["token_to_row"].numpy()
         sess = cpu_session(onnx_path)
         cache_cfg = dataclasses.replace(cfg, limit=limit)
 
@@ -446,7 +447,7 @@ def main() -> None:
         # Whole bundle, not just the graph: the vocabulary is required at inference, and production
         # is likewise measured as ONNX plus vectorizer.
         sizes[f"hier:{hier_tag}"] = sum(
-            f.stat().st_size for f in (HIER_DIR / hier_tag).iterdir() if f.suffix in {".onnx", ".npy"}
+            f.stat().st_size for f in (HIER_DIR / hier_tag).iterdir() if f.suffix in {".onnx", ".safetensors"}
         )
 
     report_cost(latency, sizes, width, len(sample))

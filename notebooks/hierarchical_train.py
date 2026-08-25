@@ -59,6 +59,7 @@ import numpy as np
 import onnxruntime as ort
 import polars as pl
 import torch
+from is_it_slop_preprocessing import __version__ as preprocessing_version
 from is_it_slop_preprocessing import tokenize
 from loguru import logger
 from magika_style_train import (
@@ -72,6 +73,7 @@ from magika_style_train import (
     threshold_at_precision,
     verify_onnx,
 )
+from safetensors.torch import save_file
 from torch import nn
 from torch.export import Dim
 from torch.utils.data import DataLoader, Dataset
@@ -553,13 +555,21 @@ def save_bundle(
     The vocabulary matters most: the ONNX consumes compact row indices, so without the lookup table
     that produced them the graph cannot be fed at all. It previously lived only under the dataset
     cache, which made the exported model unusable on its own.
+
+    Stored as safetensors because inference is Rust: the format is self-describing and has a Rust
+    reader, unlike .npy. Note the crate already serialises the TF-IDF vectorizer with rkyv via the
+    PyO3 binding, so if the vocabulary later moves behind a shared Rust encoder it should follow
+    that pattern instead -- see the train/inference skew note in the module docstring.
     """
-    np.save(bundle / "token_vocabulary.npy", lut)
+    save_file({"token_to_row": torch.from_numpy(lut.astype(np.int32))}, bundle / "token_vocabulary.safetensors")
     (bundle / "classification_threshold.txt").write_text(str(thresholds["best_f1"]), encoding="utf-8")
 
     # Everything needed to turn raw text into the model's input, the analogue of production's
     # token_chunker_config.json. max_chunks is the training budget; the graph accepts any count.
     encoder = {
+        # Pins which build of the shared Rust preprocessing produced this bundle. Inference must
+        # tokenize identically, and the tokenizer lives in that crate.
+        "preprocessing_version": preprocessing_version,
         "tokenizer": "o200k_base",
         "chunk_size": cfg.chunk_size,
         "max_chunks_seen_in_training": cfg.max_chunks,
