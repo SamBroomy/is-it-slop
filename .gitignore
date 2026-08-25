@@ -24,6 +24,7 @@
 !.python-version
 !/README.md
 !/NEXT_RELEASE.md
+!/EXPERIMENTS.md
 !/LICENSE
 !notebooks/**/*.ipynb
 !/notebooks/**/*.py
