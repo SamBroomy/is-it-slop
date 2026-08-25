@@ -23,6 +23,7 @@
 !uv.lock
 !.python-version
 !/README.md
+!/NEXT_RELEASE.md
 !/LICENSE
 !notebooks/**/*.ipynb
 !/notebooks/**/*.py
