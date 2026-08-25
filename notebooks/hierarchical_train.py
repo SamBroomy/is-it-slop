@@ -51,22 +51,26 @@ import json
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+import onnxruntime as ort
 import polars as pl
 import torch
 from is_it_slop_preprocessing import tokenize
 from loguru import logger
 from magika_style_train import (
     DATA_DIR,
+    artifact_sizes,
     per_dataset_f1,
     pick_device,
     quiet_exporter,
     score,
     threshold_at_best_f1,
     threshold_at_precision,
+    verify_onnx,
 )
 from torch import nn
 from torch.export import Dim
@@ -484,8 +488,12 @@ def train(
     y_val: np.ndarray,
     cfg: Config,
     device: torch.device,
-) -> nn.Module:
-    """Train with early stopping on validation AUC, keeping the best weights seen."""
+) -> tuple[nn.Module, int]:
+    """Train with early stopping on validation AUC, keeping the best weights seen.
+
+    Returns the model and the number of epochs actually run, which the metadata records so a
+    bundle says how long it trained rather than only what was configured.
+    """
     from sklearn.metrics import roc_auc_score  # ruff: ignore[import-outside-top-level]
 
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
@@ -522,7 +530,7 @@ def train(
 
     if best_state:
         model.load_state_dict(best_state)
-    return model
+    return model, epoch
 
 
 class DocumentOnly(nn.Module):
@@ -535,6 +543,85 @@ class DocumentOnly(nn.Module):
     def forward(self, chunks: torch.Tensor) -> torch.Tensor:
         doc_logits, _, _ = self.model(chunks)
         return torch.sigmoid(doc_logits)
+
+
+def save_bundle(
+    bundle: Path, cfg: Config, lut: np.ndarray, thresholds: dict[str, float], results: dict, model: nn.Module
+) -> None:
+    """Write everything inference needs beside the graph, mirroring `model_artifacts/3.0.0/`.
+
+    The vocabulary matters most: the ONNX consumes compact row indices, so without the lookup table
+    that produced them the graph cannot be fed at all. It previously lived only under the dataset
+    cache, which made the exported model unusable on its own.
+    """
+    np.save(bundle / "token_vocabulary.npy", lut)
+    (bundle / "classification_threshold.txt").write_text(str(thresholds["best_f1"]), encoding="utf-8")
+
+    # Everything needed to turn raw text into the model's input, the analogue of production's
+    # token_chunker_config.json. max_chunks is the training budget; the graph accepts any count.
+    encoder = {
+        "tokenizer": "o200k_base",
+        "chunk_size": cfg.chunk_size,
+        "max_chunks_seen_in_training": cfg.max_chunks,
+        "min_fill": cfg.min_fill,
+        "overlap": 0,
+        "vocab_size": cfg.vocab_size,
+        "oov_id": cfg.oov_id,
+        "pad_id": cfg.pad_id,
+    }
+    (bundle / "encoder_config.json").write_text(json.dumps(encoder, indent=2), encoding="utf-8")
+    (bundle / "results.json").write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
+    torch.save(model.state_dict(), bundle / "model.pt")
+
+
+def write_metadata(
+    bundle: Path, cfg: Config, tag: str, thresholds: dict[str, float], results: dict, breakdown: pl.DataFrame
+) -> None:
+    """Provenance and measured performance, shaped like production's `model_metadata.json`.
+
+    Written last so `artifact_sizes` sees the finished bundle.
+    """
+    metadata = {
+        "metadata_version": "1.0.0",
+        "version_info": {
+            "model_tag": tag,
+            "dataset_version": DATA_DIR.name,
+            "training_timestamp": datetime.now(UTC).isoformat(),
+        },
+        "model_config": {
+            "model_type": "HierarchicalSlopClassifier",
+            "architecture": "shared per-chunk trunk, chunk head, attention-pooled document head",
+            "parameters": results["parameters"],
+            "encoding": {
+                "tokenizer": "o200k_base",
+                "vocab_size": cfg.vocab_size,
+                "embed_dim": cfg.embed_dim,
+                "chunk_size": cfg.chunk_size,
+                "max_chunks_seen_in_training": cfg.max_chunks,
+                "coverage_tokens": cfg.chunk_size * cfg.max_chunks,
+            },
+            "trunk": {"group": cfg.group, "hidden": cfg.hidden},
+            "training": {
+                "chunk_loss_weight": cfg.chunk_loss_weight,
+                "cutmix": cfg.cutmix,
+                "batch_size": cfg.batch_size,
+                "lr": cfg.lr,
+                "seed": cfg.seed,
+            },
+            "thresholds": {name: round(value, 6) for name, value in thresholds.items()},
+        },
+        # Thresholds are fitted on validation and only then applied to test, so both are reported.
+        "performance_metrics": {"test": results["test"], "validation": results["validation"]},
+        "per_dataset_accuracy": {row["dataset"]: round(row["accuracy"], 4) for row in breakdown.iter_rows(named=True)},
+        "artifact_info": artifact_sizes(bundle),
+        "training_info": {
+            "seed": cfg.seed,
+            "epochs_trained": results.get("epochs_trained"),
+            "training_duration_seconds": round(results["train_seconds"], 2),
+            "onnx_max_drift": results.get("onnx_drift"),
+        },
+    }
+    (bundle / "model_metadata.json").write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
 
 
 def export_hierarchical_onnx(model: nn.Module, cfg: Config, path: Path) -> None:
@@ -694,7 +781,7 @@ def main() -> None:
     )
 
     t0 = time.time()
-    model = train(model, loaders["train"], loaders["validation"], labels["validation"], cfg, device)
+    model, epochs_trained = train(model, loaders["train"], loaders["validation"], labels["validation"], cfg, device)
     train_seconds = time.time() - t0
 
     val_probs = predict(model, loaders["validation"], device)
@@ -711,6 +798,7 @@ def main() -> None:
         "config": cfg.__dict__,
         "parameters": params,
         "train_seconds": train_seconds,
+        "epochs_trained": epochs_trained,
         "validation": {k: score(labels["validation"], val_probs, t) for k, t in thresholds.items()},
         "test": {k: score(labels["test"], test_probs, t) for k, t in thresholds.items()},
     }
@@ -719,8 +807,18 @@ def main() -> None:
             logger.info(f"{split_name:10s} [{rule}] " + "  ".join(f"{k}={v:.4f}" for k, v in metrics.items()))
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    onnx_path = OUT_DIR / f"hierarchical-{tag}.onnx"
-    export_hierarchical_onnx(DocumentOnly(model), cfg, onnx_path)
+    bundle = OUT_DIR / tag
+    bundle.mkdir(parents=True, exist_ok=True)
+    export_hierarchical_onnx(DocumentOnly(model), cfg, bundle / "slop-classifier.onnx")
+
+    # Assert the exported graph reproduces the model, on real documents rather than noise.
+    sample = torch.from_numpy(np.asarray(features["test"][:64], dtype=np.int64))
+    with torch.no_grad():
+        reference = torch.sigmoid(model.to("cpu")(sample)[0]).numpy()
+    session = ort.InferenceSession(str(bundle / "slop-classifier.onnx"), providers=["CPUExecutionProvider"])
+    produced = session.run(None, {"chunks": sample.numpy()})[0].ravel()
+    results["onnx_drift"] = verify_onnx(bundle / "slop-classifier.onnx", reference, produced)
+    model.to(device)
 
     best = thresholds["best_f1"]
     breakdown = per_dataset_f1(splits["test"]["dataset"].cast(pl.Utf8).to_list(), labels["test"], test_probs, best)
@@ -729,17 +827,17 @@ def main() -> None:
         logger.info(f"per-dataset F1 on test:\n{breakdown}")
         logger.info(f"accuracy by document length:\n{lengths}")
 
-    breakdown.write_csv(OUT_DIR / f"per-dataset-{tag}.csv")
-    lengths.write_csv(OUT_DIR / f"per-length-{tag}.csv")
+    save_bundle(bundle, cfg, lut, thresholds, results, model)
+    breakdown.write_csv(bundle / "per-dataset.csv")
+    lengths.write_csv(bundle / "per-length.csv")
     np.savez_compressed(
-        OUT_DIR / f"test-probs-{tag}.npz",
+        bundle / "test-probs.npz",
         hierarchical=test_probs,
         label=labels["test"],
         dataset=np.asarray(splits["test"]["dataset"].cast(pl.Utf8).to_list()),
     )
-    (OUT_DIR / f"results-{tag}.json").write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
-    torch.save(model.state_dict(), OUT_DIR / f"hierarchical-{tag}.pt")
-    logger.info(f"artifacts written to {OUT_DIR}")
+    write_metadata(bundle, cfg, tag, thresholds, results, breakdown)
+    logger.info(f"artifacts written to {bundle}")
 
 
 if __name__ == "__main__":

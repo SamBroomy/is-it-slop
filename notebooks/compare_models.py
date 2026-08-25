@@ -178,8 +178,8 @@ def load_hierarchical(tag: str) -> tuple[HierConfig, Path]:
         FileNotFoundError: if the run's results JSON or ONNX artifact is missing.
 
     """
-    results = HIER_DIR / f"results-{tag}.json"
-    onnx_path = HIER_DIR / f"hierarchical-{tag}.onnx"
+    results = HIER_DIR / tag / "results.json"
+    onnx_path = HIER_DIR / tag / "slop-classifier.onnx"
     for required in (results, onnx_path):
         if not required.exists():
             msg = f"missing artifact: {required}"
@@ -240,9 +240,11 @@ def score_hierarchical(
     for tag in tags:
         cfg, onnx_path = load_hierarchical(tag)
         # Rebuilding the vocabulary here could disagree with the one the run trained against.
-        vocab_path = DATA_DIR / "hierarchical_cache" / f"vocab-v{cfg.vocab_size}.npy"
+        # Read from the bundle rather than the dataset cache, so the comparison uses exactly the
+        # vocabulary shipped alongside the graph.
+        vocab_path = HIER_DIR / tag / "token_vocabulary.npy"
         if not vocab_path.exists():
-            msg = f"missing vocabulary {vocab_path}; run hierarchical_train.py with this vocab-size first"
+            msg = f"missing vocabulary {vocab_path}; retrain this tag to write a complete bundle"
             raise FileNotFoundError(msg)
         lut = np.load(vocab_path)
         sess = cpu_session(onnx_path)
@@ -441,7 +443,11 @@ def main() -> None:
     }
     for hier_tag, (sess, hier_cfg, encoded) in hier_sessions.items():
         latency[f"hier:{hier_tag}"] = time_hierarchical(encoded[: args.latency_samples], sess, hier_cfg.pad_id)
-        sizes[f"hier:{hier_tag}"] = (HIER_DIR / f"hierarchical-{hier_tag}.onnx").stat().st_size
+        # Whole bundle, not just the graph: the vocabulary is required at inference, and production
+        # is likewise measured as ONNX plus vectorizer.
+        sizes[f"hier:{hier_tag}"] = sum(
+            f.stat().st_size for f in (HIER_DIR / hier_tag).iterdir() if f.suffix in {".onnx", ".npy"}
+        )
 
     report_cost(latency, sizes, width, len(sample))
     results["latency"] = latency

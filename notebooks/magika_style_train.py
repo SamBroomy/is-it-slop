@@ -414,6 +414,34 @@ def per_dataset_f1(datasets: Sequence[str], y: np.ndarray, probs: np.ndarray, th
 # --------------------------------------------------------------------------------------------------
 
 
+def verify_onnx(path: Path, reference: np.ndarray, produced: np.ndarray, tolerance: float = 1e-5) -> float:
+    """Structurally validate the graph and assert it reproduces the source model.
+
+    `train.py` computes the same comparison but only prints it, so a divergent export would ship
+    silently. An export can be structurally valid and numerically wrong -- masking that traces one
+    way, an axis that loses its dynamism -- and this is the only check that catches that.
+    """
+    import onnx  # ruff: ignore[import-outside-top-level]
+
+    onnx.checker.check_model(onnx.load(path), full_check=True)
+    drift = float(np.abs(reference - produced).max())
+    assert drift < tolerance, f"ONNX output diverges from the source model by {drift:.3e}"
+    logger.info(f"ONNX verified: graph valid, max drift from source model {drift:.2e}")
+    return drift
+
+
+def artifact_sizes(directory: Path) -> dict:
+    """Per-file sizes for the metadata, matching `train.py`'s `compute_artifact_sizes`."""
+    files = {}
+    total = 0
+    for path in sorted(directory.iterdir()):
+        if path.is_file():
+            size = path.stat().st_size
+            files[path.name] = {"size_bytes": size, "size_mb": round(size / 1024 / 1024, 2)}
+            total += size
+    return {"files": files, "total_size_mb": round(total / 1024 / 1024, 2)}
+
+
 @contextmanager
 def quiet_exporter() -> Iterator[None]:
     """Mute torch's own export chatter, which is noise the caller cannot act on.
