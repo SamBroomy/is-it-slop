@@ -114,11 +114,24 @@ class Config:
     chunk_loss_weight: float = 0.3
     """lambda in L_doc + lambda * L_chunk. Chunk labels are the document label copied down, so they
     are a noisy auxiliary signal rather than the objective."""
+    chunk_pos_embed: bool = False
+    """Learned chunk-position embedding. Without it the model has no positional signal at all: max
+    pool is position-invariant within a chunk and attention pooling is permutation-invariant across
+    chunks. Positions beyond max_chunks clamp to the last trained slot."""
+    chunk_pool: str = "max"
+    """Within-chunk pooling over groups: "max" (Magika's) or "meanmax" (concat of masked mean and
+    max, doubling the chunk vector)."""
     cutmix: float = 0.0
     """Fraction of batches that get chunk-level splicing with proportional soft targets."""
     epochs: int = 30
     batch_size: int = 128
     lr: float = 1e-3
+    weight_decay: float = 0.0
+    """0 keeps plain Adam, matching every run before the optimizer experiments; >0 switches to AdamW
+    with decay applied only to matrices (ndim >= 2), never to biases or LayerNorm."""
+    schedule: str = "constant"
+    """"constant" or "cosine": one epoch of linear warmup then cosine decay to zero at `epochs`.
+    Early stopping usually fires first, so the decay is only partially traversed."""
     patience: int = 4
     limit: int | None = None
     seed: int = SEED
@@ -163,14 +176,25 @@ def artifact_tag(cfg: Config) -> str:
     parts = [encoding_tag(cfg)]
     for field, prefix in (
         ("embed_dim", "d"),
+        ("group", "g"),
         ("hidden", "h"),
+        ("dropout", "do"),
+        ("spatial_dropout", "sdo"),
         ("chunk_loss_weight", "cw"),
         ("lr", "lr"),
+        ("weight_decay", "wd"),
+        ("patience", "p"),
         ("seed", "s"),
     ):
         value = getattr(cfg, field)
         if value != getattr(Config, field):
             parts.append(f"{prefix}{value:g}")
+    if cfg.schedule != Config.schedule:
+        parts.append(cfg.schedule[:3])
+    if cfg.chunk_pos_embed:
+        parts.append("pos")
+    if cfg.chunk_pool != Config.chunk_pool:
+        parts.append("mm")
     if cfg.cutmix > 0:
         parts.append(f"cutmix{cfg.cutmix:g}")
     return "-".join(parts)
@@ -334,14 +358,23 @@ class HierarchicalSlopClassifier(nn.Module):
             nn.Linear(cfg.hidden, cfg.hidden),
             nn.GELU(),
         )
-        self.chunk_norm = nn.LayerNorm(cfg.hidden)
-        self.chunk_head = nn.Linear(cfg.hidden, 1)
+        # meanmax concatenates a masked mean beside the max, so every chunk-level module sees
+        # double the width.
+        self.chunk_dim = cfg.hidden * (2 if cfg.chunk_pool == "meanmax" else 1)
+        if cfg.chunk_pos_embed:
+            # Zero-init so training starts from exactly the position-free model.
+            self.pos = nn.Embedding(cfg.max_chunks, self.chunk_dim)
+            nn.init.zeros_(self.pos.weight)
+        else:
+            self.pos = None
+        self.chunk_norm = nn.LayerNorm(self.chunk_dim)
+        self.chunk_head = nn.Linear(self.chunk_dim, 1)
 
-        self.attend = nn.Linear(cfg.hidden, 1)
+        self.attend = nn.Linear(self.chunk_dim, 1)
         # Attention-pooled and max-pooled document vectors are concatenated: the first asks which
         # chunks matter, the second preserves "one chunk was decisive".
         self.doc_head = nn.Sequential(
-            nn.LayerNorm(2 * cfg.hidden), nn.Dropout(cfg.dropout), nn.Linear(2 * cfg.hidden, 1)
+            nn.LayerNorm(2 * self.chunk_dim), nn.Dropout(cfg.dropout), nn.Linear(2 * self.chunk_dim, 1)
         )
 
     def encode_chunks(self, ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -357,11 +390,20 @@ class HierarchicalSlopClassifier(nn.Module):
 
         # A group is real if any token in it is; -inf elsewhere so padding cannot win the max.
         group_real = token_real.reshape(b * c, cfg.groups_per_chunk, cfg.group).any(dim=-1)
-        h = h.masked_fill(~group_real.unsqueeze(-1), float("-inf"))
-        h = h.amax(dim=1)
+        pooled = h.masked_fill(~group_real.unsqueeze(-1), float("-inf")).amax(dim=1)
+        if cfg.chunk_pool == "meanmax":
+            counts = group_real.sum(dim=1, keepdim=True).clamp(min=1)
+            mean = (h * group_real.unsqueeze(-1)).sum(dim=1) / counts
+            pooled = torch.cat([pooled, mean], dim=-1)
         # A chunk with no real tokens is all -inf; zero it so it cannot pollute the document pool.
         chunk_real = token_real.any(dim=-1)
-        h = torch.where(chunk_real.reshape(b * c, 1), h, torch.zeros_like(h))
+        pooled = torch.where(chunk_real.reshape(b * c, 1), pooled, torch.zeros_like(pooled))
+        pooled = pooled.reshape(b, c, self.chunk_dim)
+
+        if self.pos is not None:
+            # Chunk index, clamped so inference beyond the trained budget reuses the last slot.
+            idx = torch.arange(c, device=ids.device).clamp(max=cfg.max_chunks - 1)
+            pooled = pooled + self.pos(idx)
 
         # Slot 0 always counts as real. Chunks fill from index 0, so for any document with content
         # this is already true and the clamp is a no-op; it exists so a document that tokenizes to
@@ -370,7 +412,7 @@ class HierarchicalSlopClassifier(nn.Module):
         # Must be out-of-place: `chunk_real` was already consumed by the `torch.where` above, so
         # mutating it breaks the autograd graph.
         chunk_mask = chunk_real | (torch.arange(c, device=ids.device) == 0)
-        return self.chunk_norm(h).reshape(b, c, cfg.hidden), chunk_mask
+        return self.chunk_norm(pooled), chunk_mask
 
     def forward(self, ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Produce document logits [B], chunk logits [B, C], and the real-chunk mask [B, C]."""
@@ -498,7 +540,32 @@ def train(
     """
     from sklearn.metrics import roc_auc_score  # ruff: ignore[import-outside-top-level]
 
-    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    if cfg.weight_decay > 0:
+        # Decay matrices only: decaying biases and LayerNorm parameters is a known way to make
+        # AdamW look spuriously bad.
+        decay = [p for p in model.parameters() if p.ndim >= 2]
+        rest = [p for p in model.parameters() if p.ndim < 2]
+        opt = torch.optim.AdamW(
+            [{"params": decay, "weight_decay": cfg.weight_decay}, {"params": rest, "weight_decay": 0.0}],
+            lr=cfg.lr,
+        )
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+
+    scheduler = None
+    if cfg.schedule == "cosine":
+        # Per-step: one epoch of linear warmup, then cosine to zero at the epoch budget. Early
+        # stopping usually fires first, so only part of the decay is traversed; the budget is the
+        # horizon the schedule is planned against, not a prediction of epochs run.
+        warmup = len(train_loader)
+        total_steps = cfg.epochs * len(train_loader)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            opt,
+            lambda step: (step + 1) / warmup
+            if step < warmup
+            else 0.5 * (1.0 + float(np.cos(np.pi * (step - warmup) / max(total_steps - warmup, 1)))),
+        )
+
     generator = torch.Generator(device="cpu").manual_seed(cfg.seed)
     best_auc, stale = -1.0, 0
     best_state: dict[str, torch.Tensor] = {}
@@ -515,6 +582,8 @@ def train(
             loss = losses(*model(x), y, y_chunk, cfg)
             loss.backward()
             opt.step()
+            if scheduler is not None:
+                scheduler.step()
             total += loss.item() * len(y)
             seen += len(y)
 
@@ -610,12 +679,22 @@ def write_metadata(
                 "max_chunks_seen_in_training": cfg.max_chunks,
                 "coverage_tokens": cfg.chunk_size * cfg.max_chunks,
             },
-            "trunk": {"group": cfg.group, "hidden": cfg.hidden},
+            "trunk": {
+                "group": cfg.group,
+                "hidden": cfg.hidden,
+                "chunk_pool": cfg.chunk_pool,
+                "chunk_pos_embed": cfg.chunk_pos_embed,
+                "dropout": cfg.dropout,
+                "spatial_dropout": cfg.spatial_dropout,
+            },
             "training": {
                 "chunk_loss_weight": cfg.chunk_loss_weight,
                 "cutmix": cfg.cutmix,
                 "batch_size": cfg.batch_size,
                 "lr": cfg.lr,
+                "weight_decay": cfg.weight_decay,
+                "schedule": cfg.schedule,
+                "patience": cfg.patience,
                 "seed": cfg.seed,
             },
             "thresholds": {name: round(value, 6) for name, value in thresholds.items()},
@@ -717,7 +796,30 @@ def main() -> None:
     )
     p.add_argument("--vocab-size", type=int, default=Config.vocab_size)
     p.add_argument("--embed-dim", type=int, default=Config.embed_dim, help="halving this halves the artifact")
+    p.add_argument(
+        "--min-fill",
+        type=float,
+        default=Config.min_fill,
+        help="drop a trailing chunk emptier than this fraction; changes the encoding cache",
+    )
+    p.add_argument(
+        "--group",
+        type=int,
+        default=Config.group,
+        help="positions reshaped into one trunk entity. Magika groups 4 bytes to synthesise a "
+        "token-sized unit; our positions are already BPE tokens, so 1 tests whether the trick "
+        "still applies. chunk_size must be divisible by it",
+    )
+    p.add_argument("--hidden", type=int, default=Config.hidden)
+    p.add_argument("--dropout", type=float, default=Config.dropout)
+    p.add_argument("--spatial-dropout", type=float, default=Config.spatial_dropout)
     p.add_argument("--chunk-loss-weight", type=float, default=Config.chunk_loss_weight)
+    p.add_argument(
+        "--chunk-pos-embed",
+        action="store_true",
+        help="learned chunk-position embedding; without it the model cannot tell chunk 1 from chunk 8",
+    )
+    p.add_argument("--chunk-pool", choices=("max", "meanmax"), default=Config.chunk_pool)
     p.add_argument(
         "--cutmix",
         type=float,
@@ -727,6 +829,15 @@ def main() -> None:
     p.add_argument("--epochs", type=int, default=Config.epochs)
     p.add_argument("--batch-size", type=int, default=Config.batch_size)
     p.add_argument("--lr", type=float, default=Config.lr)
+    p.add_argument("--weight-decay", type=float, default=Config.weight_decay, help=">0 switches Adam -> AdamW")
+    p.add_argument("--schedule", choices=("constant", "cosine"), default=Config.schedule)
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=Config.patience,
+        help="epochs without a validation-AUC improvement before stopping; schedule arms may want "
+        "more headroom since decay pays off late",
+    )
     p.add_argument("--limit", type=int, default=None, help="rows per split, for smoke runs")
     p.add_argument(
         "--seed",
@@ -741,13 +852,23 @@ def main() -> None:
     cfg = Config(
         chunk_size=args.chunk_size,
         max_chunks=args.max_chunks,
+        min_fill=args.min_fill,
         vocab_size=args.vocab_size,
         embed_dim=args.embed_dim,
+        group=args.group,
+        hidden=args.hidden,
+        dropout=args.dropout,
+        spatial_dropout=args.spatial_dropout,
         chunk_loss_weight=args.chunk_loss_weight,
+        chunk_pos_embed=args.chunk_pos_embed,
+        chunk_pool=args.chunk_pool,
         cutmix=args.cutmix,
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
+        weight_decay=args.weight_decay,
+        schedule=args.schedule,
+        patience=args.patience,
         limit=args.limit,
         seed=args.seed,
     )
