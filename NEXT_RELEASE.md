@@ -56,8 +56,8 @@ The optimizer is plain **Adam, constant lr 1e-3, no weight decay, no schedule**.
 The 2026-08-30 campaign (EXPERIMENTS.md, "Hyperparameter campaign") answered most of this phase:
 
 - [x] **AdamW + cosine decay with short warmup, `weight_decay≈0.01`.** Clear win (+0.34 pp acc
-      alone) and it removes the training-duration lottery — every cosine arm used its full budget.
-      Flags exist now.
+      alone), and cosine arms reliably train past the 10-24-epoch spread constant-LR showed across
+      seeds. Flags exist now.
 
 ### Constants inherited from Magika, never questioned
 

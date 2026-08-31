@@ -277,8 +277,9 @@ earlier CutMix deltas (0.9677 / 0.9699 / 0.9683) as noise.
   suspicious inherited constant" was the right suspect. `group=1` confirms the direction but loses
   to 2 on test at 2.8x the training cost: some grouping still helps, four BPE tokens was too many.
   Epoch cost rises 118 s -> 194 s (g2) -> 390 s (g1).
-- **AdamW + cosine** is a clear win and removes the training-duration lottery: every cosine arm ran
-  its full budget instead of stopping wherever patience happened to fire.
+- **AdamW + cosine** is a clear win. The wave-1 cosine arm used its full 30-epoch budget (several
+  combo arms still early-stopped under patience 6), and the schedule reliably trains past the
+  10-24-epoch spread the constant-LR baseline showed across seeds.
 - Mean+max pooling and the position embedding sit at the top of the noise band alone, and neither
   survived on top of the combo (below). Dropping the chunk loss lands at the bottom of the band:
   the chunk head earns its keep.

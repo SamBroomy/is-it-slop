@@ -119,8 +119,8 @@ class Config:
     pool is position-invariant within a chunk and attention pooling is permutation-invariant across
     chunks. Positions beyond max_chunks clamp to the last trained slot."""
     chunk_pool: str = "max"
-    """Within-chunk pooling over groups: "max" (Magika's) or "meanmax" (concat of masked mean and
-    max, doubling the chunk vector)."""
+    """Within-chunk pooling over groups: "max" (Magika's) or "meanmax" (concat of max and masked
+    mean, doubling the chunk vector)."""
     cutmix: float = 0.0
     """Fraction of batches that get chunk-level splicing with proportional soft targets."""
     epochs: int = 30
