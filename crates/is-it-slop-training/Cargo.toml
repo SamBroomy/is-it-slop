@@ -31,6 +31,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 burn-store = { workspace = true, features = ["safetensors", "std"] }
+safetensors = { workspace = true }
 
 [lints]
 workspace = true

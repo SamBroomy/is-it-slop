@@ -3694,6 +3694,7 @@ version = "0.6.3"
 dependencies = [
  "burn",
  "burn-store",
+ "safetensors 0.7.0",
  "tracing",
 ]
 
