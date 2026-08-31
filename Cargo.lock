@@ -3695,6 +3695,7 @@ dependencies = [
  "burn",
  "burn-store",
  "safetensors 0.7.0",
+ "tempfile",
  "tracing",
 ]
 

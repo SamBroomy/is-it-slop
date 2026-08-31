@@ -1,7 +1,7 @@
-//! Golden-vector parity with the PyTorch model.
+//! Golden-vector parity with the `PyTorch` model.
 //!
 //! Loads the trained `c192-k8-v8192-d48-g2` bundle's weights into the Burn module and asserts its
-//! outputs match what PyTorch produced for 16 real test documents. Any drift in masking, op order,
+//! outputs match what `PyTorch` produced for 16 real test documents. Any drift in masking, op order,
 //! GELU/LayerNorm semantics, or weight remapping fails here rather than surfacing as silently
 //! worse accuracy. Fixtures are produced by `notebooks/export_burn_parity_fixture.py`.
 
