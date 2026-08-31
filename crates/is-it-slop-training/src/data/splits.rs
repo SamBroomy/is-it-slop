@@ -37,19 +37,22 @@ pub fn read_split(path: &Path) -> Result<SplitData, DataError> {
     let file = std::fs::File::open(path)?;
     let df = ParquetReader::new(file).finish()?;
 
+    // Null cells fail loudly: the released splits are fully populated, so a null means the file
+    // is not what this loader thinks it is.
     let texts: Vec<String> = df
         .column("text")?
         .str()?
         .into_iter()
-        .map(|t| t.unwrap_or_default().to_owned())
-        .collect();
+        .map(|t| t.map(str::to_owned))
+        .collect::<Option<_>>()
+        .ok_or_else(|| DataError::Contract(format!("null text cell in {}", path.display())))?;
     let labels: Vec<f32> = df
         .column("label")?
         .cast(&DataType::Float32)?
         .f32()?
         .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect();
+        .collect::<Option<_>>()
+        .ok_or_else(|| DataError::Contract(format!("null label cell in {}", path.display())))?;
 
     if texts.len() != labels.len() || texts.is_empty() {
         return Err(DataError::Contract(format!(

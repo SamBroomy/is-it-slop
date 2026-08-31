@@ -137,10 +137,15 @@ impl Vocabulary {
             max = max.max(value);
             lut.push(value as u16);
         }
-        Ok(Self {
-            lut,
-            vocab_size: max as usize,
-        })
+        let vocab_size = max as usize;
+        // Same invariant `from_token_lists` asserts: the pad row (vocab_size + 1) must fit u16,
+        // or `pad_id()` overflows.
+        if u16::try_from(vocab_size + 2).is_err() {
+            return Err(DataError::Contract(format!(
+                "vocabulary of {vocab_size} rows no longer fits u16 with OOV and padding"
+            )));
+        }
+        Ok(Self { lut, vocab_size })
     }
 }
 
