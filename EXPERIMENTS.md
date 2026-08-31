@@ -406,3 +406,7 @@ cache warm, fusion enabled. Diagnosis (not yet profiled): torch dispatches to Ap
 MPSGraph kernels, while Burn JIT-compiles its own via CubeCL — a gap that bites hardest on this
 model's shape, many small ops around thin matmuls under eager autodiff. Investigation plan lives
 in NEXT_RELEASE.md; training cost is a per-release one-off and no shipping axis is affected.
+
+Ruled out: fusion hygiene. Restructuring `encode_chunks` so every mask is derived before the trunk
+(one uninterrupted compute region) changed nothing — 114.8 vs 115.2 s/1000 iterations, within
+noise. The fusion boundaries were not where the 2.3x lives.

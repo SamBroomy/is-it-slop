@@ -173,17 +173,43 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
     ) -> (Tensor<B, 3>, Tensor<B, 2, burn::tensor::Bool>) {
         let [b, c, length] = ids.dims();
         let groups = length / self.group;
-        let token_real = ids.clone().not_equal_elem(self.pad_id as i64);
+        let hidden = self.trunk_out.weight.dims()[1];
+        let neg_inf = f64::NEG_INFINITY;
+        let device = ids.device();
 
-        let flat = ids.reshape([b * c, length]);
-        let mut h = self.embed.forward(flat);
+        // Every mask is derived up front so the trunk below stays one uninterrupted compute
+        // region: interleaving these view/bool chains with the matmuls splits the fuser's
+        // regions and keeps `token_real` alive across the whole block (Burn performance guide —
+        // group view ops, don't hold tensors across compute ops).
+        let token_real = ids.clone().not_equal_elem(self.pad_id as i64);
         // Burn's Embedding has no padding_idx; zeroing pad positions after lookup is equivalent —
         // the forward sees zeros and the pad row receives no gradient (its contribution is
         // multiplied by zero).
-        let token_real_flat = token_real.clone().reshape([b * c, length, 1]);
-        h = h * token_real_flat.clone().float();
-        h = self.spatial_dropout.forward(h);
+        let pad_zero = token_real.clone().reshape([b * c, length, 1]).float();
+        // A group is real if any token in it is; -inf elsewhere so padding cannot win the max.
+        let group_fill = token_real
+            .clone()
+            .reshape([b * c, groups, self.group])
+            .any_dim(2)
+            .bool_not()
+            .expand([b * c, groups, hidden]);
+        let chunk_real = token_real.any_dim(2).reshape([b, c]);
+        let chunk_fill = chunk_real
+            .clone()
+            .bool_not()
+            .reshape([b * c, 1])
+            .expand([b * c, hidden]);
+        // Slot 0 always counts as real: a document that tokenizes to nothing still needs one
+        // finite slot, or the document pools reduce over an empty set and produce NaN.
+        let slot0 = Tensor::<B, 1, Int>::arange(0..c as i64, &device)
+            .equal_elem(0)
+            .reshape([1, c])
+            .expand([b, c]);
+        let chunk_mask = chunk_real.bool_or(slot0);
 
+        let h = self.embed.forward(ids.reshape([b * c, length]));
+        let h = h * pad_zero;
+        let h = self.spatial_dropout.forward(h);
         let h = h.reshape([b * c, groups, self.group * self.embed_dim()]);
         let h = self.trunk_in.forward(h);
         let h = self.gelu.forward(h);
@@ -192,37 +218,10 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
         let h = self.trunk_out.forward(h);
         let h = self.gelu.forward(h);
 
-        // A group is real if any token in it is; -inf elsewhere so padding cannot win the max.
-        let group_real = token_real
-            .clone()
-            .reshape([b * c, groups, self.group])
-            .any_dim(2); // [b*c, groups, 1]
-        let hidden = self.trunk_out.weight.dims()[1];
-        let neg_inf = f64::NEG_INFINITY;
-        let h = h.mask_fill(
-            group_real.bool_not().expand([b * c, groups, hidden]),
-            neg_inf,
-        );
+        let h = h.mask_fill(group_fill, neg_inf);
         let h = h.max_dim(1).reshape([b * c, hidden]);
-
         // A chunk with no real tokens is all -inf; zero it so it cannot pollute the document pool.
-        let chunk_real = token_real.any_dim(2).reshape([b, c]); // [b, c]
-        let h = h.mask_fill(
-            chunk_real
-                .clone()
-                .bool_not()
-                .reshape([b * c, 1])
-                .expand([b * c, hidden]),
-            0.0,
-        );
-
-        // Slot 0 always counts as real: a document that tokenizes to nothing still needs one
-        // finite slot, or the document pools reduce over an empty set and produce NaN.
-        let slot0 = Tensor::<B, 1, Int>::arange(0..c as i64, &chunk_real.device())
-            .equal_elem(0)
-            .reshape([1, c])
-            .expand([b, c]);
-        let chunk_mask = chunk_real.bool_or(slot0);
+        let h = h.mask_fill(chunk_fill, 0.0);
 
         let h = self.chunk_norm.forward(h.reshape([b, c, hidden]));
         (h, chunk_mask)
@@ -232,31 +231,26 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
     pub fn forward(&self, ids: Tensor<B, 3, Int>) -> ModelOutput<B> {
         let (h, chunk_mask) = self.encode_chunks(ids);
         let [b, c, hidden] = h.dims();
+        let neg_inf = f64::NEG_INFINITY;
+        let not_real = chunk_mask.clone().bool_not();
+        let max_fill = not_real.clone().reshape([b, c, 1]).expand([b, c, hidden]);
 
         let chunk_logits = self.chunk_head.forward(h.clone()).reshape([b, c]);
 
         // Attention-pooled and max-pooled document vectors are concatenated: the first asks which
         // chunks matter, the second preserves "one chunk was decisive".
-        let neg_inf = f64::NEG_INFINITY;
         let weights = self
             .attend
             .forward(h.clone())
             .reshape([b, c])
-            .mask_fill(chunk_mask.clone().bool_not(), neg_inf);
+            .mask_fill(not_real, neg_inf);
         let weights = softmax(weights, 1);
         let attended = (h.clone() * weights.reshape([b, c, 1]))
             .sum_dim(1)
             .reshape([b, hidden]);
 
         let pooled_max = h
-            .mask_fill(
-                chunk_mask
-                    .clone()
-                    .bool_not()
-                    .reshape([b, c, 1])
-                    .expand([b, c, hidden]),
-                neg_inf,
-            )
+            .mask_fill(max_fill, neg_inf)
             .max_dim(1)
             .reshape([b, hidden]);
 

@@ -190,8 +190,10 @@ directory creation at import, and one source of truth for the model version shar
 
 The training pipeline is ported to Rust (`crates/is-it-slop-training`, Burn 0.21) and **passed the
 parity gate**: one full frozen-recipe run landed at val AUC 0.9960 / test AUC 0.9967 against
-Python's 0.9961 / 0.9968 — inside seed noise (EXPERIMENTS.md, "Burn training port"). Model,
-encoder, and vocabulary are each pinned to the Python pipeline by golden-vector tests. The binary
+Python's 0.9961 / 0.9968 — inside seed noise (EXPERIMENTS.md, "Burn training port"). The Rust
+implementation is the reference now; encoder and vocabulary behaviour is frozen by contract tests
+(`tests/encoder_golden.rs`, `tests/vocab_parity.rs`) because trained artifacts depend on it, and
+the PyTorch weight-parity scaffolding is retired. The binary
 (`cargo run -p is-it-slop-training --features metal`) trains with the TUI dashboard and prints the
 full-split AUCs; backends are additive features (metal/cuda/rocm/vulkan/wgpu/tch/remote/flex,
 ndarray default) with `f16`/`flex32` element options.
@@ -205,10 +207,12 @@ Open items, in order:
       2. `--features metal,f16` and `metal,flex32` — Apple silicon's f16 throughput is roughly
          double f32; needs a parity re-check since the recipe was tuned at f32.
       3. `burn.toml` autotune `level = "full"` and cubecl profiling loggers to see where time goes.
-      4. Fusion hygiene in `model.rs::forward` per the Burn performance guide: group view ops,
-         avoid keeping tensors alive across compute ops, reorder mask/reshape chains. Burn's
-         fusion (fuse-on-read/write) is the framework's `torch.compile` analogue and is already
-         enabled — there is no whole-graph AOT compile to switch on.
+      4. ~~Fusion hygiene in `model.rs::forward`~~ — done: masks are now derived up front so the
+         trunk runs as one uninterrupted compute region. Measured no throughput change (114.8 vs
+         115.2 s/1000 iterations, within noise), so the fusion boundaries were never the
+         bottleneck; kept for readability. Burn's fusion (fuse-on-read/write) is the framework's
+         `torch.compile` analogue and is already enabled — there is no whole-graph AOT compile to
+         switch on.
       5. Custom CubeCL kernels only if profiling shows a specific hot fused-region CubeCL misses —
          the matmuls are autotuned and not worth hand-writing; the candidate would be the masked
          group-pool + norm chain. Last resort, real maintenance cost.
