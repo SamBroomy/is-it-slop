@@ -186,6 +186,41 @@ It does far too much at import time:
 Wanted: paths and constants as plain values or a small function, no argv parsing, no I/O and no
 directory creation at import, and one source of truth for the model version shared with `build.rs`.
 
+## Burn training port
+
+The training pipeline is ported to Rust (`crates/is-it-slop-training`, Burn 0.21) and **passed the
+parity gate**: one full frozen-recipe run landed at val AUC 0.9960 / test AUC 0.9967 against
+Python's 0.9961 / 0.9968 — inside seed noise (EXPERIMENTS.md, "Burn training port"). Model,
+encoder, and vocabulary are each pinned to the Python pipeline by golden-vector tests. The binary
+(`cargo run -p is-it-slop-training --features metal`) trains with the TUI dashboard and prints the
+full-split AUCs; backends are additive features (metal/cuda/rocm/vulkan/wgpu/tch/remote/flex,
+ndarray default) with `f16`/`flex32` element options.
+
+Open items, in order:
+
+- [ ] **Throughput: Burn-Metal trains ~2.3x slower than torch-MPS** (7.3 vs 3.2 min/epoch). Root
+      cause unproven. The investigation ladder, cheapest first, all runnable via existing flags:
+      1. `--features tch-gpu` A/B — same libtorch-MPS kernels as Python, so it cleanly splits
+         "Burn framework overhead" from "CubeCL-vs-MPSGraph kernel gap".
+      2. `--features metal,f16` and `metal,flex32` — Apple silicon's f16 throughput is roughly
+         double f32; needs a parity re-check since the recipe was tuned at f32.
+      3. `burn.toml` autotune `level = "full"` and cubecl profiling loggers to see where time goes.
+      4. Fusion hygiene in `model.rs::forward` per the Burn performance guide: group view ops,
+         avoid keeping tensors alive across compute ops, reorder mask/reshape chains. Burn's
+         fusion (fuse-on-read/write) is the framework's `torch.compile` analogue and is already
+         enabled — there is no whole-graph AOT compile to switch on.
+      5. Custom CubeCL kernels only if profiling shows a specific hot fused-region CubeCL misses —
+         the matmuls are autotuned and not worth hand-writing; the candidate would be the masked
+         group-pool + norm chain. Last resort, real maintenance cost.
+- [ ] **Evaluation harness**: the binary reports full-split AUC only. Threshold fitting
+      (best-F1, precision>=0.99 on validation), per-dataset and per-length breakdowns still live in
+      Python (`compare_models.py`); port or keep, decide with the artifact contract.
+- [ ] **Artifact contract**: Burn cannot export ONNX, so shipping the Burn-trained model means
+      Burn-native inference (record/Burnpack + the existing `token_vocabulary.safetensors`) and
+      retiring `ort` — the Phase 3/4 decision this port was building toward. The trained bundle
+      currently saves `model.mpk` + vocabulary + configs.
+- [ ] **CutMix** remains unported pending the chunk-output decision (its deltas are inside noise).
+
 ## Versioning
 
 Model artifacts **3.0.0 -> 4.0.0** — breaking: different files, different input shape, no vectorizer.

@@ -366,3 +366,43 @@ Everything here inherits the known caveats: the live cleaning skew (curation cle
 inference universal), the unmeasured markdown-formatting share of the signal, and uncalibrated
 output probabilities. CutMix remains undecided pending the chunk-output contract question — its
 document-level deltas are now known to be inside the noise floor.
+
+## Burn training port: parity run (2026-08-31)
+
+The Python trainer was ported to Rust on Burn 0.21 (`crates/is-it-slop-training`, branch
+`sbroomfield/agent/hparam-sweep/burn-training-crate`). Three golden-vector oracles pin the port to
+the Python pipeline before any training judgement:
+
+| oracle | result |
+|---|---|
+| model forward (trained v8192-d48 weights, 16 real docs) | logits within 1e-3, probabilities within 1e-5 of PyTorch |
+| document encoding (trim/tokenize/vocab/chunk) | bit-identical grids to the Python cache |
+| vocabulary build (full 473k-doc train split) | byte-identical lookup table to the Python bundle |
+
+Plus unit oracles: the warmup-cosine schedule matches `LambdaLR` to 1e-15, the masked loss matches
+torch to 1e-6, and the AUC implementation matches sklearn including ties.
+
+### The parity gate
+
+One full run of the frozen recipe (accuracy config v16384-d64, seed 42) on the Metal backend,
+`model_artifacts/burn/parity-run.log`:
+
+| | val AUC (full split) | test AUC (full split) | epochs |
+|---|---|---|---|
+| Python combo, seed 42 | 0.9961 | 0.9968 | 30 (full) |
+| Python combo, seed 43 | 0.9960 | 0.9968 | 29 |
+| **Burn, seed 42** | **0.9960** | **0.9967** | 23 (early stop) |
+
+Both deltas are ~0.0001 — an order of magnitude inside the seed-noise band. The port's three
+documented loop deviations (early stopping on mean per-batch AUROC rather than full-split AUC,
+final rather than best epoch weights, no `drop_last`) measurably do not matter. The per-epoch
+validation trajectories also track each other closely (0.993 at epoch 4 to 0.996 by epoch 16 on
+both sides).
+
+### Training throughput, the one regression
+
+~7.3 min/epoch on Burn-Metal against 3.2 min/epoch on torch-MPS (~2.3x), same machine, autotune
+cache warm, fusion enabled. Diagnosis (not yet profiled): torch dispatches to Apple's hand-tuned
+MPSGraph kernels, while Burn JIT-compiles its own via CubeCL — a gap that bites hardest on this
+model's shape, many small ops around thin matmuls under eager autodiff. Investigation plan lives
+in NEXT_RELEASE.md; training cost is a per-release one-off and no shipping axis is affected.
