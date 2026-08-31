@@ -366,11 +366,14 @@ pub fn roc_auc(labels: &[f32], scores: &[f32]) -> f64 {
 /// `None::<burn::train::renderer::CliMetricsRenderer>` to keep it); checkpoints, metric logs and
 /// the summary land under `artifact_dir`.
 ///
-/// Two knowing deviations from the Python loop, both from leaning on Burn's built-ins: early
-/// stopping acts on the store's mean of per-batch validation AUCs rather than the full-split AUC,
-/// and the returned model carries the final epoch's weights rather than the best epoch's. The
-/// parity gate for the Rust port (a real run landing in the campaign's combo band) is the check
-/// that neither matters in practice.
+/// Three knowing deviations from the Python loop, all from leaning on Burn's built-ins: early
+/// stopping acts on the store's mean of per-batch validation AUCs rather than the full-split AUC;
+/// the returned model carries the final epoch's weights rather than the best epoch's; and Burn's
+/// loader trains on the final partial batch each epoch where PyTorch used `drop_last=True` (the
+/// cosine horizon below counts steps the Burn way, so schedule and loader agree). Shuffling is
+/// NOT a deviation: Burn reshuffles on every iterator creation, i.e. per epoch, like PyTorch.
+/// The parity gate for the Rust port (a real run landing in the campaign's combo band) is the
+/// check that none of these matter in practice.
 pub fn train<B: AutodiffBackend>(
     artifact_dir: &str,
     model: HierarchicalSlopClassifier<B>,
