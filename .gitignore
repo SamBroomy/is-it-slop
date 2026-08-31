@@ -48,3 +48,6 @@
 !model_artifacts/.gitkeep
 !data/.gitkeep
 !/android/**/*.kt
+# Golden-vector fixtures: small trained weights + expected outputs the parity tests assert against.
+!/crates/is-it-slop-training/tests/fixtures/*.safetensors
+!/crates/is-it-slop-training/tests/fixtures/*.json
