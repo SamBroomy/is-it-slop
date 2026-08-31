@@ -54,6 +54,11 @@ ort = { version = "=2.0.0-rc.12", default-features = false, features = [
     "tls-native",
     "tracing",
 ] }
+polars = { version = "0.53", default-features = false, features = [
+    "parquet",
+    # The released splits store `label` as Int8.
+    "dtype-i8",
+] }
 pyo3 = { version = "0.28", default-features = false, features = [
     "extension-module",
     "macros",

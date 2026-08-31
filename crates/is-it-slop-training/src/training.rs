@@ -556,7 +556,7 @@ mod tests {
             .with_hidden(16)
             .with_dropout(0.0)
             .with_spatial_dropout(0.0);
-        let pad = model_cfg.pad_id() as i64;
+        let pad = model_cfg.pad_id() as u16;
 
         // The trunk consumes tokens in groups (pairs at group=2), so the generator must draw
         // train and validation docs from the same finite pair set or the toy demands
@@ -571,7 +571,9 @@ mod tests {
                     let base = if label == 1 { 32 } else { 0 };
                     let k = (i as i64 / 2 + seed) % 32;
                     // Two chunk slots: one real, one padded, so masking is exercised end to end.
-                    let mut ids: Vec<i64> = (0..8).map(|t| base + ((k + t * 17) % 32)).collect();
+                    let mut ids: Vec<u16> = (0..8)
+                        .map(|t| (base + ((k + t * 17) % 32)) as u16)
+                        .collect();
                     ids.extend([pad; 8]);
                     EncodedDocument {
                         ids,

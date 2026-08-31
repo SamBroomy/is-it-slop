@@ -27,11 +27,15 @@ burn = { workspace = true, features = ["std", "autodiff", "train", "tui",
     "metrics",
     "flex",
     "autotune","fusion"] }
+is-it-slop-preprocessing = { workspace = true }
+polars = { workspace = true }
+safetensors = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 burn-store = { workspace = true, features = ["safetensors", "std"] }
-safetensors = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

@@ -1,8 +1,18 @@
-//! Batching for training.
+//! The data layer: split reading, vocabulary, encoding, and batching.
 //!
-//! Only the batching seam lives here so far: [`EncodedDocument`] is what the future data layer
-//! (parquet reading, vocabulary application, chunk encoding via the preprocessing crate) will
-//! produce, and [`SlopBatcher`] turns a list of them into the tensors the steps consume.
+//! Mirrors the Python pipeline's data path (`load_split` → `build_vocab` → `encode_corpus` →
+//! `DataLoader`): read a released parquet split, rank a vocabulary on the training split, encode
+//! every document once up front into a compact grid, and let Burn's `DataLoader` shuffle and
+//! batch the encoded documents each epoch. Python cached encodings on disk because re-encoding
+//! there was slow; here encoding is a one-off parallel pass at startup.
+
+mod encoder;
+mod splits;
+mod vocabulary;
+
+pub use encoder::DocumentEncoder;
+pub use splits::{SplitData, read_split};
+pub use vocabulary::{O200K_CEILING, Vocabulary};
 
 use burn::data::dataloader::batcher::Batcher;
 use burn::tensor::backend::Backend;
@@ -10,12 +20,32 @@ use burn::tensor::{Int, Tensor};
 
 use crate::training::Batch;
 
-/// One document, already encoded to the rectangular `[max_chunks * chunk_size]` grid of compact
-/// token ids (padding included), plus its label.
+/// Failures loading or preparing data.
+#[derive(Debug, thiserror::Error)]
+pub enum DataError {
+    /// Filesystem failure.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// Parquet reading failure.
+    #[error(transparent)]
+    Polars(#[from] polars::error::PolarsError),
+    /// Vocabulary (de)serialization failure.
+    #[error(transparent)]
+    Safetensors(#[from] safetensors::SafeTensorError),
+    /// The data does not match the artifact contract.
+    #[error("{0}")]
+    Contract(String),
+}
+
+/// One document, encoded to the rectangular `[max_chunks * chunk_size]` grid of compact token
+/// ids (padding included), plus its label.
+///
+/// Ids are `u16`: the vocabulary asserts `vocab_size + 2` fits, and the compact width keeps a
+/// full encoded split ~4x smaller in memory than wide ids would.
 #[derive(Debug, Clone)]
 pub struct EncodedDocument {
     /// Compact token ids, row-major `[max_chunks, chunk_size]`.
-    pub ids: Vec<i64>,
+    pub ids: Vec<u16>,
     /// 1.0 for AI, 0.0 for human.
     pub label: f32,
 }
@@ -40,7 +70,7 @@ impl<B: Backend> Batcher<B, EncodedDocument, Batch<B>> for SlopBatcher {
                 self.max_chunks * self.chunk_size,
                 "document grid does not match the batcher's shape"
             );
-            ids.extend_from_slice(&item.ids);
+            ids.extend(item.ids.iter().map(|&id| i64::from(id)));
             labels.push(item.label);
         }
         Batch {

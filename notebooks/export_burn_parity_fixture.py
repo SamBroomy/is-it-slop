@@ -34,6 +34,10 @@ PAD_ID = 8193  # vocab 8192: oov row 8192, pad row 8193
 
 
 def main() -> None:
+    import json
+    import shutil
+
+    import polars as pl
     from hierarchical_train import Config, HierarchicalSlopClassifier
 
     cfg = Config(vocab_size=8192, embed_dim=48, group=2)
@@ -47,17 +51,34 @@ def main() -> None:
     feats = np.memmap(CACHE, dtype=np.uint16, mode="r").reshape(-1, MAX_CHUNKS, CHUNK_SIZE)
     idx = np.linspace(0, len(feats) - 1, N_DOCS, dtype=np.int64)
     ids = np.asarray(feats[idx], dtype=np.int64).copy()
+    ids_unmodified = ids.copy()
     ids[0, 1:, :] = PAD_ID
+
+    # Encoder golden vectors: the raw texts these grids came from, plus the vocabulary that
+    # produced them, so the Rust DocumentEncoder can be asserted bit-identical.
+    OUT.mkdir(parents=True, exist_ok=True)
+    texts = (
+        pl.scan_parquet(ARTIFACTS / "data" / "3.0.0" / "test.parquet")
+        .select("text")
+        .collect()["text"]
+        .to_list()
+    )
+    (OUT / "encoder_texts.json").write_text(
+        json.dumps([texts[i] for i in idx], ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    shutil.copyfile(BUNDLE / "token_vocabulary.safetensors", OUT / "vocabulary.safetensors")
 
     with torch.no_grad():
         doc_logits, chunk_logits, _ = model(torch.from_numpy(ids))
         probs = torch.sigmoid(doc_logits)
 
-    OUT.mkdir(parents=True, exist_ok=True)
     save_file(state, OUT / "weights.safetensors")
     save_file(
         {
             "ids": torch.from_numpy(ids),
+            # The same documents as the Python encoder produced them, before the doc-0 truncation
+            # above — what the Rust DocumentEncoder must reproduce from `encoder_texts.json`.
+            "ids_unmodified": torch.from_numpy(ids_unmodified),
             # Raw logits are the sharp comparison: sigmoid saturates near 0/1 and would hide
             # drift the probabilities can't show.
             "doc_logits": doc_logits.float(),
