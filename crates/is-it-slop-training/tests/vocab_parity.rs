@@ -1,9 +1,9 @@
-//! Full-corpus vocabulary parity with the Python trainer.
+//! Full-corpus vocabulary determinism against the frozen reference.
 //!
 //! Builds the v8192 vocabulary from the real training split and asserts every lookup row equals
-//! the one Python shipped in the bundle (`fixtures/vocabulary.safetensors`, built from the same
-//! split). This proves the whole vocab path — shared tokenizer, counting, `Counter`-compatible
-//! tie-breaking, and the no-trim-before-tokenize asymmetry of `build_vocab` — on real data.
+//! the committed fixture (`fixtures/vocabulary.safetensors`, built from the same split). Like the
+//! encoding-contract test, this freezes the ranking algorithm trained artifacts depend on —
+//! counting, tie-breaking, and the no-trim-before-tokenize asymmetry — at full-corpus scale.
 //! Ignored by default because the parquets are not in git:
 //!
 //! ```sh
@@ -18,7 +18,7 @@ const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 #[test]
 #[ignore = "needs the released data/3.0.0 parquets; tokenizes the full training split (~minutes)"]
-fn builds_the_same_vocabulary_as_python() {
+fn vocabulary_build_is_deterministic_against_the_fixture() {
     let dir = std::env::var("IS_IT_SLOP_DATA").expect("set IS_IT_SLOP_DATA to the split directory");
     let split = read_split(Path::new(&dir).join("train.parquet").as_path()).expect("train split");
 
@@ -35,6 +35,6 @@ fn builds_the_same_vocabulary_as_python() {
     }
     assert_eq!(
         diffs, 0,
-        "{diffs} lookup rows differ from the Python-built vocabulary"
+        "{diffs} lookup rows differ from the frozen reference vocabulary"
     );
 }

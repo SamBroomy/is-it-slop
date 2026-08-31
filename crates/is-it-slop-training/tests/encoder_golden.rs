@@ -1,10 +1,11 @@
-//! Golden-vector parity for the data layer.
+//! The encoding contract, pinned by golden vectors.
 //!
-//! Encodes the fixture documents' raw texts with the trained bundle's vocabulary and asserts the
-//! grids are bit-identical to what the Python pipeline produced for the same documents (the
-//! `test-c192-k8-v8192` cache rows stored in `golden.safetensors`). Any drift in trimming,
-//! tokenization, vocabulary application, or chunking fails here. Fixtures come from
-//! `notebooks/export_burn_parity_fixture.py`.
+//! Every trained artifact depends on exactly this encoding: a model plus its vocabulary only
+//! work if text becomes the same grid of compact ids at training and inference time. This test
+//! freezes that contract — raw fixture texts must encode to the committed grids bit-for-bit, so
+//! any drift in trimming, tokenization, vocabulary application, or chunking fails CI instead of
+//! silently skewing a shipped model. Changing the encoding deliberately means regenerating the
+//! fixture (`notebooks/export_encoder_fixture.py`) and versioning the artifact format.
 
 use std::path::Path;
 
@@ -14,9 +15,9 @@ use safetensors::SafeTensors;
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 #[test]
-fn encodes_identically_to_python() {
+fn encoding_contract_is_frozen() {
     let vocabulary = Vocabulary::load(Path::new(&format!("{FIXTURES}/vocabulary.safetensors")))
-        .expect("bundle vocabulary");
+        .expect("fixture vocabulary");
     assert_eq!(vocabulary.vocab_size(), 8192);
 
     let texts: Vec<String> = serde_json::from_str(
@@ -24,9 +25,9 @@ fn encodes_identically_to_python() {
     )
     .unwrap();
 
-    let bytes = std::fs::read(format!("{FIXTURES}/golden.safetensors")).unwrap();
-    let golden = SafeTensors::deserialize(&bytes).unwrap();
-    let view = golden.tensor("ids_unmodified").unwrap();
+    let bytes = std::fs::read(format!("{FIXTURES}/encoder_grids.safetensors")).unwrap();
+    let grids = SafeTensors::deserialize(&bytes).unwrap();
+    let view = grids.tensor("ids").unwrap();
     assert_eq!(view.dtype(), safetensors::Dtype::I64);
     let expected: Vec<i64> = view
         .data()
@@ -45,9 +46,6 @@ fn encodes_identically_to_python() {
         .enumerate()
     {
         let got: Vec<i64> = item.ids.iter().map(|&id| i64::from(id)).collect();
-        assert_eq!(
-            got, want,
-            "document {doc} encodes differently from the Python pipeline"
-        );
+        assert_eq!(got, want, "document {doc} breaks the frozen encoding");
     }
 }

@@ -35,7 +35,6 @@ is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version =
 ahash = { version = "0.8.12", features = ["serde"] }
 anyhow = "1.0.100"
 burn = { version = "0.21", default-features = false }
-burn-store = { version = "0.21", default-features = false }
 safetensors = "0.7"
 bincode = { version = "=2.0.1", features = ["serde"] }
 bpe-openai = "0.3.0"

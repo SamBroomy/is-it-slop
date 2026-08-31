@@ -4120,7 +4120,6 @@ name = "is-it-slop-training"
 version = "0.6.3"
 dependencies = [
  "burn",
- "burn-store",
  "clap",
  "is-it-slop-preprocessing",
  "polars",
