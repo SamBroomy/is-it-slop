@@ -402,11 +402,18 @@ both sides).
 ### Training throughput, the one regression
 
 ~7.3 min/epoch on Burn-Metal against 3.2 min/epoch on torch-MPS (~2.3x), same machine, autotune
-cache warm, fusion enabled. Diagnosis (not yet profiled): torch dispatches to Apple's hand-tuned
-MPSGraph kernels, while Burn JIT-compiles its own via CubeCL — a gap that bites hardest on this
-model's shape, many small ops around thin matmuls under eager autodiff. Investigation plan lives
-in NEXT_RELEASE.md; training cost is a per-release one-off and no shipping axis is affected.
+cache warm, fusion enabled. Investigation plan lives in NEXT_RELEASE.md; training cost is a
+per-release one-off and no shipping axis is affected.
 
 Ruled out: fusion hygiene. Restructuring `encode_chunks` so every mask is derived before the trunk
 (one uninterrupted compute region) changed nothing — 114.8 vs 115.2 s/1000 iterations, within
 noise. The fusion boundaries were not where the 2.3x lives.
+
+Ruled out: the kernels. The `--features tch-gpu` A/B (Burn on libtorch 2.9 MPS — the same kernels
+Python dispatches to) clocked 113.6 s/1000 iterations against CubeCL-Metal's 115.2, identical
+within noise, while Python-on-the-same-kernels does ~52. So the original kernel-gap diagnosis
+(hand-tuned MPSGraph vs CubeCL JIT) is wrong: the 2.2x lives in Burn's side of the loop, backend
+regardless. Candidates, unprofiled: the per-iteration metric sync (`ItemLazy` pulls logits and
+targets to CPU every step, which can serialize the GPU pipeline), the batcher building each
+[128, 8, 192] int tensor on the CPU (already at `num_workers(2)`), and eager-autodiff loop
+bookkeeping. Profiling is the next rung.

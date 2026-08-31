@@ -200,22 +200,24 @@ ndarray default) with `f16`/`flex32` element options.
 
 Open items, in order:
 
-- [ ] **Throughput: Burn-Metal trains ~2.3x slower than torch-MPS** (7.3 vs 3.2 min/epoch). Root
-      cause unproven. The investigation ladder, cheapest first, all runnable via existing flags:
-      1. `--features tch-gpu` A/B — same libtorch-MPS kernels as Python, so it cleanly splits
-         "Burn framework overhead" from "CubeCL-vs-MPSGraph kernel gap".
-      2. `--features metal,f16` and `metal,flex32` — Apple silicon's f16 throughput is roughly
-         double f32; needs a parity re-check since the recipe was tuned at f32.
-      3. `burn.toml` autotune `level = "full"` and cubecl profiling loggers to see where time goes.
-      4. ~~Fusion hygiene in `model.rs::forward`~~ — done: masks are now derived up front so the
-         trunk runs as one uninterrupted compute region. Measured no throughput change (114.8 vs
-         115.2 s/1000 iterations, within noise), so the fusion boundaries were never the
-         bottleneck; kept for readability. Burn's fusion (fuse-on-read/write) is the framework's
-         `torch.compile` analogue and is already enabled — there is no whole-graph AOT compile to
-         switch on.
-      5. Custom CubeCL kernels only if profiling shows a specific hot fused-region CubeCL misses —
-         the matmuls are autotuned and not worth hand-writing; the candidate would be the masked
-         group-pool + norm chain. Last resort, real maintenance cost.
+- [ ] **Throughput: Burn trains ~2.2x slower than torch-MPS** (7.3 vs 3.2 min/epoch), and the
+      A/Bs prove it is loop overhead, not kernels (EXPERIMENTS.md, "Training throughput"). Ladder
+      so far:
+      1. ~~`--features tch-gpu` A/B~~ — done: 113.6 s/1000 iterations on the same libtorch-MPS
+         kernels Python uses, identical to CubeCL-Metal's 115.2. The gap is Burn-side (loop, data,
+         metric sync), backend regardless — kernel work of any kind is off the table.
+      2. ~~Fusion hygiene in `model.rs::forward`~~ — done: masks derived up front, trunk one
+         uninterrupted compute region. No throughput change (114.8 vs 115.2 s/1000); kept for
+         readability. Burn's fusion (fuse-on-read/write) is the `torch.compile` analogue and is
+         already on — there is no whole-graph AOT compile to switch on.
+      3. **Next: profile the loop, not the GPU** — where do the ~60ms/iteration go? Prime
+         suspects: the per-iteration `ItemLazy` metric sync pulling logits/targets to CPU (try a
+         run with metrics stripped to isolate it), the batcher's CPU-side [128, 8, 192] tensor
+         builds (try `num_workers` 4-8), autodiff bookkeeping.
+      4. `--features metal,f16` / `metal,flex32` — halves compute cost, but compute is now proven
+         not to dominate; only worth trying after the loop overhead is fixed. Needs a parity
+         re-check since the recipe was tuned at f32.
+      5. ~~Custom CubeCL kernels~~ — dead: the kernel A/B shows nothing to gain there.
 - [ ] **Evaluation harness**: the binary reports full-split AUC only. Threshold fitting
       (best-F1, precision>=0.99 on validation), per-dataset and per-length breakdowns still live in
       Python (`compare_models.py`); port or keep, decide with the artifact contract.
