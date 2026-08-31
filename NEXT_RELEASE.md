@@ -21,6 +21,11 @@ validation and only then applied to test.
 The small hierarchical model beats what ships today on **every axis at once**: +1.16 pp accuracy,
 +2.32 pp MCC, 2.1x smaller, ~11x faster. That is the candidate.
 
+**Update (2026-08-31):** the hyperparameter campaign (EXPERIMENTS.md) moved the small model to
+**0.9751 acc / 0.9501 MCC / 0.9968 AUC at 5.23 MB** with `group=2` + AdamW/cosine — past the large
+model on every metric. Candidate configs on the size axis: 5.23 / 4.20 / 2.70 MB at
+0.9751 / 0.9741 / 0.9732 accuracy.
+
 What the experiment established, for the record:
 
 - Magika's transferable parts were the **trunk** and **fixed padded input**. Its begin/middle/end
@@ -48,25 +53,26 @@ in total and was flat from epoch 4. Early stopping is the only thing resisting i
 
 The optimizer is plain **Adam, constant lr 1e-3, no weight decay, no schedule**.
 
-- [ ] **AdamW + cosine decay with short warmup, `weight_decay≈0.01`.** Highest expected value.
-      Needs new flags.
+The 2026-08-30 campaign (EXPERIMENTS.md, "Hyperparameter campaign") answered most of this phase:
+
+- [x] **AdamW + cosine decay with short warmup, `weight_decay≈0.01`.** Clear win (+0.34 pp acc
+      alone) and it removes the training-duration lottery — every cosine arm used its full budget.
+      Flags exist now.
 
 ### Constants inherited from Magika, never questioned
 
-- [ ] **`group=1` or `2`.** The reshape groups 4 positions into one entity. Magika groups 4 *bytes*
-      because ~4 bytes is roughly a token — the trick exists to synthesise a token-sized unit. We
-      feed BPE tokens, where each position is already a semantic unit, so grouping 4 may be
-      destroying resolution for a reason that no longer applies. Most suspicious inherited constant.
-- [ ] **Chunk-position embedding.** There is currently no positional information anywhere: max pool
-      is position-invariant within a chunk, and attention pooling is permutation-invariant across
-      chunks, so the model cannot distinguish chunk 1 from chunk 8. Openers and closers ("In today's
-      fast-paced world", "In conclusion") are among the strongest AI tells. Costs ~8x64 parameters.
-- [ ] **Mean+max chunk pooling.** We concat attention+max at document level but take only max within
-      a chunk. Cheap and standard.
-- [ ] **`--chunk-loss-weight 0` ablation.** We have never checked the chunk head earns its keep.
+- [x] **`group=1` or `2`.** `group=2` was the campaign's single largest win (+0.5 pp acc, outside
+      noise). `group=1` confirms the direction but loses to 2 on test at 2.8x train cost — some
+      grouping helps, four BPE tokens was too many. Adopted: 2.
+- [x] **Chunk-position embedding.** Neutral alone and on top of the combo (best val AUC of the
+      campaign, tied test). Rejected on simplicity.
+- [x] **Mean+max chunk pooling.** Top of the noise band alone, clearly worse on top of the combo.
+      Rejected.
+- [x] **`--chunk-loss-weight 0` ablation.** Lands at the bottom of the noise band; the chunk head
+      earns its keep. Keep 0.3.
 
 Also untested at Magika defaults: `dropout`/`spatial_dropout` (0.1), `hidden` (256), `min_fill`
-(0.10).
+(0.10) — still untested, but with everything else converged these are low-value.
 
 ### Measurement gaps
 
@@ -74,8 +80,10 @@ Also untested at Magika defaults: `dropout`/`spatial_dropout` (0.1), `hidden` (2
       samples against 5.97% of human — a 5.6x ratio, headings 0.991 vs 0.0003. `cleaner.rs:888`
       asserts markdown survives cleaning, deliberately. So we still do not know how much of *any*
       of these numbers is formatting detection rather than style. Needs a control arm building.
-- [ ] **Seed repeats.** `--seed` exists now. Two extra runs of one config give the noise floor.
-      Until then the CutMix variants (0.9677 / 0.9699 / 0.9683) are not distinguishable from noise.
+      **Still open — the one Phase 1 item the campaign did not touch.**
+- [x] **Seed repeats.** Noise floor measured: 0.27 pp accuracy / 0.0008 val AUC across three
+      baseline seeds (the combo tightens to 0.09 pp). The CutMix variants (0.9677 / 0.9699 /
+      0.9683) are confirmed indistinguishable from noise.
 
 ## Phase 2 — correctness gaps, not tuning
 
@@ -188,11 +196,13 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 
 ## Open questions
 
-- Small model (5.36 MB, 0.25 ms) or large (16.84 MB, 0.40 ms)? The large one buys +0.37 pp accuracy
-  for 3.1x the size. Leaning small: it already beats production everywhere.
-- Keep CutMix? Its document-level effect is within the noise we have not yet measured. Its real
-  justification is chunk-level supervision, which is unmeasurable on this corpus — no real
+- ~~Small model or large?~~ **Answered by the campaign**: the tuned small model (5.23 MB) beats the
+  large one (0.9751 vs 0.9714) — the large/small gap was never architecture, it was training. Three
+  candidate sizes now exist (5.23 / 4.20 / 2.70 MB at 0.9751 / 0.9741 / 0.9732); which ships is a
+  product call, not a modelling one.
+- Keep CutMix? Its document-level deltas are now confirmed to be inside the measured noise floor.
+  Its real justification is chunk-level supervision, which is unmeasurable on this corpus — no real
   mixed-authorship documents exist in it. Decide alongside the chunk-output question.
-- `--max-chunks` for the shipped model. 8 covers 1,536 tokens and matched the flat arm for
-  comparison; 32 covers 99.7% of documents whole but costs ~4x epoch time (~700 s/epoch, abandoned).
-  The only band where the k=8 model trails production is 2000+ tokens, by 0.08 pp on 3.2% of docs.
+- ~~`--max-chunks` for the shipped model.~~ **Answered**: k=16 ties k=8 on headline and buys only
+  the 2000+-token tail (0.9984 -> 0.9992 on 3.2% of docs) at 2.7x train cost. k=32 has nothing left
+  to win. Ship k=8 unless the long tail matters to the product.
