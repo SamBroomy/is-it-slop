@@ -21,6 +21,10 @@ version_group = "main"
 release = true
 git_release_enable = true
 
+[[package]]
+name = "is-it-slop-training"
+release = false
+
 
 [changelog]
 protect_breaking_commits = true

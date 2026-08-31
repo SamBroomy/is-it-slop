@@ -1,0 +1,36 @@
+[package]
+name = "is-it-slop-training"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Burn training pipeline for the is-it-slop classifier."
+categories.workspace = true
+keywords.workspace = true
+publish = false
+
+[features]
+default = ["ndarray"]
+# Pure-Rust CPU backend; the default so tests run everywhere.
+ndarray = ["burn/ndarray"]
+# GPU backends for real training runs. fusion/autotune are cubecl performance features.
+metal = ["burn/metal", "burn/fusion", "burn/autotune"]
+wgpu = ["burn/wgpu", "burn/fusion", "burn/autotune"]
+
+[dependencies]
+burn = { workspace = true, features = ["std", "autodiff", "train", "tui",
+    "sqlite-bundled",
+    "metrics",
+    "flex",
+    "autotune","fusion"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+burn-store = { workspace = true, features = ["safetensors", "std"] }
+
+[lints]
+workspace = true

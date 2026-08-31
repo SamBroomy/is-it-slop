@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing"]
+members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing", "crates/is-it-slop-training"]
 
 [workspace.package]
 version = "0.6.3"
@@ -34,6 +34,8 @@ is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version =
 
 ahash = { version = "0.8.12", features = ["serde"] }
 anyhow = "1.0.100"
+burn = { version = "0.21", default-features = false }
+burn-store = { version = "0.21", default-features = false }
 bincode = { version = "=2.0.1", features = ["serde"] }
 bpe-openai = "0.3.0"
 clap = { version = "4.5.53", features = ["derive", "env"] }
