@@ -15,11 +15,21 @@ publish = false
 
 [features]
 default = ["ndarray"]
-# Pure-Rust CPU backend; the default so tests run everywhere.
+# Element type for GPU backends (default f32). Enabling both is a compile error.
+f16 = []
+flex32 = []
+# Backends are additive; the training binary picks the best one enabled — see src/backend.rs for
+# the priority order. ndarray is the default so tests run everywhere.
 ndarray = ["burn/ndarray"]
-# GPU backends for real training runs. fusion/autotune are cubecl performance features.
-metal = ["burn/metal", "burn/fusion", "burn/autotune"]
-wgpu = ["burn/wgpu", "burn/fusion", "burn/autotune"]
+metal = ["burn/metal"]
+cuda = ["burn/cuda"]
+rocm = ["burn/rocm"]
+vulkan = ["burn/vulkan"]
+wgpu = ["burn/wgpu"]
+tch-cpu = ["burn/tch"]
+tch-gpu = ["burn/tch"]
+flex = ["burn/flex"]
+remote = ["burn/remote"]
 
 [dependencies]
 burn = { workspace = true, features = ["std", "autodiff", "train", "tui",
@@ -27,11 +37,13 @@ burn = { workspace = true, features = ["std", "autodiff", "train", "tui",
     "metrics",
     "flex",
     "autotune","fusion"] }
+clap = { workspace = true }
 is-it-slop-preprocessing = { workspace = true }
 polars = { workspace = true }
 safetensors = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 burn-store = { workspace = true, features = ["safetensors", "std"] }
