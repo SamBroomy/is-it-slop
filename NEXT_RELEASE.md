@@ -200,24 +200,17 @@ ndarray default) with `f16`/`flex32` element options.
 
 Open items, in order:
 
-- [ ] **Throughput: Burn trains ~2.2x slower than torch-MPS** (7.3 vs 3.2 min/epoch), and the
-      A/Bs prove it is loop overhead, not kernels (EXPERIMENTS.md, "Training throughput"). Ladder
-      so far:
-      1. ~~`--features tch-gpu` A/B~~ — done: 113.6 s/1000 iterations on the same libtorch-MPS
-         kernels Python uses, identical to CubeCL-Metal's 115.2. The gap is Burn-side (loop, data,
-         metric sync), backend regardless — kernel work of any kind is off the table.
-      2. ~~Fusion hygiene in `model.rs::forward`~~ — done: masks derived up front, trunk one
-         uninterrupted compute region. No throughput change (114.8 vs 115.2 s/1000); kept for
-         readability. Burn's fusion (fuse-on-read/write) is the `torch.compile` analogue and is
-         already on — there is no whole-graph AOT compile to switch on.
-      3. **Next: profile the loop, not the GPU** — where do the ~60ms/iteration go? Prime
-         suspects: the per-iteration `ItemLazy` metric sync pulling logits/targets to CPU (try a
-         run with metrics stripped to isolate it), the batcher's CPU-side [128, 8, 192] tensor
-         builds (try `num_workers` 4-8), autodiff bookkeeping.
-      4. `--features metal,f16` / `metal,flex32` — halves compute cost, but compute is now proven
-         not to dominate; only worth trying after the loop overhead is fixed. Needs a parity
-         re-check since the recipe was tuned at f32.
-      5. ~~Custom CubeCL kernels~~ — dead: the kernel A/B shows nothing to gain there.
+- [x] **Throughput: understood.** Burn trains ~2.4x slower than torch-MPS and the decomposition
+      in EXPERIMENTS.md ("Training throughput") pins the whole gap on the autodiff-generated
+      backward pass (~97 vs ~31 ms/iter): forward is at kernel parity (12.2 vs 11.4 ms), and
+      harness, dataloader, optimizer, metric sync, and transfers are all noise. It reproduces on
+      burn-tch, so it is Burn's backward decomposition, not CubeCL — fixing it means upstream
+      Burn work, not changes here. Accepted for now: training is a per-release one-off. If epoch
+      time ever matters, the only in-repo lever left is `--features metal,f16` (halves backward
+      bandwidth too; needs a parity re-check since the recipe was tuned at f32). Rerun the
+      benches with `examples/step_bench.rs` + `notebooks/step_bench.py`. Known sharp edge: a
+      forward-only loop on the `Autodiff` backend leaks and gets SIGKILLed — validation belongs
+      on the inner backend.
 - [ ] **Evaluation harness**: the binary reports full-split AUC only. Threshold fitting
       (best-F1, precision>=0.99 on validation), per-dataset and per-length breakdowns still live in
       Python (`compare_models.py`); port or keep, decide with the artifact contract.

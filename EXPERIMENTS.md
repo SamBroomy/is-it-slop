@@ -412,8 +412,37 @@ noise. The fusion boundaries were not where the 2.3x lives.
 Ruled out: the kernels. The `--features tch-gpu` A/B (Burn on libtorch 2.9 MPS — the same kernels
 Python dispatches to) clocked 113.6 s/1000 iterations against CubeCL-Metal's 115.2, identical
 within noise, while Python-on-the-same-kernels does ~52. So the original kernel-gap diagnosis
-(hand-tuned MPSGraph vs CubeCL JIT) is wrong: the 2.2x lives in Burn's side of the loop, backend
-regardless. Candidates, unprofiled: the per-iteration metric sync (`ItemLazy` pulls logits and
-targets to CPU every step, which can serialize the GPU pipeline), the batcher building each
-[128, 8, 192] int tensor on the CPU (already at `num_workers(2)`), and eager-autodiff loop
-bookkeeping. Profiling is the next rung.
+(hand-tuned MPSGraph vs CubeCL JIT) is wrong: the gap lives in Burn's side of the loop, backend
+regardless.
+
+**Localized: the whole gap is the backward pass.** Matched raw-loop microbenches
+(`crates/is-it-slop-training/examples/step_bench.rs` and `notebooks/step_bench.py` — one resident
+synthetic batch, frozen recipe config, per-iteration scalar-loss sync, 50 warmup + 300 timed,
+never run concurrently) decompose the iteration, ms/iter on the same machine:
+
+| variant                                  | Burn-Metal | torch-MPS | ratio |
+| ---------------------------------------- | ---------- | --------- | ----- |
+| forward, inference mode (no autodiff)    | 12.2       | 11.4      | 1.07x |
+| forward, train mode (autodiff)           | see below  | 15.3      | —     |
+| forward + backward                       | 111.1      | 46.6      | 2.38x |
+| + optimizer step                         | 111.0      | 46.8      | 2.37x |
+| + host pull of logits (metric-sync bound)| 114.7      | 47.3      | —     |
+| + fresh host-to-device ids each iter     | 110.8      | 47.1      | —     |
+| full training pipeline                   | 113–115    | ~52       | —     |
+
+Readings: the raw loop alone reproduces the full pipeline's cost on both sides, so the Learner
+harness, dataloader, metric sync, and host transfers are all noise. Forward compute is at parity —
+CubeCL's JIT matches libtorch on this model. Everything appears with `backward()`: subtracting
+forwards, Burn spends ~97 ms/iter on backward against torch's ~31 (~3x). CPU sits at ~13% during
+the window, so it is GPU-timeline-bound, not orchestration-bound: Burn's autodiff emits the
+backward as many small primitive kernels (fusion notwithstanding) where torch dispatches one
+hand-written composite backward kernel per op (`gelu_backward`, `layer_norm_backward`, ...). The
+tch A/B corroborates: on burn-tch the same decomposed backward runs on torch's own kernels and is
+exactly as slow. Fixing it would mean backward-pass work in Burn/CubeCL itself, not in this repo.
+
+Two bench footnotes. Python's headline "3.2 min/epoch" (`train_seconds`/30 from `results.json`)
+includes a full validation pass per epoch, so the true train-loop gap is the ~2.4x above, not
+2.2x. And a forward-only loop under `Autodiff` (never calling `backward()`) leaks until macOS
+SIGKILLs the process around iteration ~130 — the train-mode forward row is unmeasurable in Burn
+0.21. Production never does that (validation runs on the inner backend), but don't write that
+loop.
