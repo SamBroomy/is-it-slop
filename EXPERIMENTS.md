@@ -339,10 +339,25 @@ LR curve rather than merely capping it. Recipe for every pick:
 Versus shipped production (11.41 MB, 0.9562 acc, 0.9120 recall@p99): the minimal model is **4.2x
 smaller and +1.7 pp more accurate**; the accuracy pick is 2.2x smaller and +1.9 pp.
 
-Pending arms (results to be appended when they land): combo-d48 seeds 43/44 (balanced-pick noise
-band), combo with a 45-epoch cosine horizon (does a longer schedule beat 30?), and single-thread CPU
-ms/doc timing for the finalists — group=2 doubles trunk FLOPs, so the old 0.25 ms/doc figure does
-not carry over unmeasured.
+Follow-up arms, run after the tables above were first drafted:
+
+- **d48 seed repeats**: 0.9741 / 0.9745 / 0.9749 across seeds 42/43/44 — mean 0.9745, spread
+  0.08 pp, statistically identical to the d64 combo. **d48 gives up nothing**; the balanced pick is
+  a legitimate default.
+- **45-epoch cosine horizon** (`--epochs 45 --patience 8`): early-stopped at 33, test 0.9741 acc /
+  0.9482 MCC — inside the combo band. The longer schedule does not beat 30. **Freeze epochs=30.**
+- **Single-thread CPU timing**, 300 test documents, real chunks only, idle machine (same
+  methodology as the Cost table above):
+
+| arm | ms/doc | vs production (2.74) |
+|---|---|---|
+| baseline d64 (group 4) | 0.244 | 11.2x |
+| combo (group 2) | 0.427 | 6.4x |
+| combo d48 | 0.422 | 6.5x |
+| combo v8192+d48 | 0.421 | 6.5x |
+
+`group=2` costs 1.75x inference over the old group-4 graph — the one config axis where speed moved.
+The size cuts are speed-neutral (the trunk dominates). All picks remain >6x faster than production.
 
 ### Still open after this campaign
 
