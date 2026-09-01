@@ -2,19 +2,19 @@
 
 Fast and accurate AI text detection using machine learning.
 
-Python bindings for the is-it-slop AI text detection library, powered by Rust and ONNX Runtime.
+Python bindings for the is-it-slop AI text detection library, written and served natively in Rust with [Burn](https://burn.dev).
 
-> **This is the main inference library.** For most users, this is all you need. If you want to access the preprocessing pipeline directly, see [`is-it-slop-preprocessing`](https://pypi.org/project/is-it-slop-preprocessing/).
+> **This is the main inference library.** For most users, this is all you need.
 
 ## Features
 
-- **Fast inference**: Rust-backed ONNX runtime with optimized preprocessing
+- **Fast inference**: Rust-backed, runs the model natively on the CPU — no runtime downloads or system dependencies
 - **Pre-trained model**: Embedded at compile time, no downloads required
 - **Simple API**: Single function call for predictions
 - **Batch processing**: Efficient multi-text inference
-- **Text chunking**: Handles variable-length documents (50-5000+ tokens)
+- **Long documents**: The chunked model takes arbitrarily long inputs without truncation
 - **Command-line interface**: CLI included, no separate installation needed
-- **Cross-platform**: Linux, macOS (Apple Silicon), Windows
+- **Cross-platform**: Linux, macOS (Apple Silicon and Intel), Windows
 
 ## Installation
 
@@ -209,12 +209,11 @@ print(f"Model version: {MODEL_VERSION}")
 
 1. **Text Cleaning**: Normalizes HTML entities, encoding artifacts, and whitespace
 2. **Tokenization**: Uses tiktoken (o200k_base) BPE encoding
-3. **Chunking**: Splits long texts into 150-token overlapping chunks
-4. **Vectorization**: TF-IDF with 2-4 token n-grams
-5. **Inference**: ONNX Runtime with LogisticRegression model
-6. **Aggregation**: Combines chunk predictions using weighted mean
+3. **Encoding**: Maps tokens through the model's vocabulary and tiles them into 192-token chunks — no truncation, however long the document
+4. **Inference**: One forward pass of the hierarchical classifier (Burn, CPU); the network's document head aggregates the chunks itself
+5. **Calibration**: The document logit is temperature-scaled, so the reported probability — and the `confidence` derived from it — is meaningful
 
-This pipeline ensures consistent preprocessing between training and inference.
+The same Rust encoding runs at training and inference time, so the two can never drift.
 
 ## Alternative: Standalone Rust CLI
 
@@ -231,7 +230,7 @@ The standalone Rust binary has slightly faster startup but requires the Rust too
 Pre-built wheels available for:
 
 - **Linux**: x86_64, aarch64 (manylinux_2_28)
-- **macOS**: Apple Silicon (ARM64)
+- **macOS**: Apple Silicon (ARM64), Intel (x86_64)
 - **Windows**: x86_64
 
 ## License
@@ -242,4 +241,3 @@ MIT
 
 - [PyPI Package](https://pypi.org/project/is-it-slop/)
 - [GitHub Repository](https://github.com/SamBroomy/is-it-slop)
-- [Preprocessing Library](https://pypi.org/project/is-it-slop-preprocessing/)
