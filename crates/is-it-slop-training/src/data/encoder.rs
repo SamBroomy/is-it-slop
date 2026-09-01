@@ -104,10 +104,12 @@ impl DocumentEncoder {
         }
     }
 
-    /// Encode a batch of raw texts with their labels.
+    /// Encode a batch of raw texts with their labels, one grid per document.
     ///
-    /// Texts are trimmed before tokenization, as the Python cache builder did. Tokenization
-    /// parallelizes internally for large batches.
+    /// A document longer than the grid is truncated — this is the evaluation-side encoding,
+    /// where one document must yield exactly one prediction. Texts are trimmed before
+    /// tokenization, as the Python cache builder did; tokenization parallelizes internally for
+    /// large batches.
     pub fn encode_batch<T: AsRef<str> + Sync>(
         &self,
         texts: &[T],
@@ -123,6 +125,48 @@ impl DocumentEncoder {
                 ids: self.grid(tokens),
                 label,
             })
+            .collect()
+    }
+
+    /// Encode a batch for training, splitting long documents instead of truncating them.
+    ///
+    /// A document longer than the `max_chunks * chunk_size` grid becomes several training
+    /// examples — consecutive full grids plus the remainder — so no text is discarded (the
+    /// campaign measured real headroom in the 2000+-token band that truncation was leaving on
+    /// the table). Every fragment carries the document's label, which is exact for whole-document
+    /// labels. A trailing fragment shorter than `min_fill * chunk_size` tokens is dropped, the
+    /// window-level analogue of [`Self::grid`]'s trailing-chunk rule. Evaluation must use
+    /// [`Self::encode_batch`] instead: fragments would count as extra documents in split-level
+    /// metrics.
+    pub fn encode_batch_split<T: AsRef<str> + Sync>(
+        &self,
+        texts: &[T],
+        labels: &[f32],
+    ) -> Vec<EncodedDocument> {
+        assert_eq!(texts.len(), labels.len());
+        let trimmed: Vec<&str> = texts.iter().map(|t| t.as_ref().trim()).collect();
+        let token_lists = tokenize(&trimmed);
+        token_lists
+            .iter()
+            .zip(labels)
+            .flat_map(|(tokens, &label)| {
+                self.split_grids(tokens)
+                    .into_iter()
+                    .map(move |ids| EncodedDocument { ids, label })
+            })
+            .collect()
+    }
+
+    /// One grid per `max_chunks * chunk_size` window of the tokens; see
+    /// [`Self::encode_batch_split`] for the tail rule.
+    fn split_grids(&self, tokens: &[u32]) -> Vec<Vec<u16>> {
+        let span = self.max_chunks * self.chunk_size;
+        let full = tokens.len() / span;
+        let tail = tokens.len() % span;
+        let keep_tail = (tail as f64) >= self.min_fill * self.chunk_size as f64;
+        let windows = (full + usize::from(keep_tail)).max(1);
+        (0..windows)
+            .map(|w| self.grid(&tokens[w * span..((w + 1) * span).min(tokens.len())]))
             .collect()
     }
 
@@ -222,6 +266,48 @@ mod tests {
         assert!(
             got[10..12].iter().all(|&r| r != pad),
             "tail at min_fill is kept"
+        );
+    }
+
+    #[test]
+    fn splitting_covers_every_window_and_drops_a_runt_tail() {
+        // chunk_size 4, max_chunks 3: a window spans 12 tokens; min_fill 0.10 keeps any tail
+        // window of >= 0.4 tokens, i.e. any non-empty one.
+        let enc = encoder(4, 3);
+
+        // 30 tokens: two full windows plus a 6-token tail -> three grids, recursively. Period 5
+        // over the 6-token vocabulary so each window's first token differs.
+        let tokens: Vec<u32> = (0..30).map(|i| i % 5).collect();
+        let grids = enc.split_grids(&tokens);
+        assert_eq!(grids.len(), 3);
+        let pad = enc.vocabulary().pad_id();
+        assert!(grids[0].iter().all(|&r| r != pad), "window 0 is full");
+        assert!(grids[1].iter().all(|&r| r != pad), "window 1 is full");
+        // The tail window holds 6 tokens: one full chunk plus a kept 2-token remainder.
+        assert_eq!(grids[2].iter().filter(|&&r| r != pad).count(), 6);
+
+        // Windows tile the document: window w starts at token 12*w.
+        assert_eq!(grids[1][0], enc.vocabulary().row(tokens[12]));
+        assert_eq!(grids[2][0], enc.vocabulary().row(tokens[24]));
+
+        // A short document is one grid, identical to the truncating path.
+        let short: Vec<u32> = (0..5).collect();
+        assert_eq!(enc.split_grids(&short), vec![enc.grid(&short)]);
+        assert_eq!(enc.split_grids(&[]), vec![enc.grid(&[])]);
+
+        // A runt tail below min_fill of one chunk is dropped: threshold 2 tokens at min_fill 0.2.
+        let enc = encoder(10, 2).with_grid(10, 2, 0.2);
+        let tokens: Vec<u32> = (0..21).map(|i| i % 6).collect();
+        assert_eq!(
+            enc.split_grids(&tokens).len(),
+            1,
+            "1-token tail window dropped"
+        );
+        let tokens: Vec<u32> = (0..22).map(|i| i % 6).collect();
+        assert_eq!(
+            enc.split_grids(&tokens).len(),
+            2,
+            "tail at the threshold kept"
         );
     }
 

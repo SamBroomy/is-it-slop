@@ -171,8 +171,15 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
     };
 
     info!(rows = train_split.len(), "encoding");
-    let encoded_train = encoder.encode_batch(&train_split.texts, &train_split.labels);
+    // Training splits long documents into several examples so no text is truncated away;
+    // evaluation keeps one grid per document so metrics stay document-level.
+    let encoded_train = encoder.encode_batch_split(&train_split.texts, &train_split.labels);
     let encoded_valid = encoder.encode_batch(&valid_split.texts, &valid_split.labels);
+    info!(
+        documents = train_split.len(),
+        examples = encoded_train.len(),
+        "training examples after long-document splitting"
+    );
 
     let config = TrainingConfig::new().with_seed(args.seed);
     let model_config = HierarchicalModelConfig::new()

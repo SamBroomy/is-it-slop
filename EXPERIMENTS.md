@@ -405,6 +405,14 @@ both sides).
 cache warm, fusion enabled. Investigation plan lives in NEXT_RELEASE.md; training cost is a
 per-release one-off and no shipping axis is affected.
 
+**Recipe change after the parity gate**: training now splits documents longer than the
+8-chunk grid into several examples (consecutive windows, label copied — exact for whole-document
+labels) instead of truncating, capturing the text the `max_chunks 16` arm showed had headroom
+(0.9984 -> 0.9992 on the 2000+ band) without its 2.7x compute. Evaluation still encodes one grid
+per document, so the AUC statistic is unchanged in definition — but the next full run is a new
+baseline, not directly comparable to the parity numbers above, and the arm is judged on the
+2000+-token band.
+
 Ruled out: fusion hygiene. Restructuring `encode_chunks` so every mask is derived before the trunk
 (one uninterrupted compute region) changed nothing — 114.8 vs 115.2 s/1000 iterations, within
 noise. The fusion boundaries were not where the 2.3x lives.
