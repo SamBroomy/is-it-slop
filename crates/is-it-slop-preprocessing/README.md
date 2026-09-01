@@ -1,88 +1,57 @@
 # is-it-slop-preprocessing
 
-Fast TF-IDF text preprocessing for AI text detection models.
+Text preprocessing for AI text detection: cleaning, BPE tokenization, and chunking.
 
 > **Note:** This is primarily an internal crate used by [`is-it-slop`](https://crates.io/crates/is-it-slop). For AI text detection, use the main [`is-it-slop`](https://crates.io/crates/is-it-slop) crate instead.
 
 ## Purpose
 
-This crate provides the preprocessing pipeline for the is-it-slop AI text detection system:
+This crate provides the text side of the is-it-slop pipeline:
 
 - **Text cleaning** (two-stage: universal + dataset artifacts)
 - **Tokenization** (tiktoken BPE o200k_base)
-- **Token-based chunking** (overlapping 150-token windows)
-- **Token n-gram extraction** (2-4 token sequences)
-- **TF-IDF vectorization** (sklearn-compatible)
+- **Token-based chunking** (fixed-size token windows for long documents)
 
 ## Use Cases
 
-1. **Training custom AI detection models**: Use this crate to preprocess training data with the same pipeline used in inference
-2. **Python bindings**: Exposes Rust preprocessing to Python via PyO3 for training workflows
-3. **Internal use**: Powers the [`is-it-slop`](https://crates.io/crates/is-it-slop) inference pipeline
+1. **Dataset curation**: The Python bindings expose cleaning and tokenization for building training datasets
+2. **Internal use**: Powers the [`is-it-slop`](https://crates.io/crates/is-it-slop) inference pipeline and the Rust training crate
 
 ## Features
 
-- `python` (default): PyO3 bindings for Python training workflows
-- `rkyv` (default): Zero-copy serialization for vectorizers
-- `serde`: Alternative JSON/bincode serialization
-- `bincode`: Legacy bincode serialization support
+- `python`: PyO3 bindings for Python dataset workflows
+- `serde`: JSON serialization for configuration types
 - `progress-bars`: Progress indicators for long-running operations
 
 ## Quick Start
 
 ```rust
-use is_it_slop_preprocessing::{
-    TfidfVectorizer, VectorizerParams, text_cleaner_for_inference,
-};
+use is_it_slop_preprocessing::pre_processor::{text_cleaner_for_inference, tokenize};
 
-// Clean and vectorize text
 let cleaner = text_cleaner_for_inference();
 let clean_text = cleaner.clean("Raw input text");
-
-// Configure vectorizer (n-gram range is fixed at 2-4 tokens)
-let params = VectorizerParams::new(10.0, 0.9, true); // min_df, max_df, sublinear_tf
-
-// Fit vectorizer on training data
-let vectorizer = TfidfVectorizer::fit(&train_texts, &params)?;
-
-// Transform text to TF-IDF features
-let features = vectorizer.transform(&[clean_text])?;
-
-// Save for inference
-vectorizer.save_rkyv("vectorizer.rkyv")?;
+let tokens = tokenize(&[clean_text]);
 ```
 
 ## Python Bindings
 
-For model training in Python:
+For dataset curation in Python:
 
 ```bash
 uv add is-it-slop-preprocessing
 ```
 
-or using pip:
-
-```bash
-pip install is-it-slop-preprocessing
-```
-
 ```python
-from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
+from is_it_slop_preprocessing import CleaningMode, TextCleaner, tokenize
 
-# Configure and fit vectorizer
-params = VectorizerParams(min_df=10, max_df=0.9, sublinear_tf=True)
-vectorizer, X_train = TfidfVectorizer.fit_transform(train_texts, params)
-
-# Save for Rust inference
-vectorizer.save("vectorizer.rkyv")
+cleaner = TextCleaner(CleaningMode.TRAINING)
+clean_texts = cleaner.clean_batch(train_texts)
+tokens = tokenize(clean_texts)
 ```
 
-See the [Python package documentation](https://pypi.org/project/is-it-slop-preprocessing/) for complete API reference.
+See the [Python package documentation](https://pypi.org/project/is-it-slop-preprocessing/) for the complete API reference.
 
 ## Architecture
-
-**Token N-grams:**
-Unlike character or word n-grams, this uses sequences of tiktoken BPE tokens (2-4 consecutive tokens). This captures AI writing patterns at the subword level.
 
 **Two-stage Cleaning:**
 
@@ -92,7 +61,7 @@ Unlike character or word n-grams, this uses sequences of tiktoken BPE tokens (2-
 > Two cleaners ensure that the model learns actual patterns rather than overfitting to specific dataset quirks (which there are a lot that I could find and still likely missed many).
 
 **Chunking:**
-Splits long texts into overlapping 150-token chunks with 15-token overlap, enabling consistent feature extraction regardless of document length.
+Splits long token sequences into fixed-size windows, enabling consistent handling regardless of document length.
 
 ## For AI Text Detection
 

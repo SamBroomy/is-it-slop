@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Preprocessing for is-it-slop: fast TF-IDF vectorization."
+description = "Preprocessing for is-it-slop: text cleaning, BPE tokenization, and chunking."
 repository.workspace = true
 readme = "README.md"
 keywords.workspace = true
@@ -17,47 +17,23 @@ crate-type = ["cdylib", "rlib"]
 
 
 [dependencies]
-ahash = { workspace = true }
-bincode = { workspace = true, optional = true }
 bpe-openai = { workspace = true }
-dashmap = { workspace = true, features = ["rayon"] }
 indicatif = { workspace = true, optional = true }
-itertools = { workspace = true, optional = true }
-ndarray = { workspace = true, optional = true }
-numpy = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
 pyo3-log = { workspace = true, optional = true }
 rayon = { workspace = true }
 regex = { workspace = true }
-rkyv = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-sprs = { workspace = true }
 tracing = { workspace = true }
 
 [features]
-default = ["rkyv"]
-python = [
-    "bincode",
-    "numpy",
-    "progress-bars",
-    "pyo3",
-    "pyo3-log",
-    "rkyv",
-    "serde",
-]
-bincode = ["dep:bincode"]
+default = []
+python = ["progress-bars", "dep:pyo3", "dep:pyo3-log"]
 progress-bars = ["dep:indicatif"]
-rkyv = ["dep:rkyv"]
 serde = ["dep:serde", "dep:serde_json"]
-# EXPERIMENTAL: Statistical features (burstiness, entropy, etc.) for research
-statistical-features = ["dep:ndarray", "dep:itertools"]
 
-all-testable = ["serde", "rkyv", "bincode"]
-
-[dev-dependencies]
-csv = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+all-testable = ["serde"]
 
 [lints]
 workspace = true

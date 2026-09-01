@@ -32,20 +32,15 @@ is-it-slop = { path = "crates/is-it-slop" }
 is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.6.3" }
 
 
-ahash = { version = "0.8.12", features = ["serde"] }
 anyhow = "1.0.100"
 burn = { version = "0.21", default-features = false }
 burn-store = "0.21"
 safetensors = "0.7"
-bincode = { version = "=2.0.1", features = ["serde"] }
 bpe-openai = "0.3.1"
 clap = { version = "4.5.53", features = ["derive", "env"] }
-dashmap = "6.1.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
 jni = "0.21"
-itertools = "0.14.0"
 ndarray = "0.17"
-numpy = "0.28"
 owo-colors = { version = "4.3", features = ["supports-colors"] }
 # ONNX Runtime with pure Rust tract backend for smaller binary size
 ort = { version = "=2.0.0-rc.12", default-features = false, features = [
@@ -66,7 +61,6 @@ pyo3 = { version = "0.28", default-features = false, features = [
 pyo3-log = { version = "0.13.2" }
 rayon = "1.11.0"
 regex = "1.12.2"
-rkyv = "0.8.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 sprs = "0.11"
@@ -75,7 +69,6 @@ tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = "0.3.20"
 
 # dev-dependencies
-csv = "1.4.0"
 directories = "6"
 dirs = "6.0"
 flate2 = "1.1.5"

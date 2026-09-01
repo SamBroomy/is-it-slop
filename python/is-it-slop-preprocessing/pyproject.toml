@@ -1,7 +1,7 @@
 [project]
 name = "is-it-slop-preprocessing"
 dynamic = ["version"]
-description = "Fast TF-IDF vectorization. Preprocessing step for `is-it-slop` package, written in Rust."
+description = "Text cleaning, BPE tokenization, and chunking. Preprocessing step for `is-it-slop` package, written in Rust."
 authors = [
     { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
 ]
@@ -9,12 +9,10 @@ requires-python = ">=3.10"
 keywords = [
     "AI-text-detector",
     "ML",
-    "TF-IDF",
     "Tokenization",
     "ai-detection",
     "ai-slop-detector",
     "machine-learning",
-    "onnx",
     "pyo3",
     "rust",
     "text-classification",
@@ -48,7 +46,7 @@ classifiers = [
 license = { text = "MIT" }
 readme = { file = "./README.md", content-type = "text/markdown" }
 
-dependencies = ["numpy>=2.0", "scipy>=1.14"]
+dependencies = ["numpy>=2.0"]
 
 [dependency-groups]
 dev = ["maturin>=1.13.1", "pytest>=9.0.1", "ruff>=0.15.12"]

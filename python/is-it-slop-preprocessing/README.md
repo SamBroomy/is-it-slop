@@ -1,19 +1,19 @@
 # is-it-slop-preprocessing
 
-Fast TF-IDF text vectorization for training AI text detection models.
+Text cleaning, BPE tokenization, and chunking for AI text detection datasets.
 
 Implementation in Rust with Python bindings.
 
-> **Note for inference users:** If you only want to use the AI text detection model for predictions, install [`is-it-slop`](https://pypi.org/project/is-it-slop/) instead. This preprocessing library is primarily for the training step or accessing the preprocessing pipeline directly.
+> **Note for inference users:** If you only want to use the AI text detection model for predictions, install [`is-it-slop`](https://pypi.org/project/is-it-slop/) instead. This preprocessing library exposes the pipeline's text side for dataset curation.
 
-The Python bindings allow us to use the same Rust-based text preprocessing at training and inference time, ensuring consistency between model training and deployment.
+The Python bindings allow us to use the same Rust-based text preprocessing when building datasets and at inference time, ensuring consistency between the data the model sees in training and deployment.
 
 ## Features
 
-- **Token n-grams**: Uses tiktoken BPE token sequences (not characters/words)
-- **sklearn-compatible API**: Drop-in replacement for training pipelines
+- **Text cleaning**: Two-stage cleaning (universal artifacts always; dataset artifacts for training data)
+- **Tokenization**: tiktoken BPE `o200k_base` token IDs
+- **Chunking**: Token-level chunking for long documents
 - **Parallel processing**: Automatic multi-threading via Rust/rayon
-- **Multiple serialization formats**: rkyv (default), bincode, and JSON support
 
 ## Installation
 
@@ -24,23 +24,18 @@ pip install is-it-slop-preprocessing
 ## Quick Start
 
 ```python
-from is_it_slop_preprocessing import TfidfVectorizer, VectorizerParams
+from is_it_slop_preprocessing import CleaningMode, TextCleaner, TokenChunker, tokenize
 
-# Configure vectorizer (n-gram range is fixed at 2-4 tokens)
-params = VectorizerParams(
-    min_df=10,           # Ignore terms in < 10 docs
-    max_df=0.8,          # Ignore terms in > 80% of docs
-    sublinear_tf=True    # Apply log scaling to term frequencies
-)
+# Clean training data (removes dataset-specific artifacts)
+cleaner = TextCleaner(CleaningMode.TRAINING)
+clean_texts = cleaner.clean_batch(train_texts)
 
-# Fit and transform training data
-vectorizer, X_train = TfidfVectorizer.fit_transform(train_texts, params)
+# Tokenize
+tokens = tokenize(clean_texts)
 
-# Transform test data
-X_test = vectorizer.transform(test_texts)
-
-# Save vectorizer for inference
-vectorizer.save("tfidf_vectorizer.rkyv")
+# Chunk long documents
+chunker = TokenChunker(chunk_size=150, overlap=15)
+chunked = chunker.chunk_batch(tokens)
 ```
 
 ## Platform Support
