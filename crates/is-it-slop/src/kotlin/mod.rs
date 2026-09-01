@@ -203,7 +203,7 @@ pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_getThreshold(
         .unwrap_or(0.5)
 }
 
-/// Get the model version string (e.g. `"3.0.0"`).
+/// Get the model version string (e.g. `"4.0.0"`).
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_getVersion(
     mut env: JNIEnv<'_>,

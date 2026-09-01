@@ -583,6 +583,7 @@ pre-release:
     cargo test -p is-it-slop-preprocessing --doc
     cargo doc --workspace --no-deps --all-features
     cargo package -p is-it-slop-preprocessing --no-verify --allow-dirty
+    cargo package -p is-it-slop-model --no-verify --allow-dirty
     @echo "✅ All checks passed!"
 
 # =============================================================================
