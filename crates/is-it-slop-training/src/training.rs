@@ -499,10 +499,10 @@ pub fn train<B: AutodiffBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::backend::NdArray;
-    use burn::backend::ndarray::NdArrayDevice;
+    use burn::backend::Flex;
+    use burn::backend::flex::FlexDevice;
 
-    type B = NdArray;
+    type B = Flex;
 
     #[test]
     fn warmup_cosine_matches_pytorch_lambda_lr() {
@@ -537,7 +537,7 @@ mod tests {
         // Values computed with torch.nn.functional.binary_cross_entropy_with_logits and the
         // Python losses(): doc_loss 0.3936693668, chunk_loss 1.0513024330, total 0.7090600729
         // at chunk_loss_weight 0.3 with one masked-out chunk.
-        let device = NdArrayDevice::default();
+        let device = FlexDevice;
         let output = ModelOutput {
             doc_logits: Tensor::<B, 1>::from_floats([0.5, -1.0], &device),
             chunk_logits: Tensor::<B, 2>::from_floats([[0.2, -0.3], [1.5, 0.7]], &device),
@@ -557,7 +557,7 @@ mod tests {
     fn rank_gated_adamw_decays_matrices_only() {
         // One step with zero gradients isolates the decay term: the matrix must shrink by
         // lr * weight_decay, the vector must not move.
-        let device = NdArrayDevice::default();
+        let device = FlexDevice;
         let optim = RankGatedAdamW::new(0.5);
 
         let matrix = Tensor::<B, 2>::ones([2, 2], &device);
@@ -589,8 +589,8 @@ mod tests {
         use crate::data::{EncodedDocument, SlopBatcher};
         use crate::evaluation::roc_auc;
 
-        type AB = Autodiff<NdArray>;
-        let device = NdArrayDevice::default();
+        type AB = Autodiff<Flex>;
+        let device = FlexDevice;
         // Reduce sensitivity to parallel tests sharing the global RNG; `train` reseeds again but
         // model init happens before it.
         AB::seed(&device, 7);
@@ -664,7 +664,7 @@ mod tests {
 
         // Score the returned model on the validation set with the oracle-tested AUC.
         let valid_docs = make_docs(64, 1);
-        let batch: Batch<NdArray> = burn::data::dataloader::batcher::Batcher::batch(
+        let batch: Batch<Flex> = burn::data::dataloader::batcher::Batcher::batch(
             &SlopBatcher {
                 max_chunks: 2,
                 chunk_size: 8,
@@ -677,7 +677,7 @@ mod tests {
         let auc = roc_auc(&labels, &logits);
 
         // Diagnostics: train-split AUC of the returned model.
-        let train_batch: Batch<NdArray> = burn::data::dataloader::batcher::Batcher::batch(
+        let train_batch: Batch<Flex> = burn::data::dataloader::batcher::Batcher::batch(
             &SlopBatcher {
                 max_chunks: 2,
                 chunk_size: 8,

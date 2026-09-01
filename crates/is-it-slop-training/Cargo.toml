@@ -14,13 +14,9 @@ keywords.workspace = true
 publish = false
 
 [features]
-default = ["ndarray"]
-# Relaxed-precision float element for GPU backends (default f32). Pure f16 is deliberately not
-# offered: it NaNs this recipe without loss scaling.
-flex32 = []
+default = []
 # Backends are additive; the training binary picks the best one enabled — see src/backend.rs for
-# the priority order. ndarray is the default so tests run everywhere.
-ndarray = ["burn/ndarray"]
+# the priority order. Flex (pure-Rust CPU) is the no-feature fallback so tests run everywhere.
 metal = ["burn/metal"]
 cuda = ["burn/cuda"]
 rocm = ["burn/rocm"]
@@ -28,7 +24,6 @@ vulkan = ["burn/vulkan"]
 wgpu = ["burn/wgpu"]
 tch-cpu = ["burn/tch"]
 tch-gpu = ["burn/tch"]
-flex = ["burn/flex"]
 remote = ["burn/remote"]
 
 [dependencies]

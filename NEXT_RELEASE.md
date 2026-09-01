@@ -246,7 +246,7 @@ Open items, in order:
       Uncertainty contract: calibrated distance-from-0.5 is the confidence number (strongest
       error-ranker); chunk-probability dispersion is the secondary "mixed content" indicator,
       paired with per-chunk highlighting; the doc-vs-chunk-agreement signal was measured weakest
-      and dropped. The `check` subcommand re-scores full/f16/Q8 on validation and folds
+      and dropped. The `evaluate` subcommand (renamed from `check`) re-scores full/f16/Q8 on validation and folds
       `artifact_checks` into `results.json` — run it after every training run; adopting f16 or
       Q8 as *the* shipped form is that eval-gated decision. **The inference swap is done**:
       `is-it-slop` embeds `model.f16.safetensors` (build.rs `MODEL_VERSION` 4.0.0) and runs it
@@ -266,7 +266,7 @@ Open items, in order:
 - [ ] **Improve the training CLI.** The `train` subcommand exposes a fraction of what the Python
       trainer took (the richer clap surface was explicitly deferred): batch size, epochs,
       patience, LR, chunk-loss weight, dropout are all recompile-only today. Bring the
-      `TrainingConfig` knobs up as flags with the frozen recipe as defaults, and make `check`
+      `TrainingConfig` knobs up as flags with the frozen recipe as defaults, and make `evaluate`
       accept a specific weights file rather than assuming the artifact-dir layout.
 - [ ] **Regression benchmarks** (late-game want): a small runnable suite that pins today's
       numbers so upgrades (Burn 0.22, toolchains) can't silently regress — training throughput
@@ -285,7 +285,7 @@ Open items, in order:
 - [ ] **Training cost is now the binding constraint**, and it reshapes the model-size strategy.
       Burn trains ~2.4x slower than the old torch path, and quantization being measured as nearly
       free (f16 and Q8-matrices cost ~1e-6 and ~1e-4 validation AUC on the smoke; confirm at full
-      scale via `check`) means the balanced/minimal picks lose their reason to exist: train the
+      scale via `evaluate`) means the balanced/minimal picks lose their reason to exist: train the
       accuracy model once, ship it at f16 (~2.3MB) or Q8 (~1.3MB of matrices) instead of training
       smaller models. It also opens the larger-embedding arm the campaign priced out — train big,
       quantize down. Practical cadence: `--limit` runs for iteration, full/larger runs scheduled

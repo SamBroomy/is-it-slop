@@ -1,16 +1,17 @@
 //! Train the hierarchical slop classifier and inspect its artifacts.
 //!
 //! The backend is a compile-time feature, following Burn's text-classification example: build
-//! with `--features metal` (Apple GPU), `wgpu`, or `cuda`; the default `ndarray` runs on CPU.
-//! `train` runs the frozen recipe with the terminal metrics dashboard; `check` re-scores a
-//! trained bundle's shrunk weight forms afterwards, deliberately outside the training run so a
-//! backend limitation there can never cost a finished run its outputs.
+//! with `--features metal` (Apple GPU), `wgpu`, or `cuda`; with no feature the Flex pure-Rust
+//! CPU backend runs everywhere. `train` runs the frozen recipe with the terminal metrics
+//! dashboard; `evaluate` re-scores a trained bundle's shrunk weight forms afterwards,
+//! deliberately outside the training run so a backend limitation there can never cost a
+//! finished run its outputs.
 //!
 //! ```sh
 //! cargo run --release -p is-it-slop-training --features metal -- \
 //!     train --data-dir data/3.0.0 --artifact-dir model_artifacts/burn/v16384-d64
 //! cargo run --release -p is-it-slop-training --features metal -- \
-//!     check --data-dir data/3.0.0 --artifact-dir model_artifacts/burn/v16384-d64
+//!     evaluate --data-dir data/3.0.0 --artifact-dir model_artifacts/burn/v16384-d64
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -44,7 +45,7 @@ enum Command {
     /// Train with the frozen campaign recipe and write the bundle artifacts.
     Train(TrainArgs),
     /// Re-score a trained bundle's shrunk weight forms (f16 roundtrip, Q8) on validation.
-    Check(CheckArgs),
+    Evaluate(EvaluateArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -70,8 +71,8 @@ struct TrainArgs {
 }
 
 #[derive(clap::Args, Debug)]
-struct CheckArgs {
-    /// The trained bundle to check (weights, configs, vocabulary).
+struct EvaluateArgs {
+    /// The trained bundle to evaluate (weights, configs, vocabulary).
     #[arg(long)]
     artifact_dir: PathBuf,
     /// Directory holding the released split parquets.
@@ -103,7 +104,7 @@ fn main() {
         Command::Train(args) => {
             launch::<backend::Selected>(&args, backend::NAME, &backend::device());
         }
-        Command::Check(args) => check::<Inner>(&args, &backend::device()),
+        Command::Evaluate(args) => evaluate::<Inner>(&args, &backend::device()),
     }
 }
 
@@ -210,7 +211,7 @@ impl SplitResults {
 }
 
 /// The run summary written next to the model, the useful subset of Python's `results.json`.
-/// The `check` subcommand later inserts an `artifact_checks` block.
+/// The `evaluate` subcommand later inserts an `artifact_checks` block.
 #[derive(serde::Serialize)]
 struct RunResults<'a> {
     model_config: &'a HierarchicalModelConfig,
@@ -465,11 +466,11 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
         serde_json::to_string_pretty(&results).expect("serializing results"),
     )
     .expect("saving results");
-    println!("artifacts in {artifact_dir}; run the `check` subcommand for the f16/Q8 costs");
+    println!("artifacts in {artifact_dir}; run the `evaluate` subcommand for the f16/Q8 costs");
 }
 
 // --------------------------------------------------------------------------------------------
-// The `check` subcommand
+// The `evaluate` subcommand
 // --------------------------------------------------------------------------------------------
 
 /// Every shrunk form of the weights re-scored on validation, so a smaller artifact ships with
@@ -508,7 +509,7 @@ impl<B: burn::tensor::backend::Backend> burn::module::ModuleMapper<B> for Matrix
     }
 }
 
-fn check<B: burn::tensor::backend::Backend>(args: &CheckArgs, device: &B::Device) {
+fn evaluate<B: burn::tensor::backend::Backend>(args: &EvaluateArgs, device: &B::Device) {
     use burn::module::Quantizer;
     use burn::tensor::quantization::{Calibration, QuantScheme, QuantStore, QuantValue};
     use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
