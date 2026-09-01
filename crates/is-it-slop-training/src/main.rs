@@ -15,7 +15,6 @@ use burn::config::Config;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::data::dataset::InMemDataset;
 use burn::module::Module;
-use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
 use burn::tensor::backend::AutodiffBackend;
 use clap::Parser;
 use is_it_slop_training::data::{
@@ -24,7 +23,7 @@ use is_it_slop_training::data::{
 use is_it_slop_training::evaluation::{
     ThresholdMetrics, roc_auc, score, threshold_at_best_f1, threshold_at_precision,
 };
-use is_it_slop_training::model::HierarchicalModelConfig;
+use is_it_slop_training::model::{HierarchicalModelConfig, HierarchicalSlopClassifier};
 use is_it_slop_training::training::{
     Batch, TrainableClassifier, TrainingConfig, doc_scores, train,
 };
@@ -125,6 +124,95 @@ struct RunResults<'a> {
     epochs_trained: Option<usize>,
     validation: SplitResults,
     test: SplitResults,
+    artifact_checks: ArtifactChecks,
+}
+
+/// Every shrunk form of the weights re-scored on validation, so a smaller artifact ships with
+/// its measured cost next to the full-precision number.
+#[derive(serde::Serialize)]
+struct ArtifactChecks {
+    /// AUC after saving to f16 safetensors and loading back — also roundtrips the exact
+    /// burn-store path inference will use.
+    f16_safetensors_validation_auc: f64,
+    /// AUC after in-memory Q8 min-max weight quantization. Measurement only: the quantized
+    /// form is not yet emitted as an artifact.
+    q8_minmax_validation_auc: f64,
+}
+
+/// Save, reload, and quantize the trained weights, scoring each form on the validation split.
+fn check_artifacts<B: burn::tensor::backend::Backend>(
+    model: &TrainableClassifier<B>,
+    model_config: &HierarchicalModelConfig,
+    batcher: &SlopBatcher,
+    encoded_valid: &[EncodedDocument],
+    artifact_dir: &std::path::Path,
+    device: &B::Device,
+) -> ArtifactChecks {
+    use burn::module::Quantizer;
+    use burn::tensor::quantization::{Calibration, QuantScheme, QuantValue};
+    use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
+
+    let mut f16_model = model_config.init::<B>(device);
+    let mut store = SafetensorsStore::from_file(artifact_dir.join("model.f16.safetensors"))
+        .with_from_adapter(HalfPrecisionAdapter::new());
+    f16_model
+        .load_from(&mut store)
+        .expect("loading the f16 artifact back");
+    let f16 = TrainableClassifier {
+        model: f16_model,
+        chunk_loss_weight: model.chunk_loss_weight,
+    };
+    let (labels, probs) = predictions(&f16, batcher, encoded_valid, device);
+    let f16_auc = roc_auc(&labels, &probs);
+
+    let mut quantizer = Quantizer {
+        calibration: Calibration::MinMax,
+        scheme: QuantScheme::default().with_value(QuantValue::Q8S),
+    };
+    let q8 = TrainableClassifier {
+        model: model.model.clone().quantize_weights(&mut quantizer),
+        chunk_loss_weight: model.chunk_loss_weight,
+    };
+    let (labels, probs) = predictions(&q8, batcher, encoded_valid, device);
+    ArtifactChecks {
+        f16_safetensors_validation_auc: f16_auc,
+        q8_minmax_validation_auc: roc_auc(&labels, &probs),
+    }
+}
+
+/// Save the trained classifier in the bundle's weight formats.
+///
+/// `model.safetensors` is the canonical shipped artifact (inspectable, ecosystem-standard, and
+/// the format the vocabulary already uses); `model.f16.safetensors` is the half-precision
+/// candidate, ~50% smaller; `model.bpk` is Burn's native store, kept for zero-copy embedding and
+/// as the pre-quantization reference. Checkpoints stay `MessagePack` — the `Learner`'s checkpointer
+/// takes a `Recorder`, which burn-store does not implement.
+fn save_model_artifacts<B: burn::tensor::backend::Backend>(
+    model: &HierarchicalSlopClassifier<B>,
+    artifact_dir: &std::path::Path,
+) {
+    use burn_store::{BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
+
+    let version = env!("CARGO_PKG_VERSION");
+    let mut bpk = BurnpackStore::from_file(artifact_dir.join("model.bpk"))
+        .metadata("preprocessing_version", version)
+        .overwrite(true);
+    model.save_into(&mut bpk).expect("saving model.bpk");
+
+    let mut full = SafetensorsStore::from_file(artifact_dir.join("model.safetensors"))
+        .metadata("preprocessing_version", version)
+        .overwrite(true);
+    model
+        .save_into(&mut full)
+        .expect("saving model.safetensors");
+
+    let mut half = SafetensorsStore::from_file(artifact_dir.join("model.f16.safetensors"))
+        .metadata("preprocessing_version", version)
+        .with_to_adapter(HalfPrecisionAdapter::new())
+        .overwrite(true);
+    model
+        .save_into(&mut half)
+        .expect("saving model.f16.safetensors");
 }
 
 /// The last epoch that wrote a checkpoint — the number of epochs actually run.
@@ -226,14 +314,7 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
     );
     let train_seconds = started.elapsed().as_secs_f64();
 
-    result
-        .model
-        .clone()
-        .save_file(
-            format!("{artifact_dir}/model"),
-            &NamedMpkFileRecorder::<FullPrecisionSettings>::new(),
-        )
-        .expect("saving the trained model");
+    save_model_artifacts(&result.model.model, &args.artifact_dir);
 
     // The parity-gate numbers: full-split AUC, the statistic the campaign tables report
     // (combo band: validation 0.9960-0.9961, test 0.9968).
@@ -270,6 +351,14 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
         epochs_trained: epochs_trained(&args.artifact_dir),
         validation: SplitResults::new(&val_labels, &val_probs, thr_precision, thr_f1),
         test: SplitResults::new(&test_labels, &test_probs, thr_precision, thr_f1),
+        artifact_checks: check_artifacts(
+            &result.model,
+            &model_config,
+            &batcher,
+            &encoded_valid,
+            &args.artifact_dir,
+            &inner_device,
+        ),
     };
     std::fs::write(
         args.artifact_dir.join("results.json"),
