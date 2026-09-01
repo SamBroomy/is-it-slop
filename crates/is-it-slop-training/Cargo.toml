@@ -15,8 +15,8 @@ publish = false
 
 [features]
 default = ["ndarray"]
-# Element type for GPU backends (default f32). Enabling both is a compile error.
-f16 = []
+# Relaxed-precision float element for GPU backends (default f32). Pure f16 is deliberately not
+# offered: it NaNs this recipe without loss scaling.
 flex32 = []
 # Backends are additive; the training binary picks the best one enabled — see src/backend.rs for
 # the priority order. ndarray is the default so tests run everywhere.

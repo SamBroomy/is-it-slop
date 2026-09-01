@@ -3,17 +3,16 @@
 //! Mirrors Burn's text-classification example: each backend is a cargo feature, and when several
 //! are enabled the highest-priority one wins — metal > cuda > rocm > vulkan > wgpu > tch-gpu >
 //! tch-cpu > remote > flex > ndarray (the default, so tests and plain builds always compile).
-//! `f16`/`flex32` select the float element for backends that take one.
+//! `flex32` relaxes the float element for backends that take one. A pure-f16 element is
+//! deliberately not offered: without loss scaling this recipe overflows to NaN from epoch 1
+//! (measured on a full-data Metal run).
 
 use burn::backend::Autodiff;
 use burn::tensor::Device;
 
 /// Float element used by the selected backend.
-#[cfg(not(any(feature = "f16", feature = "flex32")))]
+#[cfg(not(feature = "flex32"))]
 pub type Elem = f32;
-/// Float element used by the selected backend.
-#[cfg(all(feature = "f16", not(feature = "flex32")))]
-pub type Elem = burn::tensor::f16;
 /// Float element used by the selected backend.
 #[cfg(feature = "flex32")]
 pub type Elem = burn::tensor::flex32;

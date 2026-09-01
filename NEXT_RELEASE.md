@@ -210,7 +210,7 @@ implementation is the reference now; encoder and vocabulary behaviour is frozen 
 the PyTorch weight-parity scaffolding is retired. The binary
 (`cargo run -p is-it-slop-training --features metal`) trains with the TUI dashboard and prints the
 full-split AUCs; backends are additive features (metal/cuda/rocm/vulkan/wgpu/tch/remote/flex,
-ndarray default) with `f16`/`flex32` element options.
+ndarray default) with a `flex32` element option (pure f16 was removed after it NaN'd).
 
 Open items, in order:
 
@@ -220,9 +220,9 @@ Open items, in order:
       harness, dataloader, optimizer, metric sync, and transfers are all noise. It reproduces on
       burn-tch, so it is Burn's backward decomposition, not CubeCL — fixing it means upstream
       Burn work, not changes here. Accepted for now: training is a per-release one-off.
-      **`--features metal,f16` does not work as a speed lever**: a full-data attempt (2026-09-01)
-      produced NaN loss from epoch 1 — pure-f16 training with no loss scaling overflows this
-      recipe (BCE exp/log, attention softmax). Reviving it means loss scaling, i.e. real work.
+      **A pure-f16 training element does not work and the feature was removed**: a full-data
+      attempt (2026-09-01) produced NaN loss from epoch 1 — no loss scaling means this recipe
+      overflows (BCE exp/log, attention softmax). Reviving it means loss scaling, i.e. real work.
       `--features metal,flex32` (f32 semantics, backend free to relax intermediate precision) is
       the untested remaining candidate. Rerun the benches with `examples/step_bench.rs` +
       `notebooks/step_bench.py`. Known sharp edge: a forward-only loop on the `Autodiff` backend
