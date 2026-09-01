@@ -237,9 +237,8 @@ struct ArtifactChecks {
     f16_safetensors_validation_auc: f64,
     /// AUC after in-memory Q8 min-max quantization of the matrix weights (rank >= 2, as with
     /// weight decay — biases and norms are tiny and precision-sensitive). Measurement only: the
-    /// quantized form is not yet emitted as an artifact. `None` when the selected backend cannot
-    /// run quantized ops — the check is panic-isolated so it can never cost a run its results.
-    q8_minmax_validation_auc: Option<f64>,
+    /// quantized form is not yet emitted as an artifact.
+    q8_minmax_validation_auc: f64,
 }
 
 /// [`Quantizer`](burn::module::Quantizer) restricted to matrices, leaving rank-1 parameters
@@ -286,27 +285,21 @@ fn check_artifacts<B: burn::tensor::backend::Backend>(
     let f16_auc = roc_auc(&p.labels, &p.probs);
 
     // Native store: the packed-u32 default requires last dims divisible by 4, which the
-    // [hidden, 1] head weights are not.
-    let q8_auc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut quantizer = MatrixQuantizer(Quantizer {
-            calibration: Calibration::MinMax,
-            scheme: QuantScheme::default()
-                .with_value(QuantValue::Q8S)
-                .with_store(QuantStore::Native),
-        });
-        let q8 = TrainableClassifier {
-            model: model.model.clone().map(&mut quantizer),
-            chunk_loss_weight: model.chunk_loss_weight,
-        };
-        let p = predictions(&q8, batcher, encoded_valid, device);
-        roc_auc(&p.labels, &p.probs)
-    }));
-    if q8_auc.is_err() {
-        tracing::warn!("Q8 quantized evaluation panicked; the backend lacks quantized ops");
-    }
+    // [hidden, 1] head weights are not — and its failure poisons the device stream.
+    let mut quantizer = MatrixQuantizer(Quantizer {
+        calibration: Calibration::MinMax,
+        scheme: QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native),
+    });
+    let q8 = TrainableClassifier {
+        model: model.model.clone().map(&mut quantizer),
+        chunk_loss_weight: model.chunk_loss_weight,
+    };
+    let p = predictions(&q8, batcher, encoded_valid, device);
     ArtifactChecks {
         f16_safetensors_validation_auc: f16_auc,
-        q8_minmax_validation_auc: q8_auc.ok(),
+        q8_minmax_validation_auc: roc_auc(&p.labels, &p.probs),
     }
 }
 
