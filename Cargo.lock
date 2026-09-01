@@ -658,9 +658,9 @@ dependencies = [
 
 [[package]]
 name = "bpe-openai"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b25deec0a72cf5d8b66a6e487c5ee9757b0639f3e16d687f6c6dea834812000c"
+checksum = "2fe75b91bfbfbdc1a56afa0dad3ea54167842aa512be25c0420704c1ad9bab3f"
 dependencies = [
  "base64 0.22.1",
  "bpe",
@@ -4124,6 +4124,7 @@ dependencies = [
  "is-it-slop-preprocessing",
  "polars",
  "safetensors 0.7.0",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

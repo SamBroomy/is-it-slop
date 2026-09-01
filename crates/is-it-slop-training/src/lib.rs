@@ -11,5 +11,6 @@
 //! sides cannot drift.
 
 pub mod data;
+pub mod evaluation;
 pub mod model;
 pub mod training;

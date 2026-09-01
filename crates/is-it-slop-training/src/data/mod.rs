@@ -10,7 +10,7 @@ mod encoder;
 mod splits;
 mod vocabulary;
 
-pub use encoder::DocumentEncoder;
+pub use encoder::{DocumentEncoder, EncoderBundleConfig};
 pub use splits::{SplitData, read_split};
 pub use vocabulary::{O200K_CEILING, Vocabulary};
 

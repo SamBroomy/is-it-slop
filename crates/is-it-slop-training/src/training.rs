@@ -4,8 +4,8 @@
 //! against values computed by the PyTorch/sklearn implementation it replaces, and plugs them into
 //! `SupervisedTraining` at its trait seams: [`WarmupCosine`] as the `LrScheduler`, and
 //! [`RankGatedAdamW`] as the single optimizer, with [`losses`] inside the model's train step.
-//! Metrics and early stopping are Burn's built-ins; [`roc_auc`] is the sklearn-checked oracle for
-//! evaluation code and tests.
+//! Metrics and early stopping are Burn's built-ins; the sklearn-checked evaluation oracle lives
+//! in [`crate::evaluation`].
 
 use std::sync::Arc;
 
@@ -265,51 +265,8 @@ impl<B: Backend> InferenceStep for TrainableClassifier<B> {
     }
 }
 
-// --------------------------------------------------------------------------------------------
-// Evaluation metric
-// --------------------------------------------------------------------------------------------
-
-/// Area under the ROC curve via the Mann-Whitney U statistic, with average ranks for ties.
-///
-/// Matches `sklearn.metrics.roc_auc_score`. Panics if either class is absent — an AUC over one
-/// class is meaningless and a corrupted validation split should fail loudly.
-#[must_use]
-pub fn roc_auc(labels: &[f32], scores: &[f32]) -> f64 {
-    assert_eq!(labels.len(), scores.len());
-    let mut order: Vec<usize> = (0..scores.len()).collect();
-    order.sort_by(|&a, &b| scores[a].total_cmp(&scores[b]));
-
-    // Average ranks over tied score runs (1-based ranks, as in the U statistic). The comparison
-    // is deliberately exact: only bitwise-equal scores are a tie, matching sklearn.
-    let mut ranks = vec![0.0f64; scores.len()];
-    let mut i = 0;
-    #[allow(clippy::float_cmp)]
-    while i < order.len() {
-        let mut j = i;
-        while j + 1 < order.len() && scores[order[j + 1]] == scores[order[i]] {
-            j += 1;
-        }
-        let avg = (i + j) as f64 / 2.0 + 1.0;
-        for &idx in &order[i..=j] {
-            ranks[idx] = avg;
-        }
-        i = j + 1;
-    }
-
-    let n_pos = labels.iter().filter(|&&l| l > 0.5).count();
-    let n_neg = labels.len() - n_pos;
-    assert!(n_pos > 0 && n_neg > 0, "AUC needs both classes present");
-
-    let pos_rank_sum: f64 = labels
-        .iter()
-        .zip(&ranks)
-        .filter(|&(&l, _)| l > 0.5)
-        .map(|(_, &r)| r)
-        .sum();
-    (pos_rank_sum - (n_pos * (n_pos + 1)) as f64 / 2.0) / (n_pos * n_neg) as f64
-}
-
-/// Extract `(labels, document logits)` from a step output, for the evaluation-side [`roc_auc`].
+/// Extract `(labels, document logits)` from a step output, for the evaluation side
+/// ([`crate::evaluation`]).
 ///
 /// Column 1 of the `[batch, 2]` output is the raw document logit (column 0 is the constant zero
 /// [`TrainableClassifier::forward_step`] adds for the metric contract).
@@ -461,25 +418,6 @@ mod tests {
     }
 
     #[test]
-    fn auc_matches_sklearn() {
-        // sklearn.metrics.roc_auc_score on the same inputs, including tied scores within and
-        // across classes.
-        let cases: [(&[f32], &[f32], f64); 3] = [
-            (&[0., 0., 1., 1.], &[0.1, 0.4, 0.35, 0.8], 0.75),
-            (&[0., 1., 0., 1.], &[0.5, 0.5, 0.2, 0.9], 0.875),
-            (
-                &[1., 0., 1., 1., 0., 0.],
-                &[0.9, 0.9, 0.8, 0.3, 0.3, 0.1],
-                0.666_666_666_7,
-            ),
-        ];
-        for (labels, scores, want) in cases {
-            let got = roc_auc(labels, scores);
-            assert!((got - want).abs() < 1e-9, "got {got}, sklearn says {want}");
-        }
-    }
-
-    #[test]
     fn rank_gated_adamw_decays_matrices_only() {
         // One step with zero gradients isolates the decay term: the matrix must shrink by
         // lr * weight_decay, the vector must not move.
@@ -513,6 +451,7 @@ mod tests {
         use burn::train::renderer::CliMetricsRenderer;
 
         use crate::data::{EncodedDocument, SlopBatcher};
+        use crate::evaluation::roc_auc;
 
         type AB = Autodiff<NdArray>;
         let device = NdArrayDevice::default();

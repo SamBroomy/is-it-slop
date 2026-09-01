@@ -21,9 +21,12 @@ use clap::Parser;
 use is_it_slop_training::data::{
     DocumentEncoder, EncodedDocument, SlopBatcher, SplitData, Vocabulary, read_split,
 };
+use is_it_slop_training::evaluation::{
+    ThresholdMetrics, roc_auc, score, threshold_at_best_f1, threshold_at_precision,
+};
 use is_it_slop_training::model::HierarchicalModelConfig;
 use is_it_slop_training::training::{
-    Batch, TrainableClassifier, TrainingConfig, doc_scores, roc_auc, train,
+    Batch, TrainableClassifier, TrainingConfig, doc_scores, train,
 };
 use tracing::info;
 
@@ -74,23 +77,68 @@ fn load(args: &Args, name: &str) -> SplitData {
     split
 }
 
-/// Full-split AUC of the trained model over already-encoded documents, batched to bound memory.
-fn evaluate<B: burn::tensor::backend::Backend>(
+/// Full-split `(labels, AI probabilities)` of the trained model over already-encoded documents,
+/// batched to bound memory.
+fn predictions<B: burn::tensor::backend::Backend>(
     model: &TrainableClassifier<B>,
     batcher: &SlopBatcher,
     encoded: &[EncodedDocument],
     device: &B::Device,
-) -> f64 {
+) -> (Vec<f32>, Vec<f32>) {
     use burn::data::dataloader::batcher::Batcher;
 
-    let (mut scores, mut labels) = (Vec::new(), Vec::new());
+    let (mut labels, mut probs) = (Vec::new(), Vec::new());
     for chunk in encoded.chunks(512) {
         let batch: Batch<B> = batcher.batch(chunk.to_vec(), device);
-        let (batch_labels, batch_scores) = doc_scores(&model.forward_step(batch));
-        scores.extend(batch_scores);
+        let (batch_labels, batch_logits) = doc_scores(&model.forward_step(batch));
         labels.extend(batch_labels);
+        probs.extend(batch_logits.iter().map(|l| 1.0 / (1.0 + (-l).exp())));
     }
-    roc_auc(&labels, &scores)
+    (labels, probs)
+}
+
+/// Both fitted thresholds scored on one split, shaped like the Python `results.json` blocks.
+#[derive(serde::Serialize)]
+struct SplitResults {
+    #[serde(rename = "precision_0.99")]
+    precision_0_99: ThresholdMetrics,
+    best_f1: ThresholdMetrics,
+}
+
+impl SplitResults {
+    fn new(labels: &[f32], probs: &[f32], thr_precision: f32, thr_f1: f32) -> Self {
+        Self {
+            precision_0_99: score(labels, probs, thr_precision),
+            best_f1: score(labels, probs, thr_f1),
+        }
+    }
+}
+
+/// The run summary written next to the model, the useful subset of Python's `results.json`.
+#[derive(serde::Serialize)]
+struct RunResults<'a> {
+    model_config: &'a HierarchicalModelConfig,
+    training_config: &'a TrainingConfig,
+    parameters: usize,
+    train_seconds: f64,
+    /// Recovered from the newest checkpoint on disk; absent if none were written.
+    epochs_trained: Option<usize>,
+    validation: SplitResults,
+    test: SplitResults,
+}
+
+/// The last epoch that wrote a checkpoint — the number of epochs actually run.
+fn epochs_trained(artifact_dir: &std::path::Path) -> Option<usize> {
+    let entries = std::fs::read_dir(artifact_dir.join("checkpoint")).ok()?;
+    entries
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            name.strip_prefix("model-")?
+                .strip_suffix(".mpk")?
+                .parse()
+                .ok()
+        })
+        .max()
 }
 
 fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
@@ -153,7 +201,13 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
     model_config
         .save(format!("{artifact_dir}/model_config.json"))
         .expect("saving config");
+    std::fs::write(
+        args.artifact_dir.join("encoder_config.json"),
+        serde_json::to_string_pretty(&encoder.bundle_config()).expect("serializing encoder config"),
+    )
+    .expect("saving encoder config");
 
+    let started = std::time::Instant::now();
     let result = train::<B>(
         artifact_dir,
         model_config.init::<B>(device),
@@ -163,6 +217,7 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
         device,
         None::<burn::train::renderer::CliMetricsRenderer>,
     );
+    let train_seconds = started.elapsed().as_secs_f64();
 
     result
         .model
@@ -176,11 +231,43 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
     // The parity-gate numbers: full-split AUC, the statistic the campaign tables report
     // (combo band: validation 0.9960-0.9961, test 0.9968).
     let inner_device = Default::default();
-    let val_auc = evaluate(&result.model, &batcher, &encoded_valid, &inner_device);
+    let (val_labels, val_probs) =
+        predictions(&result.model, &batcher, &encoded_valid, &inner_device);
+    let val_auc = roc_auc(&val_labels, &val_probs);
     println!("validation AUC (full split): {val_auc:.6}");
     let test_split = load(args, "test");
     let encoded_test = encoder.encode_batch(&test_split.texts, &test_split.labels);
-    let test_auc = evaluate(&result.model, &batcher, &encoded_test, &inner_device);
-    println!("test AUC (full split): {test_auc:.6}");
+    let (test_labels, test_probs) =
+        predictions(&result.model, &batcher, &encoded_test, &inner_device);
+    println!(
+        "test AUC (full split): {:.6}",
+        roc_auc(&test_labels, &test_probs)
+    );
+
+    // Thresholds are fit on validation, never test, and are per-artifact: the bundle ships the
+    // best-F1 one as `classification_threshold.txt`, exactly as the Python trainer did.
+    let thr_precision = threshold_at_precision(&val_labels, &val_probs, 0.99);
+    let thr_f1 = threshold_at_best_f1(&val_labels, &val_probs);
+    println!("thresholds: precision>=0.99 at {thr_precision}, best F1 at {thr_f1}");
+    std::fs::write(
+        args.artifact_dir.join("classification_threshold.txt"),
+        thr_f1.to_string(),
+    )
+    .expect("saving the threshold");
+
+    let results = RunResults {
+        model_config: &model_config,
+        training_config: &config,
+        parameters: result.model.num_params(),
+        train_seconds,
+        epochs_trained: epochs_trained(&args.artifact_dir),
+        validation: SplitResults::new(&val_labels, &val_probs, thr_precision, thr_f1),
+        test: SplitResults::new(&test_labels, &test_probs, thr_precision, thr_f1),
+    };
+    std::fs::write(
+        args.artifact_dir.join("results.json"),
+        serde_json::to_string_pretty(&results).expect("serializing results"),
+    )
+    .expect("saving results");
     println!("artifacts in {artifact_dir}");
 }

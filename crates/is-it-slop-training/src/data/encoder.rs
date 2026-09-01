@@ -13,6 +13,32 @@ use is_it_slop_preprocessing::pre_processor::tokenize;
 
 use super::{EncodedDocument, Vocabulary};
 
+/// The bundle's `encoder_config.json`: everything inference needs to reproduce this encoding.
+///
+/// Key names match what `notebooks/hierarchical_train.py` wrote, so any consumer reads both.
+#[derive(Debug, serde::Serialize)]
+pub struct EncoderBundleConfig {
+    /// Which build of the shared preprocessing crate produced this bundle; inference must
+    /// tokenize identically.
+    pub preprocessing_version: &'static str,
+    /// The BPE scheme behind the token ids.
+    pub tokenizer: &'static str,
+    /// Tokens per chunk.
+    pub chunk_size: usize,
+    /// The training-time chunk budget; the network accepts any count.
+    pub max_chunks_seen_in_training: usize,
+    /// Drop a trailing chunk this empty.
+    pub min_fill: f64,
+    /// Chunks are contiguous and non-overlapping.
+    pub overlap: usize,
+    /// Distinct token rows kept.
+    pub vocab_size: usize,
+    /// Row for tokens outside the vocabulary.
+    pub oov_id: u16,
+    /// Row for padding.
+    pub pad_id: u16,
+}
+
 /// Encodes documents into `[max_chunks, chunk_size]` grids of compact ids.
 pub struct DocumentEncoder {
     vocabulary: Vocabulary,
@@ -58,6 +84,24 @@ impl DocumentEncoder {
     #[must_use]
     pub const fn vocabulary(&self) -> &Vocabulary {
         &self.vocabulary
+    }
+
+    /// Everything the bundle's `encoder_config.json` records, matching the Python trainer's keys.
+    #[must_use]
+    pub fn bundle_config(&self) -> EncoderBundleConfig {
+        EncoderBundleConfig {
+            // The preprocessing crate is version-locked to the workspace (`=` pin in the root
+            // Cargo.toml), so this crate's own version identifies the tokenizer build.
+            preprocessing_version: env!("CARGO_PKG_VERSION"),
+            tokenizer: "o200k_base",
+            chunk_size: self.chunk_size,
+            max_chunks_seen_in_training: self.max_chunks,
+            min_fill: self.min_fill,
+            overlap: 0,
+            vocab_size: self.vocabulary.vocab_size(),
+            oov_id: self.vocabulary.oov_id(),
+            pad_id: self.vocabulary.pad_id(),
+        }
     }
 
     /// Encode a batch of raw texts with their labels.
