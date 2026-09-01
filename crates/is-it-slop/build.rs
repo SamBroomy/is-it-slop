@@ -14,21 +14,26 @@ use tempfile::tempdir;
 /// Model version to use
 /// Update this when releasing new model versions
 /// Crate version doesn't need to change for patch updates
-const MODEL_VERSION: &str = "3.0.0";
+const MODEL_VERSION: &str = "4.0.0";
 
-const CLASSIFIER_MODEL_FILENAME: &str = "slop-classifier.onnx";
-const TOKENIZER_FILENAME: &str = "tfidf_vectorizer.rkyv";
+/// The shipped weights are the half-precision export: half the binary for a measured
+/// validation-AUC cost in the 1e-6 range. `model.safetensors` (f32) stays in the release
+/// tarball as the canonical reference but is not embedded.
+const MODEL_WEIGHTS_FILENAME: &str = "model.f16.safetensors";
+const VOCABULARY_FILENAME: &str = "token_vocabulary.safetensors";
+const ENCODER_CONFIG_FILENAME: &str = "encoder_config.json";
+const MODEL_CONFIG_FILENAME: &str = "model_config.json";
 const THRESHOLD_FILENAME: &str = "classification_threshold.txt";
-const CHUNK_THRESHOLD_FILENAME: &str = "chunk_classification_threshold.txt";
-const TOKEN_CHUNKER_CONFIG_FILENAME: &str = "token_chunker_config.json";
+const CALIBRATION_TEMPERATURE_FILENAME: &str = "calibration_temperature.txt";
 
 /// Required artifact filenames (relative to version directory)
 const REQUIRED_ARTIFACTS: &[&str] = &[
-    CLASSIFIER_MODEL_FILENAME,
-    TOKENIZER_FILENAME,
+    MODEL_WEIGHTS_FILENAME,
+    VOCABULARY_FILENAME,
+    ENCODER_CONFIG_FILENAME,
+    MODEL_CONFIG_FILENAME,
     THRESHOLD_FILENAME,
-    CHUNK_THRESHOLD_FILENAME,
-    TOKEN_CHUNKER_CONFIG_FILENAME,
+    CALIBRATION_TEMPERATURE_FILENAME,
 ];
 
 /// Base URL for downloading model artifacts from GitHub releases
@@ -72,14 +77,15 @@ fn create_stub_artifacts(target_dir: &Path) -> Result<(), Box<dyn std::error::Er
 
     // Create empty/minimal stub files
     // These will compile but panic at runtime if used
-    fs::write(target_dir.join(CLASSIFIER_MODEL_FILENAME), b"")?;
-    fs::write(target_dir.join(TOKENIZER_FILENAME), b"")?;
-    fs::write(target_dir.join(THRESHOLD_FILENAME), "0.5")?;
-    fs::write(target_dir.join(CHUNK_THRESHOLD_FILENAME), "0.5")?;
+    fs::write(target_dir.join(MODEL_WEIGHTS_FILENAME), b"")?;
+    fs::write(target_dir.join(VOCABULARY_FILENAME), b"")?;
     fs::write(
-        target_dir.join(TOKEN_CHUNKER_CONFIG_FILENAME),
-        r#"{"chunk_size": 150, "overlap": 15, "min_chunk_size": 30}"#,
+        target_dir.join(ENCODER_CONFIG_FILENAME),
+        r#"{"preprocessing_version": "0.0.0", "tokenizer": "o200k_base", "chunk_size": 192, "max_chunks_seen_in_training": 8, "min_fill": 0.1, "overlap": 0, "vocab_size": 0, "oov_id": 0, "pad_id": 1}"#,
     )?;
+    fs::write(target_dir.join(MODEL_CONFIG_FILENAME), b"{}")?;
+    fs::write(target_dir.join(THRESHOLD_FILENAME), "0.5")?;
+    fs::write(target_dir.join(CALIBRATION_TEMPERATURE_FILENAME), "1.0")?;
 
     Ok(())
 }
@@ -204,9 +210,23 @@ fn ensure_artifacts_in_out_dir(
     }
 }
 
-fn main() {
-    const DEFAULT_THRESHOLD: f32 = 0.5;
+/// Read a single float artifact (threshold, temperature) with a fallback default.
+fn read_float_artifact(path: &Path, name: &str, default: f32) -> f32 {
+    fs::read_to_string(path).map_or_else(
+        |_| {
+            println!("cargo:warning={name} file not found, using default {default}");
+            default
+        },
+        |contents| {
+            contents.trim().parse::<f32>().unwrap_or_else(|_| {
+                println!("cargo:warning=Could not parse {name}, using default {default}");
+                default
+            })
+        },
+    )
+}
 
+fn main() {
     // Allow override for testing new model versions
     let model_version = env::var("MODEL_VERSION").unwrap_or_else(|_| MODEL_VERSION.to_string());
 
@@ -228,7 +248,8 @@ fn main() {
 
     // Check if the model doesn't need to be downloaded (e.g docs-only build)
     let is_docs_rs = env::var("DOCS_RS").is_ok();
-    let is_stub_model = env::var("IS_IT_SLOP_STUB_MODEL").is_ok();
+    let is_stub_model = env::var("IS_IT_SLOP_STUB_MODEL").is_ok()
+        || env::var("CARGO_FEATURE_STUB_MODEL").is_ok();
     if is_docs_rs || is_stub_model {
         println!("cargo:warning=Building with stub model artifacts (docs-only build)");
         println!(
@@ -245,36 +266,21 @@ fn main() {
         "cargo:rustc-env=MODEL_ARTIFACTS_DIR={}",
         out_artifacts_dir.display()
     );
-    println!("cargo:rustc-env=CLASSIFIER_MODEL_FILENAME={CLASSIFIER_MODEL_FILENAME}");
-    println!("cargo:rustc-env=TOKENIZER_FILENAME={TOKENIZER_FILENAME}");
-    println!("cargo:rustc-env=TOKEN_CHUNKER_CONFIG_FILENAME={TOKEN_CHUNKER_CONFIG_FILENAME}");
+    println!("cargo:rustc-env=MODEL_WEIGHTS_FILENAME={MODEL_WEIGHTS_FILENAME}");
+    println!("cargo:rustc-env=VOCABULARY_FILENAME={VOCABULARY_FILENAME}");
+    println!("cargo:rustc-env=ENCODER_CONFIG_FILENAME={ENCODER_CONFIG_FILENAME}");
+    println!("cargo:rustc-env=MODEL_CONFIG_FILENAME={MODEL_CONFIG_FILENAME}");
 
-    // Read and write threshold to OUT_DIR
-    let threshold_path = out_artifacts_dir.join(THRESHOLD_FILENAME);
-    let threshold_val = fs::read_to_string(&threshold_path).map_or_else(
-        |_| {
-            println!("cargo:warning=Threshold file not found, using default 0.5");
-            DEFAULT_THRESHOLD
-        },
-        |contents| {
-            contents.trim().parse::<f32>().unwrap_or_else(|_| {
-                println!("cargo:warning=Could not parse threshold, using default 0.5");
-                DEFAULT_THRESHOLD
-            })
-        },
+    // Bake the decision contract into threshold.rs
+    let threshold_val = read_float_artifact(
+        &out_artifacts_dir.join(THRESHOLD_FILENAME),
+        "Threshold",
+        0.5,
     );
-    let chunk_threshold_path = out_artifacts_dir.join(CHUNK_THRESHOLD_FILENAME);
-    let chunk_threshold_val = fs::read_to_string(&chunk_threshold_path).map_or_else(
-        |_| {
-            println!("cargo:warning=Chunk threshold file not found, using default 0.5");
-            DEFAULT_THRESHOLD
-        },
-        |contents| {
-            contents.trim().parse::<f32>().unwrap_or_else(|_| {
-                println!("cargo:warning=Could not parse chunk threshold, using default 0.5");
-                DEFAULT_THRESHOLD
-            })
-        },
+    let temperature_val = read_float_artifact(
+        &out_artifacts_dir.join(CALIBRATION_TEMPERATURE_FILENAME),
+        "Calibration temperature",
+        1.0,
     );
 
     let threshold_rs = format!(
@@ -285,9 +291,11 @@ fn main() {
 /// If P(AI) >= threshold, the text is classified as AI-generated.
 pub const CLASSIFICATION_THRESHOLD: f32 = {threshold_val};
 
-/// Chunk-based classification threshold between 0.0 and 1.0.
-/// When aggregating chunked predictions back into texts this is the threshold used.
-pub const CHUNK_CLASSIFICATION_THRESHOLD: f32 = {chunk_threshold_val};\n"
+/// Temperature the document logit is divided by before the sigmoid.
+///
+/// Fitted on the validation split; the classification threshold above was fitted on the
+/// calibrated probabilities, so both must be applied together.
+pub const CALIBRATION_TEMPERATURE: f32 = {temperature_val};\n"
     );
     fs::write(out_dir.join("threshold.rs"), threshold_rs).expect("Failed to write threshold.rs");
 
@@ -301,4 +309,5 @@ pub const CHUNK_CLASSIFICATION_THRESHOLD: f32 = {chunk_threshold_val};\n"
     println!("cargo:rerun-if-env-changed=MODEL_ARTIFACT_URL");
     println!("cargo:rerun-if-env-changed=MODEL_VERSION");
     println!("cargo:rerun-if-env-changed=DOCS_RS");
+    println!("cargo:rerun-if-env-changed=IS_IT_SLOP_STUB_MODEL");
 }
