@@ -21,12 +21,11 @@ use is_it_slop_training::data::{
     DocumentEncoder, EncodedDocument, SlopBatcher, SplitData, Vocabulary, read_split,
 };
 use is_it_slop_training::evaluation::{
-    ThresholdMetrics, roc_auc, score, threshold_at_best_f1, threshold_at_precision,
+    ThresholdMetrics, confidence_ranking_auc, fit_temperature, roc_auc, score,
+    threshold_at_best_f1, threshold_at_precision,
 };
 use is_it_slop_training::model::{HierarchicalModelConfig, HierarchicalSlopClassifier};
-use is_it_slop_training::training::{
-    Batch, TrainableClassifier, TrainingConfig, doc_scores, train,
-};
+use is_it_slop_training::training::{Batch, TrainableClassifier, TrainingConfig, train};
 use tracing::info;
 
 /// Train the slop classifier with the frozen campaign recipe.
@@ -76,24 +75,66 @@ fn load(args: &Args, name: &str) -> SplitData {
     split
 }
 
-/// Full-split `(labels, AI probabilities)` of the trained model over already-encoded documents,
-/// batched to bound memory.
+/// Full-split model outputs over already-encoded documents, batched to bound memory: everything
+/// the metrics, threshold fitting, and uncertainty signals consume, one entry per document.
+struct SplitPredictions {
+    labels: Vec<f32>,
+    /// Raw document logits.
+    logits: Vec<f32>,
+    /// `sigmoid` of the document logits — the AI probabilities.
+    probs: Vec<f32>,
+    /// Mean of the real chunks' AI probabilities.
+    chunk_mean: Vec<f32>,
+    /// Population std of the real chunks' AI probabilities — the model's internal disagreement.
+    chunk_std: Vec<f32>,
+    /// Real chunks per document (dispersion over a single chunk is 0 by construction).
+    real_chunks: Vec<f32>,
+}
+
 fn predictions<B: burn::tensor::backend::Backend>(
     model: &TrainableClassifier<B>,
     batcher: &SlopBatcher,
     encoded: &[EncodedDocument],
     device: &B::Device,
-) -> (Vec<f32>, Vec<f32>) {
+) -> SplitPredictions {
     use burn::data::dataloader::batcher::Batcher;
+    use burn::tensor::activation::sigmoid;
 
-    let (mut labels, mut probs) = (Vec::new(), Vec::new());
-    for chunk in encoded.chunks(512) {
-        let batch: Batch<B> = batcher.batch(chunk.to_vec(), device);
-        let (batch_labels, batch_logits) = doc_scores(&model.forward_step(batch));
-        labels.extend(batch_labels);
-        probs.extend(batch_logits.iter().map(|l| 1.0 / (1.0 + (-l).exp())));
+    let mut out = SplitPredictions {
+        labels: Vec::with_capacity(encoded.len()),
+        logits: Vec::with_capacity(encoded.len()),
+        probs: Vec::with_capacity(encoded.len()),
+        chunk_mean: Vec::with_capacity(encoded.len()),
+        chunk_std: Vec::with_capacity(encoded.len()),
+        real_chunks: Vec::with_capacity(encoded.len()),
+    };
+    for docs in encoded.chunks(512) {
+        let batch: Batch<B> = batcher.batch(docs.to_vec(), device);
+        let output = model.model.forward(batch.ids);
+
+        let chunk_probs = sigmoid(output.chunk_logits);
+        let mask = output.chunk_mask.float();
+        let count = mask.clone().sum_dim(1);
+        let mean = (chunk_probs.clone() * mask.clone()).sum_dim(1) / count.clone();
+        let centered = (chunk_probs - mean.clone()) * mask;
+        let std = (centered.clone() * centered)
+            .sum_dim(1)
+            .div(count.clone())
+            .sqrt();
+
+        out.labels.extend(docs.iter().map(|d| d.label));
+        let logits: Vec<f32> = output.doc_logits.into_data().to_vec().unwrap();
+        out.probs
+            .extend(logits.iter().map(|l| 1.0 / (1.0 + (-l).exp())));
+        out.logits.extend(logits);
+        out.chunk_mean
+            .extend(mean.into_data().to_vec::<f32>().unwrap());
+        out.chunk_std
+            .extend(std.into_data().to_vec::<f32>().unwrap());
+        out.real_chunks
+            .extend(count.into_data().to_vec::<f32>().unwrap());
     }
-    (labels, probs)
+    out
 }
 
 /// Both fitted thresholds scored on one split, shaped like the Python `results.json` blocks.
@@ -122,9 +163,69 @@ struct RunResults<'a> {
     train_seconds: f64,
     /// Recovered from the newest checkpoint on disk; absent if none were written.
     epochs_trained: Option<usize>,
+    /// Which confidence signals rank validation errors — see [`UncertaintySignals`].
+    uncertainty: UncertaintySignals,
     validation: SplitResults,
     test: SplitResults,
     artifact_checks: ArtifactChecks,
+}
+
+/// Uncertainty candidates, each scored by how well it ranks correct validation predictions
+/// above errors ([`confidence_ranking_auc`]; 0.5 = no signal). Correctness is at the best-F1
+/// threshold, while the margin is measured about the calibrated 0.5 point — a deliberate
+/// exploratory pairing, since calibrated distance-from-half is the signal inference would ship.
+#[derive(serde::Serialize)]
+struct UncertaintySignals {
+    /// Temperature-scaling calibration fit on validation.
+    temperature: f64,
+    /// `|sigmoid(logit / T) - 0.5|` — confidence as calibrated margin.
+    calibrated_margin_auc: Option<f64>,
+    /// `-|doc_prob - mean(chunk_probs)|` — the "does the document head agree with a naive
+    /// chunk aggregation" signal.
+    doc_chunk_agreement_auc: Option<f64>,
+    /// `-std(chunk_probs)` — internal disagreement across chunks, the mixed-content signal.
+    /// Restricted to documents with >= 2 real chunks: a single chunk's dispersion is 0 by
+    /// construction and would read as false confidence.
+    chunk_dispersion_auc: Option<f64>,
+    /// Documents the dispersion signal was measured on.
+    n_multichunk: usize,
+}
+
+fn uncertainty_signals(val: &SplitPredictions, threshold: f32) -> UncertaintySignals {
+    let temperature = fit_temperature(&val.labels, &val.logits);
+    let correct: Vec<f32> = val
+        .labels
+        .iter()
+        .zip(&val.probs)
+        .map(|(&y, &p)| f32::from(u8::from((p >= threshold) == (y > 0.5))))
+        .collect();
+
+    let t = temperature as f32;
+    let margin: Vec<f32> = val
+        .logits
+        .iter()
+        .map(|&z| (1.0 / (1.0 + (-z / t).exp()) - 0.5).abs())
+        .collect();
+    let agreement: Vec<f32> = val
+        .probs
+        .iter()
+        .zip(&val.chunk_mean)
+        .map(|(&p, &m)| -(p - m).abs())
+        .collect();
+
+    let multi: Vec<usize> = (0..val.labels.len())
+        .filter(|&i| val.real_chunks[i] >= 2.0)
+        .collect();
+    let multi_correct: Vec<f32> = multi.iter().map(|&i| correct[i]).collect();
+    let multi_dispersion: Vec<f32> = multi.iter().map(|&i| -val.chunk_std[i]).collect();
+
+    UncertaintySignals {
+        temperature,
+        calibrated_margin_auc: confidence_ranking_auc(&correct, &margin),
+        doc_chunk_agreement_auc: confidence_ranking_auc(&correct, &agreement),
+        chunk_dispersion_auc: confidence_ranking_auc(&multi_correct, &multi_dispersion),
+        n_multichunk: multi.len(),
+    }
 }
 
 /// Every shrunk form of the weights re-scored on validation, so a smaller artifact ships with
@@ -162,8 +263,8 @@ fn check_artifacts<B: burn::tensor::backend::Backend>(
         model: f16_model,
         chunk_loss_weight: model.chunk_loss_weight,
     };
-    let (labels, probs) = predictions(&f16, batcher, encoded_valid, device);
-    let f16_auc = roc_auc(&labels, &probs);
+    let p = predictions(&f16, batcher, encoded_valid, device);
+    let f16_auc = roc_auc(&p.labels, &p.probs);
 
     let mut quantizer = Quantizer {
         calibration: Calibration::MinMax,
@@ -173,10 +274,10 @@ fn check_artifacts<B: burn::tensor::backend::Backend>(
         model: model.model.clone().quantize_weights(&mut quantizer),
         chunk_loss_weight: model.chunk_loss_weight,
     };
-    let (labels, probs) = predictions(&q8, batcher, encoded_valid, device);
+    let p = predictions(&q8, batcher, encoded_valid, device);
     ArtifactChecks {
         f16_safetensors_validation_auc: f16_auc,
-        q8_minmax_validation_auc: roc_auc(&labels, &probs),
+        q8_minmax_validation_auc: roc_auc(&p.labels, &p.probs),
     }
 }
 
@@ -319,23 +420,21 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
     // The parity-gate numbers: full-split AUC, the statistic the campaign tables report
     // (combo band: validation 0.9960-0.9961, test 0.9968).
     let inner_device = Default::default();
-    let (val_labels, val_probs) =
-        predictions(&result.model, &batcher, &encoded_valid, &inner_device);
-    let val_auc = roc_auc(&val_labels, &val_probs);
+    let val = predictions(&result.model, &batcher, &encoded_valid, &inner_device);
+    let val_auc = roc_auc(&val.labels, &val.probs);
     println!("validation AUC (full split): {val_auc:.6}");
     let test_split = load(args, "test");
     let encoded_test = encoder.encode_batch(&test_split.texts, &test_split.labels);
-    let (test_labels, test_probs) =
-        predictions(&result.model, &batcher, &encoded_test, &inner_device);
+    let test = predictions(&result.model, &batcher, &encoded_test, &inner_device);
     println!(
         "test AUC (full split): {:.6}",
-        roc_auc(&test_labels, &test_probs)
+        roc_auc(&test.labels, &test.probs)
     );
 
     // Thresholds are fit on validation, never test, and are per-artifact: the bundle ships the
     // best-F1 one as `classification_threshold.txt`, exactly as the Python trainer did.
-    let thr_precision = threshold_at_precision(&val_labels, &val_probs, 0.99);
-    let thr_f1 = threshold_at_best_f1(&val_labels, &val_probs);
+    let thr_precision = threshold_at_precision(&val.labels, &val.probs, 0.99);
+    let thr_f1 = threshold_at_best_f1(&val.labels, &val.probs);
     println!("thresholds: precision>=0.99 at {thr_precision}, best F1 at {thr_f1}");
     std::fs::write(
         args.artifact_dir.join("classification_threshold.txt"),
@@ -349,8 +448,9 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
         parameters: result.model.num_params(),
         train_seconds,
         epochs_trained: epochs_trained(&args.artifact_dir),
-        validation: SplitResults::new(&val_labels, &val_probs, thr_precision, thr_f1),
-        test: SplitResults::new(&test_labels, &test_probs, thr_precision, thr_f1),
+        uncertainty: uncertainty_signals(&val, thr_f1),
+        validation: SplitResults::new(&val.labels, &val.probs, thr_precision, thr_f1),
+        test: SplitResults::new(&test.labels, &test.probs, thr_precision, thr_f1),
         artifact_checks: check_artifacts(
             &result.model,
             &model_config,

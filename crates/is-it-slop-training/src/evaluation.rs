@@ -130,6 +130,57 @@ pub fn threshold_at_best_f1(labels: &[f32], probs: &[f32]) -> f32 {
     best.1
 }
 
+/// The temperature that minimizes the binary NLL of `sigmoid(logit / T)` against the labels.
+///
+/// One-parameter post-hoc calibration (temperature scaling): fit on validation, and
+/// `sigmoid(logit / T)` approximates the probability of being right, which makes
+/// distance-from-threshold a meaningful confidence. Golden-section search over `ln T`; the NLL
+/// is smooth and unimodal in `T` for a fixed score ranking.
+#[must_use]
+pub fn fit_temperature(labels: &[f32], logits: &[f32]) -> f64 {
+    assert_eq!(labels.len(), logits.len());
+    let nll = |t: f64| -> f64 {
+        labels
+            .iter()
+            .zip(logits)
+            .map(|(&y, &z)| {
+                let z = f64::from(z) / t;
+                z.max(0.0) - z * f64::from(y) + (1.0 + (-z.abs()).exp()).ln()
+            })
+            .sum::<f64>()
+            / labels.len() as f64
+    };
+    let (mut lo, mut hi) = (0.05f64.ln(), 20f64.ln());
+    let phi = (5f64.sqrt() - 1.0) / 2.0;
+    let (mut a, mut b) = (hi - phi * (hi - lo), lo + phi * (hi - lo));
+    let (mut fa, mut fb) = (nll(a.exp()), nll(b.exp()));
+    for _ in 0..60 {
+        if fa < fb {
+            hi = b;
+            b = a;
+            fb = fa;
+            a = hi - phi * (hi - lo);
+            fa = nll(a.exp());
+        } else {
+            lo = a;
+            a = b;
+            fa = fb;
+            b = lo + phi * (hi - lo);
+            fb = nll(b.exp());
+        }
+    }
+    f64::midpoint(lo, hi).exp()
+}
+
+/// AUC of a confidence signal at ranking correct predictions above errors (0.5 = no signal).
+///
+/// `None` when every prediction is correct or every one wrong — there is no ranking to measure.
+#[must_use]
+pub fn confidence_ranking_auc(correct: &[f32], confidence: &[f32]) -> Option<f64> {
+    let right = correct.iter().filter(|&&c| c > 0.5).count();
+    (right > 0 && right < correct.len()).then(|| roc_auc(correct, confidence))
+}
+
 /// Classification metrics at one decision threshold, `sklearn.metrics` semantics
 /// (`zero_division=0`; MCC is 0 when any marginal is empty).
 #[derive(Debug, serde::Serialize)]
@@ -243,6 +294,32 @@ mod tests {
             let got = threshold_at_best_f1(labels, probs);
             assert!((got - want).abs() < 1e-9, "got {got}, sklearn says {want}");
         }
+    }
+
+    #[test]
+    fn fit_temperature_recovers_a_known_scale() {
+        // Logits that are exactly 2x the calibrated log-odds: for each raw logit z, the fraction
+        // of positives is sigmoid(z / 2), so the NLL-optimal temperature is 2 (up to count
+        // rounding).
+        let (mut labels, mut logits) = (Vec::new(), Vec::new());
+        for z in [-4.0f32, -2.0, 0.0, 2.0, 4.0] {
+            let p = 1.0 / (1.0 + (-z / 2.0).exp());
+            let pos = (1000.0 * p).round() as usize;
+            for i in 0..1000 {
+                labels.push(f32::from(u8::from(i < pos)));
+                logits.push(z);
+            }
+        }
+        let t = fit_temperature(&labels, &logits);
+        assert!((t - 2.0).abs() < 0.05, "got T={t}, expected ~2");
+    }
+
+    #[test]
+    fn confidence_ranking_needs_both_outcomes() {
+        assert!(confidence_ranking_auc(&[1.0, 1.0], &[0.9, 0.1]).is_none());
+        // Confidence perfectly ranks the correct prediction above the error.
+        let auc = confidence_ranking_auc(&[1.0, 0.0, 1.0], &[0.9, 0.1, 0.8]);
+        assert_eq!(auc, Some(1.0));
     }
 
     #[test]
