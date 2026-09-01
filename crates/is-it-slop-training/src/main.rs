@@ -18,9 +18,13 @@ use burn::module::Module;
 use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
 use burn::tensor::backend::AutodiffBackend;
 use clap::Parser;
-use is_it_slop_training::data::{DocumentEncoder, SlopBatcher, SplitData, Vocabulary, read_split};
+use is_it_slop_training::data::{
+    DocumentEncoder, EncodedDocument, SlopBatcher, SplitData, Vocabulary, read_split,
+};
 use is_it_slop_training::model::HierarchicalModelConfig;
-use is_it_slop_training::training::{Batch, TrainableClassifier, TrainingConfig, roc_auc, train};
+use is_it_slop_training::training::{
+    Batch, TrainableClassifier, TrainingConfig, doc_scores, roc_auc, train,
+};
 use tracing::info;
 
 /// Train the slop classifier with the frozen campaign recipe.
@@ -70,23 +74,21 @@ fn load(args: &Args, name: &str) -> SplitData {
     split
 }
 
-/// Full-split AUC of the trained model, batched to bound memory.
+/// Full-split AUC of the trained model over already-encoded documents, batched to bound memory.
 fn evaluate<B: burn::tensor::backend::Backend>(
     model: &TrainableClassifier<B>,
     batcher: &SlopBatcher,
-    encoder: &DocumentEncoder,
-    split: &SplitData,
+    encoded: &[EncodedDocument],
     device: &B::Device,
 ) -> f64 {
     use burn::data::dataloader::batcher::Batcher;
 
-    let encoded = encoder.encode_batch(&split.texts, &split.labels);
     let (mut scores, mut labels) = (Vec::new(), Vec::new());
     for chunk in encoded.chunks(512) {
         let batch: Batch<B> = batcher.batch(chunk.to_vec(), device);
-        let output = model.forward_step(batch);
-        scores.extend(output.logits.into_data().to_vec::<f32>().unwrap());
-        labels.extend(output.targets.into_data().to_vec::<f32>().unwrap());
+        let (batch_labels, batch_scores) = doc_scores(&model.forward_step(batch));
+        scores.extend(batch_scores);
+        labels.extend(batch_labels);
     }
     roc_auc(&labels, &scores)
 }
@@ -136,11 +138,13 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
     // The valid loader is shuffled because the dashboard AUROC (which drives early stopping) is
     // computed per batch: the parquets are grouped by label, and single-class batches score 0,
     // collapsing the epoch mean. Python didn't need this — it computed AUC over the whole split.
+    // The encoded documents stay resident (cloned into the dataset) so the post-training
+    // evaluation doesn't re-encode the split.
     let dataloader_valid = DataLoaderBuilder::new(batcher.clone())
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(2)
-        .build(InMemDataset::new(encoded_valid));
+        .build(InMemDataset::new(encoded_valid.clone()));
 
     let artifact_dir = args.artifact_dir.to_str().expect("utf-8 artifact dir");
     config
@@ -172,22 +176,11 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
     // The parity-gate numbers: full-split AUC, the statistic the campaign tables report
     // (combo band: validation 0.9960-0.9961, test 0.9968).
     let inner_device = Default::default();
-    let val_auc = evaluate(
-        &result.model,
-        &batcher,
-        &encoder,
-        &valid_split,
-        &inner_device,
-    );
+    let val_auc = evaluate(&result.model, &batcher, &encoded_valid, &inner_device);
     println!("validation AUC (full split): {val_auc:.6}");
     let test_split = load(args, "test");
-    let test_auc = evaluate(
-        &result.model,
-        &batcher,
-        &encoder,
-        &test_split,
-        &inner_device,
-    );
+    let encoded_test = encoder.encode_batch(&test_split.texts, &test_split.labels);
+    let test_auc = evaluate(&result.model, &batcher, &encoded_test, &inner_device);
     println!("test AUC (full split): {test_auc:.6}");
     println!("artifacts in {artifact_dir}");
 }

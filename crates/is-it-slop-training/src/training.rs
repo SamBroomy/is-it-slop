@@ -15,9 +15,8 @@ use burn::module::{AutodiffModule, Module};
 use burn::optim::adaptor::OptimizerAdaptor;
 use burn::optim::{AdamW, AdamWConfig, AdamWState, SimpleOptimizer};
 use burn::tensor::backend::{AutodiffBackend, Backend};
-use burn::tensor::{Int, Tensor, Transaction};
-use burn::train::metric::{Adaptor, AurocInput, LossInput};
-use burn::train::{InferenceStep, ItemLazy, LearningResult, TrainOutput, TrainStep};
+use burn::tensor::{Int, Tensor};
+use burn::train::{ClassificationOutput, InferenceStep, LearningResult, TrainOutput, TrainStep};
 
 use crate::model::{HierarchicalSlopClassifier, ModelOutput};
 
@@ -221,18 +220,6 @@ pub struct Batch<B: Backend> {
     pub labels: Tensor<B, 1>,
 }
 
-/// What a step hands the metrics: the loss it backpropagated, plus the document logits and
-/// targets the AUROC metric consumes.
-#[derive(Debug, Clone)]
-pub struct SlopOutput<B: Backend> {
-    /// The scalar batch loss.
-    pub loss: Tensor<B, 1>,
-    /// Raw document logits, `[batch]`; `sigmoid` gives the AI probability.
-    pub logits: Tensor<B, 1>,
-    /// Document labels, `[batch]`.
-    pub targets: Tensor<B, 1>,
-}
-
 /// The classifier plus the loss weighting its steps need; this is the module the `Learner`
 /// trains and checkpoints.
 #[derive(Module, Debug)]
@@ -244,23 +231,25 @@ pub struct TrainableClassifier<B: Backend> {
 }
 
 impl<B: Backend> TrainableClassifier<B> {
-    /// Forward pass plus the recipe's loss.
-    pub fn forward_step(&self, batch: Batch<B>) -> SlopOutput<B> {
+    /// Forward pass plus the recipe's loss, packaged as Burn's [`ClassificationOutput`] so the
+    /// built-in metrics (and their `ItemLazy` sync) apply without custom adaptors.
+    ///
+    /// The single document logit becomes the two-class row `[0, logit]`: the metrics softmax it,
+    /// and `softmax([0, x])[1] == sigmoid(x)`, so AUROC sees exactly the AI probability and
+    /// accuracy's argmax is the 0.5-threshold decision.
+    pub fn forward_step(&self, batch: Batch<B>) -> ClassificationOutput<B> {
         let output = self.model.forward(batch.ids);
         let loss = losses(&output, batch.labels.clone(), self.chunk_loss_weight);
-        SlopOutput {
-            loss,
-            logits: output.doc_logits,
-            targets: batch.labels,
-        }
+        let logits = Tensor::stack::<2>(vec![output.doc_logits.zeros_like(), output.doc_logits], 1);
+        ClassificationOutput::new(loss, logits, batch.labels.int())
     }
 }
 
 impl<B: AutodiffBackend> TrainStep for TrainableClassifier<B> {
     type Input = Batch<B>;
-    type Output = SlopOutput<B>;
+    type Output = ClassificationOutput<B>;
 
-    fn step(&self, batch: Batch<B>) -> TrainOutput<SlopOutput<B>> {
+    fn step(&self, batch: Batch<B>) -> TrainOutput<ClassificationOutput<B>> {
         let output = self.forward_step(batch);
         let grads = output.loss.backward();
         TrainOutput::new(self, grads, output)
@@ -269,46 +258,10 @@ impl<B: AutodiffBackend> TrainStep for TrainableClassifier<B> {
 
 impl<B: Backend> InferenceStep for TrainableClassifier<B> {
     type Input = Batch<B>;
-    type Output = SlopOutput<B>;
+    type Output = ClassificationOutput<B>;
 
-    fn step(&self, batch: Batch<B>) -> SlopOutput<B> {
+    fn step(&self, batch: Batch<B>) -> ClassificationOutput<B> {
         self.forward_step(batch)
-    }
-}
-
-impl<B: Backend> ItemLazy for SlopOutput<B> {
-    type ItemSync = SlopOutput<burn::backend::Flex>;
-
-    fn sync(self) -> Self::ItemSync {
-        let [loss, logits, targets] = Transaction::default()
-            .register(self.loss)
-            .register(self.logits)
-            .register(self.targets)
-            .execute()
-            .try_into()
-            .expect("Correct amount of tensor data");
-        let device = &burn::backend::flex::FlexDevice;
-        SlopOutput {
-            loss: Tensor::from_data(loss, device),
-            logits: Tensor::from_data(logits, device),
-            targets: Tensor::from_data(targets, device),
-        }
-    }
-}
-
-impl<B: Backend> Adaptor<LossInput<B>> for SlopOutput<B> {
-    fn adapt(&self) -> LossInput<B> {
-        LossInput::new(self.loss.clone())
-    }
-}
-
-impl<B: Backend> Adaptor<AurocInput<B>> for SlopOutput<B> {
-    /// Burn's AUROC metric softmaxes a `[batch, 2]` output and reads class 1, so `[0, logit]`
-    /// hands it exactly `sigmoid(logit)`.
-    fn adapt(&self) -> AurocInput<B> {
-        let [n] = self.logits.dims();
-        let outputs = Tensor::stack::<2>(vec![self.logits.zeros_like(), self.logits.clone()], 1);
-        AurocInput::new(outputs, self.targets.clone().int().reshape([n]))
     }
 }
 
@@ -356,6 +309,20 @@ pub fn roc_auc(labels: &[f32], scores: &[f32]) -> f64 {
     (pos_rank_sum - (n_pos * (n_pos + 1)) as f64 / 2.0) / (n_pos * n_neg) as f64
 }
 
+/// Extract `(labels, document logits)` from a step output, for the evaluation-side [`roc_auc`].
+///
+/// Column 1 of the `[batch, 2]` output is the raw document logit (column 0 is the constant zero
+/// [`TrainableClassifier::forward_step`] adds for the metric contract).
+#[must_use]
+pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Vec<f32>) {
+    let [n, _] = output.output.dims();
+    let logits = output.output.clone().slice([0..n, 1..2]).reshape([n]);
+    (
+        output.targets.clone().float().into_data().to_vec().unwrap(),
+        logits.into_data().to_vec().unwrap(),
+    )
+}
+
 // --------------------------------------------------------------------------------------------
 // Training entry point
 // --------------------------------------------------------------------------------------------
@@ -387,7 +354,9 @@ pub fn train<B: AutodiffBackend>(
 ) -> LearningResult<TrainableClassifier<B::InnerBackend>> {
     use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
     use burn::train::metric::store::{Aggregate, Direction, Split};
-    use burn::train::metric::{AurocMetric, IterationSpeedMetric, LearningRateMetric, LossMetric};
+    use burn::train::metric::{
+        AccuracyMetric, AurocMetric, IterationSpeedMetric, LearningRateMetric, LossMetric,
+    };
     use burn::train::{
         Learner, MetricEarlyStoppingStrategy, StoppingCondition, SupervisedTraining,
     };
@@ -419,6 +388,8 @@ pub fn train<B: AutodiffBackend>(
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .metric_valid_numeric(auroc)
+        .metric_train_numeric(AccuracyMetric::new())
+        .metric_valid_numeric(AccuracyMetric::new())
         .metric_train_numeric(LearningRateMetric::new())
         .metric_train(IterationSpeedMetric::new())
         .with_file_checkpointer(NamedMpkFileRecorder::<FullPrecisionSettings>::new())
@@ -627,8 +598,7 @@ mod tests {
             &device,
         );
         let output = result.model.forward_step(batch);
-        let logits: Vec<f32> = output.logits.into_data().to_vec().unwrap();
-        let labels: Vec<f32> = output.targets.into_data().to_vec().unwrap();
+        let (labels, logits) = doc_scores(&output);
         let auc = roc_auc(&labels, &logits);
 
         // Diagnostics: train-split AUC of the returned model.
@@ -640,11 +610,8 @@ mod tests {
             make_docs(256, 0),
             &device,
         );
-        let train_out = result.model.forward_step(train_batch);
-        let train_auc = roc_auc(
-            &train_out.targets.into_data().to_vec::<f32>().unwrap(),
-            &train_out.logits.into_data().to_vec::<f32>().unwrap(),
-        );
+        let (train_labels, train_logits) = doc_scores(&result.model.forward_step(train_batch));
+        let train_auc = roc_auc(&train_labels, &train_logits);
         eprintln!("DIAG returned-model AUC: train={train_auc:.4} valid={auc:.4}");
 
         assert!(

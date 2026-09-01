@@ -172,7 +172,7 @@ fn main() {
             let output = trainable.forward_step(batch.clone());
             let grads = GradientsParams::from_grads(output.loss.backward(), &trainable);
             trainable = optim.step(config.lr, trainable.clone(), grads);
-            black_box(output.logits.into_data());
+            black_box(output.output.into_data());
             black_box(output.targets.into_data());
             black_box(output.loss.into_scalar());
         });
