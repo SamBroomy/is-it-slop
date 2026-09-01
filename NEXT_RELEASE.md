@@ -219,21 +219,43 @@ Open items, in order:
       script over the inference Python bindings once those run the Burn model; the notebooks
       retire then.
 - [ ] **Artifact contract**: weight formats decided and emitted — `model.safetensors` is the
-      canonical shipped artifact (inspectable, consistent with the vocabulary), `model.bpk` the
-      zero-copy-embeddable Burn-native store (`BurnpackStore::from_static`; safetensors embeds
-      via `from_bytes` with one ~4.6MB memcpy at startup, irrelevant at this size), and
-      `model.f16.safetensors` the half-size candidate whose validation-AUC cost is measured
-      in-run (`results.json` `artifact_checks`). Q8 min-max quantization is measured in-run too
-      but not yet emitted; adopting it (or f16) as *the* shipped form is an eval-gated decision.
-      Remaining: the inference-crate swap itself (build.rs `REQUIRED_ARTIFACTS`, the four
-      statics, justfile `REQUIRED_FILES`, `MODEL_VERSION` 4.0.0), and optionally shrinking the
-      vocabulary LUT from i32 to u16 (~800KB -> ~400KB, breaking). Checkpoints stay MessagePack
-      until the 0.22 migration — the `Learner` checkpointer takes a `Recorder`, which burn-store
-      does not implement.
-- [ ] **CutMix** remains unported pending the chunk-output decision (its deltas are inside
-      noise). Long-document splitting does not conflict with it — splitting feeds more
-      single-source grids; CutMix splices across documents for per-chunk labels — but porting it
-      needs `Batch` to carry chunk labels instead of deriving them from the document label.
+      canonical shipped artifact (inspectable, consistent with the vocabulary; embeds via
+      `from_bytes` with one ~4.6MB memcpy at startup, irrelevant at this size);
+      `model.f16.safetensors` is the half-size candidate; `model.bpk` is **local-only, never
+      uploaded** (zero-copy embedding option, checkpoint format once the Burn version allows —
+      until then checkpoints stay MessagePack because the `Learner` checkpointer takes a
+      `Recorder`, which burn-store does not implement). The decision contract is *calibrated*:
+      inference computes `sigmoid(logit / T)` with `calibration_temperature.txt` and classifies
+      at `classification_threshold.txt`, both fit on validation in calibrated probability space.
+      Uncertainty contract: calibrated distance-from-0.5 is the confidence number (strongest
+      error-ranker); chunk-probability dispersion is the secondary "mixed content" indicator,
+      paired with per-chunk highlighting; the doc-vs-chunk-agreement signal was measured weakest
+      and dropped. The `check` subcommand re-scores full/f16/Q8 on validation and folds
+      `artifact_checks` into `results.json` — run it after every training run; adopting f16 or
+      Q8 as *the* shipped form is that eval-gated decision. Remaining: the inference-crate swap
+      itself (build.rs `REQUIRED_ARTIFACTS`, the four statics, justfile `REQUIRED_FILES`,
+      `MODEL_VERSION` 4.0.0), and optionally shrinking the vocabulary LUT from i32 to u16
+      (~800KB -> ~400KB, breaking).
+- [ ] **CutMix**: port after the splitting re-baseline lands, as its own arm. The design, settled
+      in review: chunk isolation makes spliced grids *clean* supervision for the chunk head (it
+      sees only its own chunk, so per-chunk labels from different source documents are exact);
+      the distribution risk lands on the document head, bounded the way Python bounded it — only
+      ~15% of batches spliced, and the spliced document's target becomes *soft* (the fraction of
+      AI chunks), which is the honest label for a mixed document. Porting needs `Batch` to carry
+      chunk labels (and a soft document label) instead of deriving them, plus the splice in the
+      batcher. Judge it by chunk-level quality — the dispersion signal and mixed-content behavior
+      — not document AUC, where its deltas were already measured inside noise.
+- [ ] **Training cost is now the binding constraint**, and it reshapes the model-size strategy.
+      Burn trains ~2.4x slower than the old torch path, and quantization being measured as nearly
+      free (f16 and Q8-matrices cost ~1e-6 and ~1e-4 validation AUC on the smoke; confirm at full
+      scale via `check`) means the balanced/minimal picks lose their reason to exist: train the
+      accuracy model once, ship it at f16 (~2.3MB) or Q8 (~1.3MB of matrices) instead of training
+      smaller models. It also opens the larger-embedding arm the campaign priced out — train big,
+      quantize down. Practical cadence: `--limit` runs for iteration, full/larger runs scheduled
+      long (overnight or weekend). One honest caveat: on Burn 0.21 quantization shrinks the
+      *artifact only* — there are no integer compute kernels, tensors dequantize for every op —
+      so expect no inference speedup from Q8 today (if anything a small slowdown); the win is
+      size and memory.
 
 ## Versioning
 
