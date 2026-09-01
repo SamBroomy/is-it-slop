@@ -93,7 +93,7 @@ impl LrScheduler for WarmupCosine {
         } else {
             let progress = (s - self.warmup_steps) as f64
                 / (self.total_steps.saturating_sub(self.warmup_steps)).max(1) as f64;
-            0.5 * (1.0 + (std::f64::consts::PI * progress).cos())
+            f64::midpoint(1.0, (std::f64::consts::PI * progress).cos())
         };
         self.base_lr * lambda
     }
@@ -278,6 +278,134 @@ pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Ve
         output.targets.clone().float().into_data().to_vec().unwrap(),
         logits.into_data().to_vec().unwrap(),
     )
+}
+
+// --------------------------------------------------------------------------------------------
+// Progress rendering
+// --------------------------------------------------------------------------------------------
+
+/// A quiet progress renderer for non-interactive runs.
+///
+/// Burn's fallback `CliMetricsRenderer` (chosen whenever stdout is not a terminal) debug-prints
+/// the full progress struct **every iteration**; this prints one compact line per
+/// [`Self::INTERVAL`] instead. Per-epoch metrics still land in the artifact dir's metric logs
+/// and the end-of-run summary.
+pub struct ThrottledRenderer {
+    last_print: Option<std::time::Instant>,
+    last_items: usize,
+}
+
+impl ThrottledRenderer {
+    /// Seconds between progress lines.
+    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Create a renderer that prints its first line immediately, then every [`Self::INTERVAL`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            last_print: None,
+            last_items: 0,
+        }
+    }
+
+    fn render(&mut self, split: &str, item: &burn::train::renderer::TrainingProgress) {
+        use std::fmt::Write;
+
+        let now = std::time::Instant::now();
+        let elapsed = self.last_print.map(|t| now.duration_since(t));
+        if elapsed.is_some_and(|e| e < Self::INTERVAL) {
+            return;
+        }
+
+        let global = &item.global_progress;
+        let mut line = format!(
+            "{split} {}/{} epochs",
+            global.items_processed, global.items_total
+        );
+        if let Some(progress) = &item.progress {
+            let _ = write!(
+                line,
+                " | {}/{} items",
+                progress.items_processed, progress.items_total
+            );
+            // Items/s over the printing interval; skip across epoch wraps and split switches.
+            if let (Some(elapsed), true) = (elapsed, progress.items_processed >= self.last_items) {
+                let rate = (progress.items_processed - self.last_items) as f64
+                    / elapsed.as_secs_f64().max(1e-9);
+                if rate > 0.0 {
+                    let _ = write!(line, " | {rate:.0} items/s");
+                }
+            }
+            self.last_items = progress.items_processed;
+        }
+        if let Some(iteration) = item.iteration {
+            let _ = write!(line, " | iteration {iteration}");
+        }
+        println!("{line}");
+        self.last_print = Some(now);
+    }
+}
+
+impl Default for ThrottledRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl burn::train::renderer::MetricsRendererTraining for ThrottledRenderer {
+    fn update_train(&mut self, _state: burn::train::renderer::MetricState) {}
+
+    fn update_valid(&mut self, _state: burn::train::renderer::MetricState) {}
+
+    fn render_train(
+        &mut self,
+        item: burn::train::renderer::TrainingProgress,
+        _progress_indicators: Vec<burn::train::renderer::ProgressType>,
+    ) {
+        self.render("train", &item);
+    }
+
+    fn render_valid(
+        &mut self,
+        item: burn::train::renderer::TrainingProgress,
+        _progress_indicators: Vec<burn::train::renderer::ProgressType>,
+    ) {
+        self.render("valid", &item);
+    }
+}
+
+impl burn::train::renderer::MetricsRendererEvaluation for ThrottledRenderer {
+    fn update_test(
+        &mut self,
+        _name: burn::train::renderer::EvaluationName,
+        _state: burn::train::renderer::MetricState,
+    ) {
+    }
+
+    fn render_test(
+        &mut self,
+        item: burn::train::renderer::EvaluationProgress,
+        _progress_indicators: Vec<burn::train::renderer::ProgressType>,
+    ) {
+        let now = std::time::Instant::now();
+        if self
+            .last_print
+            .is_some_and(|t| now.duration_since(t) < Self::INTERVAL)
+        {
+            return;
+        }
+        println!(
+            "test {}/{} items",
+            item.progress.items_processed, item.progress.items_total
+        );
+        self.last_print = Some(now);
+    }
+}
+
+impl burn::train::renderer::MetricsRenderer for ThrottledRenderer {
+    fn manual_close(&mut self) {}
+
+    fn register_metric(&mut self, _definition: burn::train::metric::MetricDefinition) {}
 }
 
 // --------------------------------------------------------------------------------------------

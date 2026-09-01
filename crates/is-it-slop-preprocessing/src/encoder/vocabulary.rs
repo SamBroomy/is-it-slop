@@ -129,8 +129,8 @@ impl Vocabulary {
         }
         let mut lut = Vec::with_capacity(O200K_CEILING);
         let mut max = 0i32;
-        for chunk in view.data().chunks_exact(4) {
-            let value = i32::from_le_bytes(chunk.try_into().expect("4-byte chunks"));
+        for chunk in view.data().as_chunks::<4>().0 {
+            let value = i32::from_le_bytes(*chunk);
             if !(0..=i32::from(u16::MAX)).contains(&value) {
                 return Err(EncoderError::Contract(format!(
                     "token_to_row value {value} outside the compact row range"

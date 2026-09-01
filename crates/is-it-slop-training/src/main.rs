@@ -89,9 +89,13 @@ mod backend;
 type Inner = <backend::Selected as AutodiffBackend>::InnerBackend;
 
 fn main() {
+    // Burn and CubeCL log per-iteration progress and autotune chatter at INFO; keep the console
+    // for this crate's own reporting (RUST_LOG still overrides).
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "info,burn_train=warn,burn_fusion=warn,cubecl=warn,cubecl_runtime=warn".into()
+            }),
         )
         .init();
 
@@ -377,6 +381,14 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
     )
     .expect("saving encoder config");
 
+    // Interactive runs keep Burn's TUI dashboard; redirected/nohup'd runs get one quiet
+    // progress line per interval instead of the fallback renderer's per-iteration dump.
+    let renderer = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        None
+    } else {
+        Some(is_it_slop_training::training::ThrottledRenderer::new())
+    };
+
     let started = std::time::Instant::now();
     let result = train::<B>(
         artifact_dir,
@@ -385,7 +397,7 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
         dataloader_train,
         dataloader_valid,
         device,
-        None::<burn::train::renderer::CliMetricsRenderer>,
+        renderer,
     );
     let train_seconds = started.elapsed().as_secs_f64();
 

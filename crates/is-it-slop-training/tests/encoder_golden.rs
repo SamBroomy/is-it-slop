@@ -31,8 +31,10 @@ fn encoding_contract_is_frozen() {
     assert_eq!(view.dtype(), safetensors::Dtype::I64);
     let expected: Vec<i64> = view
         .data()
-        .chunks_exact(8)
-        .map(|b| i64::from_le_bytes(b.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| i64::from_le_bytes(*b))
         .collect();
     let grid_len = view.shape()[1] * view.shape()[2];
     assert_eq!(texts.len(), view.shape()[0]);
