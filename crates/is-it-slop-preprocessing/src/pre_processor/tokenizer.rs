@@ -7,8 +7,6 @@
 //! - Sequential: smaller workloads (avoids thread overhead)
 
 use bpe_openai::o200k_base;
-#[cfg(feature = "progress-bars")]
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rayon::slice::ParallelSlice; // For par_chunks
 use tracing::{debug, instrument};
@@ -23,22 +21,6 @@ const MIN_TEXTS_FOR_PARALLEL: usize = 1_000;
 /// Minimum total bytes to consider parallelization (~1MB)
 const MIN_BYTES_FOR_PARALLEL: usize = 1_000_000;
 
-#[cfg(feature = "progress-bars")]
-fn progress_bar_setup(
-    len: usize,
-    message: impl Into<std::borrow::Cow<'static, str>>,
-) -> ProgressBar {
-    let pb = ProgressBar::new(len as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-            .unwrap()
-            .progress_chars("#>-"),
-    );
-    pb.set_message(message);
-    pb
-}
-
 #[instrument(level = "debug", skip(texts), fields(num_texts = texts.len()))]
 fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     debug!(num_texts = texts.len(), "Using parallel tokenization");
@@ -48,26 +30,10 @@ fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     // Process ~100-1000 chunks instead of creating millions of parallel tasks
     let chunk_size = (texts.len() / 100).max(1000);
 
-    #[cfg(feature = "progress-bars")]
-    let pb = progress_bar_setup(texts.len(), "Tokenizing texts in parallel");
-
     let token_chunks: Vec<Vec<Vec<u32>>> = texts
         .par_chunks(chunk_size)
-        .map(|chunk| {
-            chunk
-                .iter()
-                .map(|text| {
-                    let tokens = bpe.encode(text);
-                    #[cfg(feature = "progress-bars")]
-                    pb.inc(1);
-                    tokens
-                })
-                .collect()
-        })
+        .map(|chunk| chunk.iter().map(|text| bpe.encode(text)).collect())
         .collect();
-
-    #[cfg(feature = "progress-bars")]
-    pb.finish_with_message("Parallel tokenization complete");
 
     // Flatten chunks into single Vec
     token_chunks.into_iter().flatten().collect()
@@ -125,37 +91,9 @@ pub fn tokenize<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     }
 }
 
-/// Attempt to decode token IDs back to text, returning None on failure.
-///
-/// Used for vocabulary inspection that can tolerate decode failures without panicking.
-#[must_use]
-pub fn attempt_reverse_tokenize(tokens: &[u32]) -> Option<String> {
-    if tokens.is_empty() {
-        return Some(String::new());
-    }
-    let bpe = o200k_base();
-    bpe.decode(tokens)
-}
-/// Decode token IDs back to text.
-///
-/// Used for vocabulary inspection.
-#[must_use]
-pub fn reverse_tokenize(tokens: &[u32]) -> String {
-    attempt_reverse_tokenize(tokens).unwrap_or_else(|| {
-        // Log the error with token IDs for debugging
-        tracing::warn!(
-            tokens = ?tokens,
-            "Failed to decode token IDs, using replacement character"
-        );
-        // Return a debug-friendly representation instead of !!
-        format!("[DECODE_ERROR: {tokens:?}]")
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pre_processor::{CountVectorizer, VectorizerParams};
     #[test]
     fn test_tokenize_basic() {
         let texts = vec!["Hello world", "Test"];
@@ -170,59 +108,12 @@ mod tests {
         assert_eq!(tokens[0].len(), 0);
     }
 
-    // #[test]
-    // fn test_reverse_tokenize_round_trip() {
-    //     let text = "Hello world";
-    //     let tokens = tokenize(&[text]);
-    //     let result = reverse_tokenize(&tokens[0]);
-    //     assert!(result.contains("Hello"));
-    // }
-
     #[test]
     fn test_tokenize_deterministic() {
         let texts = vec!["test"];
         let tokens1 = tokenize(&texts);
         let tokens2 = tokenize(&texts);
         assert_eq!(tokens1, tokens2);
-    }
-    #[test]
-    fn test_vocabulary_no_decode_artifacts() {
-        let texts = vec!["Hello world", "The quick brown fox", "Test sample data"];
-        let params = VectorizerParams::new(1.0, 1.0, false);
-        let vectorizer = CountVectorizer::fit(&texts, params);
-
-        let vocab = vectorizer.vocabulary();
-
-        // Check for decode artifacts
-        let bad_entries: Vec<_> = vocab
-            .iter()
-            .filter(|(text, _)| text.contains("!!") || text.is_empty())
-            .collect();
-
-        assert!(
-            bad_entries.is_empty(),
-            "Found {} vocabulary entries with decode artifacts:\n{:#?}",
-            bad_entries.len(),
-            bad_entries
-        );
-    }
-
-    #[test]
-    fn test_reverse_tokenize_round_trip() {
-        let texts = vec!["Hello world", "Test 123"];
-        let tokenized = tokenize(&texts);
-
-        for (original, tokens) in texts.iter().zip(&tokenized) {
-            let decoded = reverse_tokenize(tokens);
-            println!("Original: '{original}'");
-            println!("Tokens: {tokens:?}");
-            println!("Decoded: '{decoded}'");
-
-            assert!(
-                !decoded.contains("!!"),
-                "Decoded text '{decoded}' contains '!!' artifact"
-            );
-        }
     }
 
     // Threshold boundaries
@@ -602,78 +493,6 @@ mod tests {
             assert_eq!(
                 seq_tokens, chunked_tokens,
                 "Document {i}: token sequences don't match"
-            );
-        }
-    }
-
-    #[test]
-    fn test_reverse_tokenize_empty() {
-        let result = reverse_tokenize(&[]);
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn test_reverse_tokenize_single_token() {
-        // Token ID 100 should decode to something valid
-        let tokens = vec![100];
-        let result = reverse_tokenize(&tokens);
-        assert!(!result.is_empty());
-        assert!(!result.contains("!!"));
-    }
-
-    #[test]
-    fn test_attempt_reverse_tokenize_success() {
-        // Test successful decode path
-        let text = "Hello world";
-        let tokens = tokenize(&[text]);
-        let result = attempt_reverse_tokenize(&tokens[0]);
-
-        // Should successfully decode
-        assert!(result.is_some());
-        let decoded = result.unwrap();
-        assert!(!decoded.is_empty());
-    }
-
-    #[test]
-    fn test_attempt_reverse_tokenize_empty() {
-        // Empty tokens should return empty string
-        let result = attempt_reverse_tokenize(&[]);
-        assert_eq!(result, Some(String::new()));
-    }
-
-    #[test]
-    fn test_chunked_reverse_tokenization_preserves_content() {
-        use std::collections::HashSet;
-
-        use crate::pre_processor::TokenChunker;
-
-        let text = "Photosynthesis utilizes chlorophyll molecules.";
-        let tokens = tokenize(&[text])[0].clone();
-
-        let chunker = TokenChunker::default();
-        let chunks = chunker.chunk(&tokens);
-
-        // Decode each chunk
-        let chunk_texts: Vec<String> = chunks.iter().map(|chunk| reverse_tokenize(chunk)).collect();
-
-        // Verify: all words from original appear in at least one chunk
-        let original_words: HashSet<_> = text
-            .split_whitespace()
-            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
-            .filter(|w| !w.is_empty())
-            .collect();
-
-        let reconstructed_text = chunk_texts.join(" ");
-        let reconstructed_words: HashSet<_> = reconstructed_text
-            .split_whitespace()
-            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
-            .filter(|w| !w.is_empty())
-            .collect();
-
-        for word in &original_words {
-            assert!(
-                reconstructed_words.contains(word),
-                "Word '{word}' lost during chunking. Original: '{text}', Reconstructed: '{reconstructed_text}'"
             );
         }
     }

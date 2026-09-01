@@ -1,10 +1,9 @@
 //! Integration tests for the is-it-slop inference pipeline.
 //!
 //! These tests validate the full end-to-end pipeline from text input to prediction,
-//! including text cleaning, tokenization, chunking, vectorization, ONNX inference,
-//! and aggregation.
+//! including text cleaning, tokenization, encoding, and the Burn forward pass.
 
-use is_it_slop::{AggregationMethod, Classification, MODEL_VERSION, Predictor, Threshold};
+use is_it_slop::{Classification, MODEL_VERSION, Predictor, Threshold};
 
 /// Test basic single-text prediction
 #[test]
@@ -46,11 +45,11 @@ fn test_predict_single_text() {
         "Should have at least one chunk prediction"
     );
 
-    // Verify chunk agreement is in valid range
+    // Verify the calibrated confidence is in valid range
+    let confidence = prediction.confidence();
     assert!(
-        prediction.chunk_agreement >= 0.5 && prediction.chunk_agreement <= 1.0,
-        "Chunk agreement should be in [0.5, 1.0], got {}",
-        prediction.chunk_agreement
+        (0.0..=1.0).contains(&confidence),
+        "Confidence should be in [0.0, 1.0], got {confidence}"
     );
 }
 
@@ -71,10 +70,10 @@ fn test_predict_short_text() {
         1,
         "Short text should produce exactly one chunk"
     );
-    // Single chunk should have perfect agreement
-    assert_eq!(
-        prediction.chunk_agreement, 1.0f32,
-        "Single chunk should have perfect agreement"
+    // Single chunk has no dispersion
+    assert!(
+        prediction.chunk_dispersion().is_none(),
+        "Single chunk should have no dispersion"
     );
 }
 
@@ -105,11 +104,13 @@ fn test_predict_long_text() {
         );
     }
 
-    // Chunk agreement should be less than 1.0 for multiple chunks (unless perfectly aligned)
+    // Multi-chunk documents report a dispersion
+    let dispersion = prediction
+        .chunk_dispersion()
+        .expect("multi-chunk document should have a dispersion");
     assert!(
-        prediction.chunk_agreement >= 0.5 && prediction.chunk_agreement <= 1.0,
-        "Chunk agreement should be in valid range, got {}",
-        prediction.chunk_agreement
+        (0.0..=0.5).contains(&dispersion),
+        "Chunk dispersion should be a probability std dev, got {dispersion}"
     );
 }
 
@@ -188,36 +189,6 @@ fn test_predict_deterministic() {
         result1.chunk_predictions.len(),
         result2.chunk_predictions.len(),
         "Chunk counts should be deterministic"
-    );
-}
-
-/// Test different aggregation methods
-#[test]
-fn test_aggregation_methods() {
-    // Use text long enough to produce multiple chunks
-    let text = "word example test sample ".repeat(50);
-
-    let result_mean = Predictor::new()
-        .with_aggregation_method(AggregationMethod::Mean)
-        .predict(&text)
-        .unwrap();
-    let result_max = Predictor::new()
-        .with_aggregation_method(AggregationMethod::Max)
-        .predict(&text)
-        .unwrap();
-    let result_weighted = Predictor::new().predict(&text).unwrap();
-
-    // All should succeed and produce valid results
-    assert!(result_mean.prediction.ai_probability() >= 0.0);
-    assert!(result_max.prediction.ai_probability() >= 0.0);
-    assert!(result_weighted.prediction.ai_probability() >= 0.0);
-
-    // If chunks have different predictions, aggregation methods may differ
-    // All should have the same chunk predictions (aggregation happens after)
-    assert_eq!(
-        result_mean.chunk_predictions.len(),
-        result_max.chunk_predictions.len(),
-        "Same input should produce same chunk count"
     );
 }
 
@@ -364,11 +335,10 @@ fn test_confidence_metrics() {
     let predictor = Predictor::new();
     let result = predictor.predict(text).unwrap();
 
-    // Confidence should be affected by entropy and chunk agreement
-    // Just verify it's in valid range
+    let metrics = result.confidence_metrics();
     assert!(
-        result.chunk_agreement >= 0.5 && result.chunk_agreement <= 1.0,
-        "Chunk agreement should be in [0.5, 1.0]"
+        (0.0..=1.0).contains(&metrics.confidence),
+        "Confidence should be in [0.0, 1.0]"
     );
 }
 

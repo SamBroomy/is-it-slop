@@ -96,19 +96,28 @@ class Prediction:
         return self._inner.classification  # type: ignore[return-value]
 
     @property
+    def confidence(self) -> float:
+        """Calibrated confidence in the prediction (0.0 to 1.0).
+
+        The probability is temperature-calibrated, so its distance from the 50%
+        coin-flip point is meaningful: 0.0 means the model is guessing, 1.0 means
+        it is certain either way.
+        """
+        return self._inner.confidence
+
+    @property
     def num_chunks(self) -> int:
-        """Number of text chunks processed (usually 1 for short texts, more for long)."""
+        """Number of 192-token chunks the document produced (1 for short texts)."""
         return self._inner.num_chunks
 
     @property
-    def chunk_agreement(self) -> float:
-        """Agreement score across chunks (0.5 to 1.0).
+    def chunk_dispersion(self) -> float | None:
+        """Standard deviation of per-chunk AI probabilities.
 
-        1.0 means all chunks agree on classification.
-        0.5 means chunks are evenly split.
-        For single-chunk texts, this is always 1.0.
+        High dispersion means chunks disagree — a possible sign of mixed
+        human/AI content. None for single-chunk texts.
         """
-        return self._inner.chunk_agreement
+        return self._inner.chunk_dispersion
 
     def __repr__(self) -> str:
         """Return a detailed string representation.

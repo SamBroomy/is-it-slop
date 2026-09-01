@@ -186,10 +186,118 @@ It does far too much at import time:
 Wanted: paths and constants as plain values or a small function, no argv parsing, no I/O and no
 directory creation at import, and one source of truth for the model version shared with `build.rs`.
 
+### Port dataset curation to Rust
+
+`notebooks/dataset_curation.py` is **currently broken**: it imported `TextCleaner`/`tokenize` from
+the preprocessing Python bindings, which were removed with the rest of the Python training env
+(the training-time cleaning and tokenization it needs still exist in Rust — only the bindings are
+gone). It is the last Python step in the pipeline: download the source datasets (kagglehub,
+HuggingFace), clean, dedupe, stratify, and write the released `data/<version>` parquet splits.
+Port it as a `dataset-curation` subcommand or crate alongside `is-it-slop-training` — polars is
+already a workspace dependency, and the cleaner/tokenizer are one crate away. Until then, curating
+a new dataset version means either resurrecting the bindings locally (`git checkout 9725e29 --
+crates/is-it-slop-preprocessing python/is-it-slop-preprocessing` and `maturin develop`) or calling
+tiktoken directly from Python. The existing `data/3.0.0` splits are unaffected — training runs
+read the released parquets and never re-curate.
+
+## Burn training port
+
+The training pipeline is ported to Rust (`crates/is-it-slop-training`, Burn 0.21) and **passed the
+parity gate**: one full frozen-recipe run landed at val AUC 0.9960 / test AUC 0.9967 against
+Python's 0.9961 / 0.9968 — inside seed noise (EXPERIMENTS.md, "Burn training port"). The Rust
+implementation is the reference now; encoder and vocabulary behaviour is frozen by contract tests
+(`tests/encoder_golden.rs`, `tests/vocab_parity.rs`) because trained artifacts depend on it, and
+the PyTorch weight-parity scaffolding is retired. The binary
+(`cargo run -p is-it-slop-training --features metal`) trains with the TUI dashboard and prints the
+full-split AUCs; backends are additive features (metal/cuda/rocm/vulkan/wgpu/tch/remote/flex,
+ndarray default) with `f16`/`flex32` element options.
+
+Open items, in order:
+
+- [x] **Throughput: understood.** Burn trains ~2.4x slower than torch-MPS and the decomposition
+      in EXPERIMENTS.md ("Training throughput") pins the whole gap on the autodiff-generated
+      backward pass (~97 vs ~31 ms/iter): forward is at kernel parity (12.2 vs 11.4 ms), and
+      harness, dataloader, optimizer, metric sync, and transfers are all noise. It reproduces on
+      burn-tch, so it is Burn's backward decomposition, not CubeCL — fixing it means upstream
+      Burn work, not changes here. Accepted for now: training is a per-release one-off. If epoch
+      time ever matters, the only in-repo lever left is `--features metal,f16` (halves backward
+      bandwidth too; needs a parity re-check since the recipe was tuned at f32). Rerun the
+      benches with `examples/step_bench.rs` + `notebooks/step_bench.py`. Known sharp edge: a
+      forward-only loop on the `Autodiff` backend leaks and gets SIGKILLed — validation belongs
+      on the inner backend.
+- [ ] **Evaluation harness**: threshold fitting (best-F1, precision>=0.99) and an uncertainty
+      block (temperature calibration plus three error-ranking confidence signals: calibrated
+      margin, chunk dispersion, doc-vs-chunk agreement) are ported and land in `results.json`
+      each run. Still Python-only: per-dataset and per-length breakdowns (`compare_models.py`) —
+      the per-length one is also how the long-document-splitting arm gets judged. Plan: a light
+      script over the inference Python bindings once those run the Burn model; the notebooks
+      retire then.
+- [ ] **Artifact contract**: weight formats decided and emitted — `model.safetensors` is the
+      canonical shipped artifact (inspectable, consistent with the vocabulary; embeds via
+      `from_bytes` with one ~4.6MB memcpy at startup, irrelevant at this size);
+      `model.f16.safetensors` is the half-size candidate; `model.bpk` is **local-only, never
+      uploaded** (zero-copy embedding option, checkpoint format once the Burn version allows —
+      until then checkpoints stay MessagePack because the `Learner` checkpointer takes a
+      `Recorder`, which burn-store does not implement). The decision contract is *calibrated*:
+      inference computes `sigmoid(logit / T)` with `calibration_temperature.txt` and classifies
+      at `classification_threshold.txt`, both fit on validation in calibrated probability space.
+      Uncertainty contract: calibrated distance-from-0.5 is the confidence number (strongest
+      error-ranker); chunk-probability dispersion is the secondary "mixed content" indicator,
+      paired with per-chunk highlighting; the doc-vs-chunk-agreement signal was measured weakest
+      and dropped. The `check` subcommand re-scores full/f16/Q8 on validation and folds
+      `artifact_checks` into `results.json` — run it after every training run; adopting f16 or
+      Q8 as *the* shipped form is that eval-gated decision. **The inference swap is done**:
+      `is-it-slop` embeds `model.f16.safetensors` (build.rs `MODEL_VERSION` 4.0.0) and runs it
+      on Burn's Flex CPU backend — ort, TF-IDF, sprs, and `AggregationMethod` are gone; the
+      network shares one definition via the `is-it-slop-model` crate and one text→grid path via
+      `is-it-slop-preprocessing::encoder`. Long documents are no longer truncated at inference
+      (dynamic chunk axis, capped at 32 windows ≈ 49k tokens) — a deliberate behavior change to
+      quantify on the full run's long-doc band, since T and the threshold were fit at the 8-chunk
+      eval encoding. Still optional: shrinking the vocabulary LUT from i32 to u16
+      (~800KB -> ~400KB, breaking).
+- [ ] **Resume a training run.** A killed or crashed run currently restarts from scratch even
+      though the `Learner` writes full-precision checkpoints every epoch — wire up
+      checkpoint resume (a `--resume`/`--from-checkpoint` flag on `train`) so a multi-hour full
+      run survives interruption. Care points: the LR schedule and early-stopping state must
+      resume from the same step, and the encoded-split/vocabulary must be rebuilt identically
+      (seeded, so they are).
+- [ ] **Improve the training CLI.** The `train` subcommand exposes a fraction of what the Python
+      trainer took (the richer clap surface was explicitly deferred): batch size, epochs,
+      patience, LR, chunk-loss weight, dropout are all recompile-only today. Bring the
+      `TrainingConfig` knobs up as flags with the frozen recipe as defaults, and make `check`
+      accept a specific weights file rather than assuming the artifact-dir layout.
+- [ ] **Regression benchmarks** (late-game want): a small runnable suite that pins today's
+      numbers so upgrades (Burn 0.22, toolchains) can't silently regress — training throughput
+      (`examples/step_bench.rs` already exists; give it a recorded baseline), inference
+      latency/throughput on the Flex backend, and end-model quality via a fixed `--limit` run
+      with a tolerance band.
+- [ ] **CutMix**: port after the splitting re-baseline lands, as its own arm. The design, settled
+      in review: chunk isolation makes spliced grids *clean* supervision for the chunk head (it
+      sees only its own chunk, so per-chunk labels from different source documents are exact);
+      the distribution risk lands on the document head, bounded the way Python bounded it — only
+      ~15% of batches spliced, and the spliced document's target becomes *soft* (the fraction of
+      AI chunks), which is the honest label for a mixed document. Porting needs `Batch` to carry
+      chunk labels (and a soft document label) instead of deriving them, plus the splice in the
+      batcher. Judge it by chunk-level quality — the dispersion signal and mixed-content behavior
+      — not document AUC, where its deltas were already measured inside noise.
+- [ ] **Training cost is now the binding constraint**, and it reshapes the model-size strategy.
+      Burn trains ~2.4x slower than the old torch path, and quantization being measured as nearly
+      free (f16 and Q8-matrices cost ~1e-6 and ~1e-4 validation AUC on the smoke; confirm at full
+      scale via `check`) means the balanced/minimal picks lose their reason to exist: train the
+      accuracy model once, ship it at f16 (~2.3MB) or Q8 (~1.3MB of matrices) instead of training
+      smaller models. It also opens the larger-embedding arm the campaign priced out — train big,
+      quantize down. Practical cadence: `--limit` runs for iteration, full/larger runs scheduled
+      long (overnight or weekend). One honest caveat: on Burn 0.21 quantization shrinks the
+      *artifact only* — there are no integer compute kernels, tensors dequantize for every op —
+      so expect no inference speedup from Q8 today (if anything a small slowdown); the win is
+      size and memory.
+
 ## Versioning
 
 Model artifacts **3.0.0 -> 4.0.0** — breaking: different files, different input shape, no vectorizer.
-`build.rs`, the `model_metadata.json` consumers and the `justfile` release targets all move together.
+`build.rs` and the `justfile` release targets moved together (done); `model_metadata.json` is no
+longer produced or required. The root README still describes the v3 TF-IDF/ONNX architecture and
+quotes v3 numbers — rewrite it alongside the v4 release once the full run's numbers land.
 
 Crate/package **1.0.0** once the contract above is frozen. The hesitation about the label is not the
 model — it is that 1.0.0 implies a stable contract while the three Phase 3 questions are open.

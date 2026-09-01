@@ -54,32 +54,18 @@ fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
 }
 
 const AFTER_LONG_HELP: &str = "\
-\u{1b}[1;33mConfidence Metrics:\u{1b}[0m
-  Confidence metrics range from 0-100%. Higher = more certain.
+\u{1b}[1;33mConfidence:\u{1b}[0m
+  The probability is calibrated (temperature-scaled on the validation split), so its
+  distance from the 50% coin-flip point is a meaningful certainty measure:
 
-  \u{1b}[1mModel\u{1b}[0m       Probability of the predicted class. 50% = coin flip, 100% = certain.
-  \u{1b}[1mSample\u{1b}[0m      Quality of input data. Penalizes very short texts, single chunks,
-              and inconsistent chunk predictions. Low values = get more text.
-  \u{1b}[1mOverall\u{1b}[0m     Model prediction quality × chunk agreement × data adequacy.
-              Use this as the primary confidence indicator.
+  \u{1b}[1mConfidence\u{1b}[0m  0% = the model is guessing, 100% = certain either way.
 
   Use --verbose to also show:
 
-\u{1b}[1mChunk Analysis\u{1b}[0m (multi-chunk documents, >150 tokens):
-    \u{1b}[1mChunks\u{1b}[0m       Number of overlapping 150-token chunks analyzed.
-    \u{1b}[1mAgreement\u{1b}[0m    How consistently chunks agree on classification.
-                1.0 = unanimous, 0.5 = 50/50 split.
-    \u{1b}[1mStd dev\u{1b}[0m      Standard deviation of chunk probabilities.
-
-\u{1b}[1mText Analysis\u{1b}[0m (single-chunk documents, ≤150 tokens):
-    \u{1b}[1mTokens\u{1b}[0m       Number of BPE tokens in the input. Short texts
-                (<75 tokens) produce less reliable predictions.
-
-\u{1b}[1mAdditional Metrics:\u{1b}[0m
-    \u{1b}[1mThreshold\u{1b}[0m    Distance from the classification boundary.
-                100% = far from the decision line, 0% = on the threshold.
-    \u{1b}[1mEntropy\u{1b}[0m      Certainty of the model's probability distribution.
-                100% = highly peaked (confident), 0% = uniform (coin flip).
+\u{1b}[1mChunk Analysis\u{1b}[0m (multi-chunk documents, >192 tokens):
+    \u{1b}[1mChunks\u{1b}[0m       Number of 192-token chunks analyzed.
+    \u{1b}[1mDispersion\u{1b}[0m   Standard deviation of per-chunk AI probabilities.
+                High dispersion = chunks disagree = possible mixed human/AI content.
 ";
 
 fn output_welcome() {
@@ -317,16 +303,6 @@ fn rose_val(text: &str, t: f32) -> String {
         .to_string()
 }
 
-fn steel_val(value: f32) -> String {
-    let t = ((value - 0.5) / 0.5).clamp(0.0, 1.0);
-    let r = (80.0 + t * (180.0 - 80.0)) as u8;
-    let g = (130.0 + t * (220.0 - 130.0)) as u8;
-    let b = (190.0 + t * (255.0 - 190.0)) as u8;
-    format!("{:>5.1}%", value * 100.0)
-        .if_supports_color(owo_colors::Stream::Stdout, |s| s.truecolor(r, g, b))
-        .to_string()
-}
-
 fn metric_val(value: f32) -> String {
     let (r, g, b) = confidence_rgb(value);
     format!("{:>5.1}%", value * 100.0)
@@ -347,7 +323,7 @@ fn output_compact(
 ) {
     let human_prob = prediction.prediction.human_probability();
     let ai_prob = prediction.prediction.ai_probability();
-    let metrics = prediction.confidence_metrics(threshold);
+    let metrics = prediction.confidence_metrics();
     let class = prediction.classification(threshold);
     let other_label = class.opposite();
 
@@ -396,96 +372,41 @@ fn output_compact(
         return;
     }
 
-    if verbose {
-        if prediction.chunk_predictions.len() > 1 {
-            let chunk_info = prediction.chunk_info();
-            println!();
-            println!("{}", section("Chunk Analysis"));
-            let chunks_t = ((chunk_info.num_chunks as f32 - 4.0) / 6.0).clamp(0.0, 1.0);
-            let agreement_t = ((chunk_info.chunk_agreement - 0.5) / 0.5).clamp(0.0, 1.0);
+    if verbose && prediction.chunk_predictions.len() > 1 {
+        let chunk_info = prediction.chunk_info();
+        println!();
+        println!("{}", section("Chunk Analysis"));
+        let chunks_t = ((chunk_info.num_chunks as f32 - 4.0) / 6.0).clamp(0.0, 1.0);
+        println!(
+            "  {:<12} {}",
+            "Chunks",
+            rose_val(&chunk_info.num_chunks.to_string(), chunks_t)
+        );
+        if let Some(dispersion) = chunk_info.chunk_dispersion {
             println!(
                 "  {:<12} {}",
-                "Chunks",
-                rose_val(&chunk_info.num_chunks.to_string(), chunks_t)
-            );
-            println!(
-                "  {:<12} {}",
-                "Agreement",
+                "Dispersion",
                 rose_val(
-                    &format!("{:.1}%", chunk_info.chunk_agreement * 100.0),
-                    agreement_t
+                    &format!("{dispersion:.3}"),
+                    1.0 - (dispersion * 3.0).min(1.0)
                 )
             );
-            if let Some(std_dev) = chunk_info.chunk_std_dev {
-                println!(
-                    "  {:<12} {}",
-                    "Std dev",
-                    rose_val(&format!("{std_dev:.3}"), 0.5)
-                );
-            }
-            if chunk_info.chunk_agreement < 0.7 {
-                println!();
-                println!("{}", warn("Chunks disagree — mixed content detected"));
-            }
-        } else if let Some(tokens) = prediction.single_chunk_token_count {
-            println!();
-            println!("{}", section("Text Analysis"));
-            let tokens_t =
-                (tokens as f32 / crate::model::TOKEN_CHUNKER.chunk_size as f32).clamp(0.0, 1.0);
-            println!(
-                "  {:<12} {}",
-                "Tokens",
-                rose_val(&format!("{tokens} (single chunk)"), tokens_t)
-            );
-            if tokens < 30 {
-                println!();
-                println!("{}", warn("Very short text — prediction highly unreliable"));
-            } else if tokens < 75 {
-                println!();
-                println!("{}", warn("Short text — limited statistical reliability"));
-            }
         }
-
-        println!();
-        println!("{}", section("Additional Metrics"));
-        println!(
-            "  {:<12} {}",
-            "Threshold",
-            steel_val(metrics.threshold_distance)
-        );
-        println!(
-            "  {:<12} {}",
-            "Entropy",
-            steel_val(metrics.entropy_confidence)
-        );
     }
 
     println!();
-    println!("{}", section("Confidence Metrics"));
-    println!("  {:<12} {}", "Model", metric_val(metrics.model_confidence));
-    println!(
-        "  {:<12} {}",
-        "Sample",
-        metric_val(metrics.sample_reliability)
-    );
-    let overall_label = format!("{:<12}", "Overall")
+    let confidence_label = format!("{:<12}", "Confidence")
         .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(STYLE_OVERALL_LABEL))
         .to_string();
-    println!("  {overall_label} {}", metric_val(metrics.overall));
+    println!("  {confidence_label} {}", metric_val(metrics.confidence));
 
-    // Prediction quality = the model's certainty about the classification itself,
-    // independent of how much data we had. This is what "uncertain prediction" means.
-    let prediction_quality = metrics.model_confidence * 0.5
-        + metrics.threshold_distance * 0.25
-        + metrics.entropy_confidence * 0.25;
-
-    if metrics.sample_reliability < 0.5 {
+    if metrics.chunk_dispersion.is_some_and(|d| d > 0.25) {
         println!();
         println!(
             "{}",
-            warn("Low sample reliability — consider providing more text")
+            warn("Chunks disagree — possible mixed human/AI content")
         );
-    } else if prediction_quality < 0.6 {
+    } else if metrics.confidence < 0.3 {
         println!();
         println!("{}", warn("Low confidence — prediction uncertain"));
     }
@@ -576,7 +497,7 @@ fn prediction_json(prediction: &UnifiedPrediction, threshold: Threshold) -> serd
             "human": prediction.prediction.human_probability(),
             "ai": prediction.prediction.ai_probability(),
         },
-        "confidence": prediction.confidence_metrics(threshold),
+        "confidence": prediction.confidence_metrics(),
         "chunk_info": prediction.chunk_info(),
         "chunk_predictions": prediction.chunk_predictions.iter().map(|p| {
             (p.human_probability(), p.ai_probability())

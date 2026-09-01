@@ -5,7 +5,8 @@
 //! Supports multiple platforms including macOS (Apple Silicon), Linux, and Windows.
 //!
 //! This crate provides tools to classify whether text was written by AI or a human,
-//! using a machine learning model based on TF-IDF features and ONNX runtime inference.
+//! using a hierarchical token-level classifier run natively with Burn — no runtime
+//! dependencies, the whole model ships inside the binary.
 //!
 //! ## Quick Start
 //!
@@ -64,9 +65,9 @@ pub mod pipeline;
 use std::{fmt, ops::Deref, result::Result};
 
 pub use model::MODEL_VERSION;
-pub use pipeline::{AggregationMethod, Classification, Prediction, UnifiedPrediction};
+pub use pipeline::{Classification, Prediction, UnifiedPrediction};
 
-use crate::model::{CHUNK_CLASSIFICATION_THRESHOLD, CLASSIFICATION_THRESHOLD, MODEL};
+use crate::model::CLASSIFICATION_THRESHOLD;
 
 /// A validated classification threshold in the range `[0.0, 1.0]`.
 ///
@@ -129,15 +130,7 @@ impl Threshold {
         }
     }
 
-    /// Get the default chunk classification threshold. This is the threshold used for classifying
-    /// individual chunks of text before aggregation.
-    /// The default value is [`CHUNK_CLASSIFICATION_THRESHOLD`].
-    const fn chunk_classification_threshold() -> Self {
-        Self(CHUNK_CLASSIFICATION_THRESHOLD)
-    }
-
-    /// Get the default classification threshold. This is the threshold used for classifying the
-    /// overall text after aggregation.
+    /// Get the default classification threshold, fitted on calibrated validation probabilities.
     /// The default value is [`CLASSIFICATION_THRESHOLD`].
     const fn classification_threshold() -> Self {
         Self(CLASSIFICATION_THRESHOLD)
@@ -211,7 +204,6 @@ impl Deref for Threshold {
 /// ```
 pub struct Predictor {
     threshold: Threshold,
-    agg_method: AggregationMethod,
 }
 
 impl Predictor {
@@ -220,7 +212,6 @@ impl Predictor {
     pub fn new() -> Self {
         Self {
             threshold: Threshold::default(),
-            agg_method: AggregationMethod::WeightedMean(Threshold(CHUNK_CLASSIFICATION_THRESHOLD)),
         }
     }
 
@@ -235,16 +226,6 @@ impl Predictor {
         self
     }
 
-    /// Set a custom aggregation method for chunk predictions.
-    ///
-    /// The aggregation method determines how chunk-level predictions
-    /// are combined into a final document-level prediction.
-    #[must_use]
-    pub fn with_aggregation_method(mut self, method: AggregationMethod) -> Self {
-        self.agg_method = method;
-        self
-    }
-
     /// Get the current threshold value.
     #[must_use]
     pub fn threshold(&self) -> Threshold {
@@ -255,7 +236,7 @@ impl Predictor {
     ///
     /// Returns a `Prediction` containing P(Human) and P(AI).
     pub fn predict<T: AsRef<str>>(&self, text: T) -> pipeline::Result<UnifiedPrediction> {
-        pipeline::predict(&MODEL, text.as_ref(), self.agg_method)
+        pipeline::predict(text.as_ref())
     }
 
     /// Predict probabilities for multiple texts.
@@ -266,7 +247,7 @@ impl Predictor {
         texts: &[T],
     ) -> pipeline::Result<Vec<UnifiedPrediction>> {
         let strs: Vec<&str> = texts.iter().map(AsRef::as_ref).collect();
-        pipeline::predict_batch(&MODEL, &strs, self.agg_method)
+        pipeline::predict_batch(&strs)
     }
 
     /// Classify a single text using the configured threshold.
@@ -392,38 +373,6 @@ mod tests {
         assert_eq!(classes.len(), 3);
         for class in classes {
             assert!(matches!(class, Classification::Human | Classification::AI));
-        }
-    }
-
-    #[test]
-    fn test_with_aggregation_method() {
-        let predictor = Predictor::default().with_aggregation_method(AggregationMethod::Mean);
-        let prediction = predictor
-            .predict("Test with mean aggregation")
-            .expect("Prediction should succeed");
-        assert!(matches!(
-            prediction.aggregation_method,
-            AggregationMethod::Mean
-        ));
-
-        let predictor = Predictor::default().with_aggregation_method(AggregationMethod::Max);
-        let prediction = predictor
-            .predict("Test with max aggregation")
-            .expect("Prediction should succeed");
-        assert!(matches!(
-            prediction.aggregation_method,
-            AggregationMethod::Max
-        ));
-
-        let predictor = Predictor::default()
-            .with_aggregation_method(AggregationMethod::WeightedMean(Threshold::new(0.6)));
-        let prediction = predictor
-            .predict("Test with weighted aggregation")
-            .expect("Prediction should succeed");
-        if let AggregationMethod::WeightedMean(t) = prediction.aggregation_method {
-            assert!((*t - 0.6).abs() < f32::EPSILON);
-        } else {
-            panic!("Expected WeightedMean aggregation");
         }
     }
 

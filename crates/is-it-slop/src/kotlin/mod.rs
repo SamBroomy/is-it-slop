@@ -9,7 +9,7 @@
 //! import ai.isitlop.SlopDetector
 //!
 //! val result = SlopDetector.predict("Some text")
-//! // {"aiProbability":0.92,"humanProbability":0.08,"classification":"AI","numChunks":1,"chunkAgreement":1.0}
+//! // {"aiProbability":0.92,"humanProbability":0.08,"classification":"AI","confidence":0.84,"numChunks":1,"chunkDispersion":null}
 //!
 //! val label = SlopDetector.classify("Some text")
 //! // "Human" or "AI"
@@ -67,14 +67,15 @@ fn prediction_to_json(pred: &crate::UnifiedPrediction, class: &str) -> serde_jso
         "aiProbability": pred.prediction.ai_probability(),
         "humanProbability": pred.prediction.human_probability(),
         "classification": class,
+        "confidence": pred.confidence(),
         "numChunks": info.num_chunks,
-        "chunkAgreement": info.chunk_agreement,
+        "chunkDispersion": info.chunk_dispersion,
     })
 }
 
 /// Predict probabilities for a single text.
 /// Returns JSON with `aiProbability`, `humanProbability`, `classification`,
-/// `numChunks`, and `chunkAgreement` fields.
+/// `confidence`, `numChunks`, and `chunkDispersion` fields.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_predict<'local>(
     mut env: JNIEnv<'local>,
@@ -202,7 +203,7 @@ pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_getThreshold(
         .unwrap_or(0.5)
 }
 
-/// Get the model version string (e.g. `"3.0.0"`).
+/// Get the model version string (e.g. `"4.0.0"`).
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_getVersion(
     mut env: JNIEnv<'_>,

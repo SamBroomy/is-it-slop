@@ -1,0 +1,56 @@
+[package]
+name = "is-it-slop-training"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Burn training pipeline for the is-it-slop classifier."
+categories.workspace = true
+keywords.workspace = true
+publish = false
+
+[features]
+default = ["ndarray"]
+# Element type for GPU backends (default f32). Enabling both is a compile error.
+f16 = []
+flex32 = []
+# Backends are additive; the training binary picks the best one enabled — see src/backend.rs for
+# the priority order. ndarray is the default so tests run everywhere.
+ndarray = ["burn/ndarray"]
+metal = ["burn/metal"]
+cuda = ["burn/cuda"]
+rocm = ["burn/rocm"]
+vulkan = ["burn/vulkan"]
+wgpu = ["burn/wgpu"]
+tch-cpu = ["burn/tch"]
+tch-gpu = ["burn/tch"]
+flex = ["burn/flex"]
+remote = ["burn/remote"]
+
+[dependencies]
+burn = { workspace = true, features = ["std", "autodiff", "train", "tui",
+    "sqlite-bundled",
+    "metrics",
+    "flex",
+    "autotune","fusion"] }
+burn-store = { workspace = true }
+clap = { workspace = true }
+is-it-slop-model = { workspace = true }
+is-it-slop-preprocessing = { workspace = true }
+polars = { workspace = true }
+safetensors = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

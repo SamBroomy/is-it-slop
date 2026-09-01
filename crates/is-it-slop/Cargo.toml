@@ -20,18 +20,18 @@ filename = "is_it_slop_lib"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-is-it-slop-preprocessing = { workspace = true, features = ["serde"] }
+is-it-slop-model = { workspace = true }
+is-it-slop-preprocessing = { workspace = true }
 
-ndarray = { workspace = true }
-ort = { workspace = true }
+burn = { workspace = true, features = ["std", "flex"] }
+burn-store = { workspace = true }
 serde = { workspace = true, optional = true }
-sprs = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 # CLI-only dependencies
 anyhow = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 owo-colors = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 # Install source detection dependencies
 dirs = { workspace = true }
 which = { workspace = true }
@@ -53,7 +53,7 @@ default = ["cli"]
 python = ["pyo3"]
 pyo3 = ["dep:pyo3"]
 cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors"]
-serde = ["dep:serde", "dep:serde_json"]
+serde = ["dep:serde"]
 # Enable self-update for standalone binaries (not package manager installs).
 self-update = []
 # Build with empty model artifacts (for docs, won't work at runtime)

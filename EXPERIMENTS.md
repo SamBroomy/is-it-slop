@@ -366,3 +366,91 @@ Everything here inherits the known caveats: the live cleaning skew (curation cle
 inference universal), the unmeasured markdown-formatting share of the signal, and uncalibrated
 output probabilities. CutMix remains undecided pending the chunk-output contract question — its
 document-level deltas are now known to be inside the noise floor.
+
+## Burn training port: parity run (2026-08-31)
+
+The Python trainer was ported to Rust on Burn 0.21 (`crates/is-it-slop-training`, branch
+`sbroomfield/agent/hparam-sweep/burn-training-crate`). Three golden-vector oracles pin the port to
+the Python pipeline before any training judgement:
+
+| oracle | result |
+|---|---|
+| model forward (trained v8192-d48 weights, 16 real docs) | logits within 1e-3, probabilities within 1e-5 of PyTorch |
+| document encoding (trim/tokenize/vocab/chunk) | bit-identical grids to the Python cache |
+| vocabulary build (full 473k-doc train split) | byte-identical lookup table to the Python bundle |
+
+Plus unit oracles: the warmup-cosine schedule matches `LambdaLR` to 1e-15, the masked loss matches
+torch to 1e-6, and the AUC implementation matches sklearn including ties.
+
+### The parity gate
+
+One full run of the frozen recipe (accuracy config v16384-d64, seed 42) on the Metal backend,
+`model_artifacts/burn/parity-run.log`:
+
+| | val AUC (full split) | test AUC (full split) | epochs |
+|---|---|---|---|
+| Python combo, seed 42 | 0.9961 | 0.9968 | 30 (full) |
+| Python combo, seed 43 | 0.9960 | 0.9968 | 29 |
+| **Burn, seed 42** | **0.9960** | **0.9967** | 23 (early stop) |
+
+Both deltas are ~0.0001 — an order of magnitude inside the seed-noise band. The port's three
+documented loop deviations (early stopping on mean per-batch AUROC rather than full-split AUC,
+final rather than best epoch weights, no `drop_last`) measurably do not matter. The per-epoch
+validation trajectories also track each other closely (0.993 at epoch 4 to 0.996 by epoch 16 on
+both sides).
+
+### Training throughput, the one regression
+
+~7.3 min/epoch on Burn-Metal against 3.2 min/epoch on torch-MPS (~2.3x), same machine, autotune
+cache warm, fusion enabled. Investigation plan lives in NEXT_RELEASE.md; training cost is a
+per-release one-off and no shipping axis is affected.
+
+**Recipe change after the parity gate**: training now splits documents longer than the
+8-chunk grid into several examples (consecutive windows, label copied — exact for whole-document
+labels) instead of truncating, capturing the text the `max_chunks 16` arm showed had headroom
+(0.9984 -> 0.9992 on the 2000+ band) without its 2.7x compute. Evaluation still encodes one grid
+per document, so the AUC statistic is unchanged in definition — but the next full run is a new
+baseline, not directly comparable to the parity numbers above, and the arm is judged on the
+2000+-token band.
+
+Ruled out: fusion hygiene. Restructuring `encode_chunks` so every mask is derived before the trunk
+(one uninterrupted compute region) changed nothing — 114.8 vs 115.2 s/1000 iterations, within
+noise. The fusion boundaries were not where the 2.3x lives.
+
+Ruled out: the kernels. The `--features tch-gpu` A/B (Burn on libtorch 2.9 MPS — the same kernels
+Python dispatches to) clocked 113.6 s/1000 iterations against CubeCL-Metal's 115.2, identical
+within noise, while Python-on-the-same-kernels does ~52. So the original kernel-gap diagnosis
+(hand-tuned MPSGraph vs CubeCL JIT) is wrong: the gap lives in Burn's side of the loop, backend
+regardless.
+
+**Localized: the whole gap is the backward pass.** Matched raw-loop microbenches
+(`crates/is-it-slop-training/examples/step_bench.rs` and `notebooks/step_bench.py` — one resident
+synthetic batch, frozen recipe config, per-iteration scalar-loss sync, 50 warmup + 300 timed,
+never run concurrently) decompose the iteration, ms/iter on the same machine:
+
+| variant                                  | Burn-Metal | torch-MPS | ratio |
+| ---------------------------------------- | ---------- | --------- | ----- |
+| forward, inference mode (no autodiff)    | 12.2       | 11.4      | 1.07x |
+| forward, train mode (autodiff)           | see below  | 15.3      | —     |
+| forward + backward                       | 111.1      | 46.6      | 2.38x |
+| + optimizer step                         | 111.0      | 46.8      | 2.37x |
+| + host pull of logits (metric-sync bound)| 114.7      | 47.3      | —     |
+| + fresh host-to-device ids each iter     | 110.8      | 47.1      | —     |
+| full training pipeline                   | 113–115    | ~52       | —     |
+
+Readings: the raw loop alone reproduces the full pipeline's cost on both sides, so the Learner
+harness, dataloader, metric sync, and host transfers are all noise. Forward compute is at parity —
+CubeCL's JIT matches libtorch on this model. Everything appears with `backward()`: subtracting
+forwards, Burn spends ~97 ms/iter on backward against torch's ~31 (~3x). CPU sits at ~13% during
+the window, so it is GPU-timeline-bound, not orchestration-bound: Burn's autodiff emits the
+backward as many small primitive kernels (fusion notwithstanding) where torch dispatches one
+hand-written composite backward kernel per op (`gelu_backward`, `layer_norm_backward`, ...). The
+tch A/B corroborates: on burn-tch the same decomposed backward runs on torch's own kernels and is
+exactly as slow. Fixing it would mean backward-pass work in Burn/CubeCL itself, not in this repo.
+
+Two bench footnotes. Python's headline "3.2 min/epoch" (`train_seconds`/30 from `results.json`)
+includes a full validation pass per epoch, so the true train-loop gap is the ~2.4x above, not
+2.2x. And a forward-only loop under `Autodiff` (never calling `backward()`) leaks until macOS
+SIGKILLs the process around iteration ~130 — the train-mode forward row is unmeasurable in Burn
+0.21. Production never does that (validation runs on the inner backend), but don't write that
+loop.

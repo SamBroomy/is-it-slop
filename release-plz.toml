@@ -16,10 +16,21 @@ git_release_enable = false
 git_tag_enable = false
 
 [[package]]
+name = "is-it-slop-model"
+version_group = "main"
+release = true
+git_release_enable = false
+git_tag_enable = false
+
+[[package]]
 name = "is-it-slop"
 version_group = "main"
 release = true
 git_release_enable = true
+
+[[package]]
+name = "is-it-slop-training"
+release = false
 
 
 [changelog]

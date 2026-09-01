@@ -20,11 +20,8 @@ install-pre-commit:
 # Development Pipeline
 # =============================================================================
 
-model-pipeline: && build-pre-processing-bindings dataset-curation training-pipeline build-bindings build-cli-release
+model-pipeline: && dataset-curation training-pipeline build-bindings build-cli-release
     uv sync --all-extras --all-groups
-
-build-pre-processing-bindings:
-    uv run --directory python/is-it-slop-preprocessing maturin develop --release --uv
 
 dataset-curation: sync-notebooks
     uv run python notebooks/dataset_curation.py --force-retrain-vectorizer --bump-major
@@ -102,14 +99,17 @@ package-artifacts:
         exit 1
     fi
 
-    # Only these files are required for the release
+    # Only these files are required for the release (model.bpk is a local-only artifact)
     REQUIRED_FILES=(
+        "model.safetensors"
+        "model.f16.safetensors"
+        "token_vocabulary.safetensors"
+        "encoder_config.json"
+        "model_config.json"
+        "training_config.json"
         "classification_threshold.txt"
-        "slop-classifier.onnx"
-        "tfidf_vectorizer.rkyv"
-        "chunk_classification_threshold.txt"
-        "token_chunker_config.json"
-        "model_metadata.json"
+        "calibration_temperature.txt"
+        "results.json"
     )
 
     # Verify required files exist
@@ -494,8 +494,6 @@ build-android-aar: build-android-so
 # Build all Python wheels locally (for testing)
 [group('dev')]
 build-python-wheels:
-    @echo "Building is-it-slop-preprocessing wheel..."
-    uv run --directory python/is-it-slop-preprocessing maturin build --release
     @echo "Building is-it-slop wheel..."
     uv run --directory python/is-it-slop maturin build --release
 
@@ -540,7 +538,6 @@ show-versions:
     @echo "\nModel version:"
     @grep 'const MODEL_VERSION' crates/is-it-slop/build.rs | head -1
     @echo "\nPython packages:"
-    @echo "  is-it-slop-preprocessing:" && grep "^version" python/is-it-slop-preprocessing/pyproject.toml
     @echo "  is-it-slop:" && grep "^version" python/is-it-slop/pyproject.toml
 
 # Quick test (just run all tests without detailed output)
@@ -551,7 +548,7 @@ test: test-rust test-python
 [group('dev')]
 test-rust:
     @echo "Testing preprocessing crate (unit tests)..."
-    cargo test --lib -p is-it-slop-preprocessing --no-default-features --features rkyv,serde,bincode
+    cargo test --lib -p is-it-slop-preprocessing
     @echo ""
     @echo "Testing main crate (unit tests)..."
     cargo test --lib -p is-it-slop --all-features
@@ -561,10 +558,7 @@ test-rust:
 
 # Test only Python packages
 [group('dev')]
-test-python: build-pre-processing-bindings build-bindings
-    @echo "Testing Python preprocessing package..."
-    uv run --directory python/is-it-slop-preprocessing pytest tests/ -v
-    @echo ""
+test-python: build-bindings
     @echo "Testing Python inference package..."
     uv run --directory python/is-it-slop pytest tests/ -v
 
@@ -581,14 +575,15 @@ check: rust-lint-fix
 pre-release:
     @echo "Running pre-release checks..."
     cargo fmt --all --check
-    cargo clippy -p is-it-slop-preprocessing --no-default-features --features rkyv,serde,bincode --all-targets -- -D warnings
+    cargo clippy -p is-it-slop-preprocessing --all-targets -- -D warnings
     cargo clippy -p is-it-slop --no-default-features --features cli --all-targets -- -D warnings
-    cargo test -p is-it-slop-preprocessing --lib --no-default-features --features rkyv,serde,bincode
+    cargo test -p is-it-slop-preprocessing --lib
     cargo test -p is-it-slop --lib --all-features
     cargo test -p is-it-slop --doc --no-default-features --features cli
-    cargo test -p is-it-slop-preprocessing --doc --no-default-features --features rkyv,serde
+    cargo test -p is-it-slop-preprocessing --doc
     cargo doc --workspace --no-deps --all-features
     cargo package -p is-it-slop-preprocessing --no-verify --allow-dirty
+    cargo package -p is-it-slop-model --no-verify --allow-dirty
     @echo "✅ All checks passed!"
 
 # =============================================================================
@@ -617,7 +612,7 @@ cargo-audit:
 # Check maturin can build Python bindings
 [group('lint')]
 [group('precommit')]
-maturin-check: build-pre-processing-bindings build-bindings
+maturin-check: build-bindings
     #!/usr/bin/env bash
     set -euo pipefail
     echo "🔍 Checking maturin build..."
