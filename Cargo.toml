@@ -37,7 +37,7 @@ anyhow = "1.0.100"
 burn = { version = "0.21", default-features = false }
 safetensors = "0.7"
 bincode = { version = "=2.0.1", features = ["serde"] }
-bpe-openai = "0.3.0"
+bpe-openai = "0.3.1"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 dashmap = "6.1.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
