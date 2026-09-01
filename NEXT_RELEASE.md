@@ -219,12 +219,14 @@ Open items, in order:
       backward pass (~97 vs ~31 ms/iter): forward is at kernel parity (12.2 vs 11.4 ms), and
       harness, dataloader, optimizer, metric sync, and transfers are all noise. It reproduces on
       burn-tch, so it is Burn's backward decomposition, not CubeCL — fixing it means upstream
-      Burn work, not changes here. Accepted for now: training is a per-release one-off. If epoch
-      time ever matters, the only in-repo lever left is `--features metal,f16` (halves backward
-      bandwidth too; needs a parity re-check since the recipe was tuned at f32). Rerun the
-      benches with `examples/step_bench.rs` + `notebooks/step_bench.py`. Known sharp edge: a
-      forward-only loop on the `Autodiff` backend leaks and gets SIGKILLed — validation belongs
-      on the inner backend.
+      Burn work, not changes here. Accepted for now: training is a per-release one-off.
+      **`--features metal,f16` does not work as a speed lever**: a full-data attempt (2026-09-01)
+      produced NaN loss from epoch 1 — pure-f16 training with no loss scaling overflows this
+      recipe (BCE exp/log, attention softmax). Reviving it means loss scaling, i.e. real work.
+      `--features metal,flex32` (f32 semantics, backend free to relax intermediate precision) is
+      the untested remaining candidate. Rerun the benches with `examples/step_bench.rs` +
+      `notebooks/step_bench.py`. Known sharp edge: a forward-only loop on the `Autodiff` backend
+      leaks and gets SIGKILLed — validation belongs on the inner backend.
 - [ ] **Evaluation harness**: threshold fitting (best-F1, precision>=0.99) and an uncertainty
       block (temperature calibration plus three error-ranking confidence signals: calibrated
       margin, chunk dispersion, doc-vs-chunk agreement) are ported and land in `results.json`

@@ -274,9 +274,17 @@ impl<B: Backend> InferenceStep for TrainableClassifier<B> {
 pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Vec<f32>) {
     let [n, _] = output.output.dims();
     let logits = output.output.clone().slice([0..n, 1..2]).reshape([n]);
+    // convert() first: on an f16/flex32 element backend the data arrives in that type.
     (
-        output.targets.clone().float().into_data().to_vec().unwrap(),
-        logits.into_data().to_vec().unwrap(),
+        output
+            .targets
+            .clone()
+            .float()
+            .into_data()
+            .convert::<f32>()
+            .to_vec()
+            .unwrap(),
+        logits.into_data().convert::<f32>().to_vec().unwrap(),
     )
 }
 

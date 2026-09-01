@@ -166,12 +166,19 @@ fn predictions<B: burn::tensor::backend::Backend>(
             .sqrt();
 
         out.labels.extend(docs.iter().map(|d| d.label));
-        out.logits
-            .extend(output.doc_logits.into_data().to_vec::<f32>().unwrap());
+        // convert() first: on an f16/flex32 element backend the data arrives in that type.
+        out.logits.extend(
+            output
+                .doc_logits
+                .into_data()
+                .convert::<f32>()
+                .to_vec::<f32>()
+                .unwrap(),
+        );
         out.chunk_std
-            .extend(std.into_data().to_vec::<f32>().unwrap());
+            .extend(std.into_data().convert::<f32>().to_vec::<f32>().unwrap());
         out.real_chunks
-            .extend(count.into_data().to_vec::<f32>().unwrap());
+            .extend(count.into_data().convert::<f32>().to_vec::<f32>().unwrap());
     }
     out
 }
