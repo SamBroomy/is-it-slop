@@ -1,10 +1,37 @@
 //! The hierarchical slop classifier: a shared per-chunk trunk, a chunk head, and an
 //! attention-pooled document head.
 //!
-//! Port of `HierarchicalSlopClassifier` in `notebooks/hierarchical_train.py`. The trunk weights
-//! are shared across chunks, so adding chunks costs compute but no parameters. Padding is masked
-//! out of both pooling steps: a global max over mostly-pad positions would otherwise let padding
-//! decide the chunk representation.
+//! Port of `HierarchicalSlopClassifier` in `notebooks/hierarchical_train.py`. The grouped trunk
+//! and masked max pooling are Magika's design; the hierarchy on top — a chunk level and a
+//! document level trained jointly — is ours.
+//!
+//! Input is `[batch, chunks, chunk_size]` compact token ids from the data layer (the vocabulary
+//! already mapped rare tokens to the OOV row and padding to the pad row). The forward pass, with
+//! the code split between [`HierarchicalSlopClassifier::encode_chunks`] (stages 1-4) and
+//! [`HierarchicalSlopClassifier::forward`] (stages 5-6):
+//!
+//! 1. **Embed**: look up each token's row, `[B*C, chunk_size, embed_dim]`. Pad positions are
+//!    zeroed and spatial dropout drops whole embedding channels (training only).
+//! 2. **Group**: reshape so every `group` adjacent tokens become one position carrying their
+//!    concatenated embeddings, `[B*C, chunk_size/group, group*embed_dim]` — the trunk's first
+//!    linear layer therefore sees local token n-grams, which is why an explicit n-gram
+//!    vocabulary is not needed.
+//! 3. **Trunk**: a two-layer MLP over every group position, shared across all chunks and
+//!    positions — more chunks cost compute, never parameters.
+//! 4. **Chunk pooling**: masked max over the group positions gives one vector per chunk
+//!    (padding is filled with `-inf` first so it can never win the max), then `LayerNorm`.
+//! 5. **Chunk head**: one logit per chunk — the training-time auxiliary signal; each chunk
+//!    inherits its document's label, noisy but measurably useful.
+//! 6. **Document head**: two pooled views of the chunk vectors concatenated — attention
+//!    (which chunks matter) and masked max (one decisive chunk suffices) — then a linear head.
+//!    This *is* the chunk aggregation, learned end to end; nothing outside the network combines
+//!    chunk scores into the document verdict.
+//!
+//! Outputs are raw logits: `sigmoid` gives the AI probability, and the decision threshold is a
+//! bundle artifact fitted after training, never part of the network. The chunk axis is dynamic —
+//! `max_chunks` is a training-time budget, not a model limit — because the trunk is per-chunk
+//! and both document pools are masked reductions. Padding is masked out of every pooling step: a
+//! global max over mostly-pad positions would otherwise let padding decide the representation.
 
 use burn::config::Config;
 use burn::module::Module;
@@ -133,21 +160,34 @@ impl SpatialDropout1d {
     }
 }
 
-/// See the [module documentation](self).
+/// See the [module documentation](self) for the stage-by-stage dataflow.
 #[derive(Module, Debug)]
 pub struct HierarchicalSlopClassifier<B: Backend> {
+    /// Stage 1: token rows, `[vocab_size + 2, embed_dim]` — ~90% of the parameters.
     embed: Embedding<B>,
+    /// Stage 1: channel dropout on the embedding, shared across positions.
     spatial_dropout: SpatialDropout1d,
+    /// Stage 3: first trunk layer, `group * embed_dim -> hidden` — reads grouped token n-grams.
     trunk_in: Linear<B>,
+    /// Stage 3: trunk normalization.
     trunk_norm: LayerNorm<B>,
+    /// Stage 3: elementwise dropout inside the trunk.
     trunk_dropout: Dropout,
+    /// Stage 3: second trunk layer, `hidden -> hidden`.
     trunk_out: Linear<B>,
+    /// Stage 3: activation after each trunk layer.
     gelu: Gelu,
+    /// Stage 4: normalizes the max-pooled chunk vectors.
     chunk_norm: LayerNorm<B>,
+    /// Stage 5: per-chunk logit, `hidden -> 1` — the auxiliary loss head.
     chunk_head: Linear<B>,
+    /// Stage 6: attention scores over chunks, `hidden -> 1`.
     attend: Linear<B>,
+    /// Stage 6: normalizes the concatenated attention + max document vector.
     doc_norm: LayerNorm<B>,
+    /// Stage 6: dropout before the document head.
     doc_dropout: Dropout,
+    /// Stage 6: document logit, `2 * hidden -> 1`.
     doc_head: Linear<B>,
     chunk_size: usize,
     group: usize,
@@ -165,8 +205,9 @@ pub struct ModelOutput<B: Backend> {
 }
 
 impl<B: Backend> HierarchicalSlopClassifier<B> {
-    /// Encode ids `[batch, chunks, chunk_size]` into chunk vectors `[batch, chunks, hidden]` plus
-    /// a real-chunk mask `[batch, chunks]`.
+    /// Stages 1-4: encode ids `[batch, chunks, chunk_size]` into chunk vectors
+    /// `[batch, chunks, hidden]` plus a real-chunk mask `[batch, chunks]` — embed, group, run
+    /// the shared trunk, and max-pool each chunk.
     fn encode_chunks(
         &self,
         ids: Tensor<B, 3, Int>,
@@ -227,7 +268,8 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
         (h, chunk_mask)
     }
 
-    /// Produce document logits `[batch]`, chunk logits `[batch, chunks]`, and the real-chunk mask.
+    /// Stages 5-6: produce document logits `[batch]`, chunk logits `[batch, chunks]`, and the
+    /// real-chunk mask — the chunk head plus the attention+max document pooling.
     pub fn forward(&self, ids: Tensor<B, 3, Int>) -> ModelOutput<B> {
         let (h, chunk_mask) = self.encode_chunks(ids);
         let [b, c, hidden] = h.dims();
