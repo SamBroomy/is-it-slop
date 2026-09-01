@@ -235,9 +235,28 @@ struct ArtifactChecks {
     /// AUC after saving to f16 safetensors and loading back — also roundtrips the exact
     /// burn-store path inference will use.
     f16_safetensors_validation_auc: f64,
-    /// AUC after in-memory Q8 min-max weight quantization. Measurement only: the quantized
-    /// form is not yet emitted as an artifact.
-    q8_minmax_validation_auc: f64,
+    /// AUC after in-memory Q8 min-max quantization of the matrix weights (rank >= 2, as with
+    /// weight decay — biases and norms are tiny and precision-sensitive). Measurement only: the
+    /// quantized form is not yet emitted as an artifact. `None` when the selected backend cannot
+    /// run quantized ops — the check is panic-isolated so it can never cost a run its results.
+    q8_minmax_validation_auc: Option<f64>,
+}
+
+/// [`Quantizer`](burn::module::Quantizer) restricted to matrices, leaving rank-1 parameters
+/// (biases, `LayerNorm` scales) in float.
+struct MatrixQuantizer(burn::module::Quantizer);
+
+impl<B: burn::tensor::backend::Backend> burn::module::ModuleMapper<B> for MatrixQuantizer {
+    fn map_float<const D: usize>(
+        &mut self,
+        param: burn::module::Param<burn::tensor::Tensor<B, D>>,
+    ) -> burn::module::Param<burn::tensor::Tensor<B, D>> {
+        if D >= 2 {
+            burn::module::ModuleMapper::<B>::map_float(&mut self.0, param)
+        } else {
+            param
+        }
+    }
 }
 
 /// Save, reload, and quantize the trained weights, scoring each form on the validation split.
@@ -250,7 +269,7 @@ fn check_artifacts<B: burn::tensor::backend::Backend>(
     device: &B::Device,
 ) -> ArtifactChecks {
     use burn::module::Quantizer;
-    use burn::tensor::quantization::{Calibration, QuantScheme, QuantValue};
+    use burn::tensor::quantization::{Calibration, QuantScheme, QuantStore, QuantValue};
     use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
 
     let mut f16_model = model_config.init::<B>(device);
@@ -266,18 +285,28 @@ fn check_artifacts<B: burn::tensor::backend::Backend>(
     let p = predictions(&f16, batcher, encoded_valid, device);
     let f16_auc = roc_auc(&p.labels, &p.probs);
 
-    let mut quantizer = Quantizer {
-        calibration: Calibration::MinMax,
-        scheme: QuantScheme::default().with_value(QuantValue::Q8S),
-    };
-    let q8 = TrainableClassifier {
-        model: model.model.clone().quantize_weights(&mut quantizer),
-        chunk_loss_weight: model.chunk_loss_weight,
-    };
-    let p = predictions(&q8, batcher, encoded_valid, device);
+    // Native store: the packed-u32 default requires last dims divisible by 4, which the
+    // [hidden, 1] head weights are not.
+    let q8_auc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut quantizer = MatrixQuantizer(Quantizer {
+            calibration: Calibration::MinMax,
+            scheme: QuantScheme::default()
+                .with_value(QuantValue::Q8S)
+                .with_store(QuantStore::Native),
+        });
+        let q8 = TrainableClassifier {
+            model: model.model.clone().map(&mut quantizer),
+            chunk_loss_weight: model.chunk_loss_weight,
+        };
+        let p = predictions(&q8, batcher, encoded_valid, device);
+        roc_auc(&p.labels, &p.probs)
+    }));
+    if q8_auc.is_err() {
+        tracing::warn!("Q8 quantized evaluation panicked; the backend lacks quantized ops");
+    }
     ArtifactChecks {
         f16_safetensors_validation_auc: f16_auc,
-        q8_minmax_validation_auc: roc_auc(&p.labels, &p.probs),
+        q8_minmax_validation_auc: q8_auc.ok(),
     }
 }
 
