@@ -20,7 +20,7 @@ filename = "is_it_slop_lib"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-is-it-slop-preprocessing = { workspace = true, features = ["serde"] }
+is-it-slop-preprocessing = { workspace = true }
 
 ndarray = { workspace = true }
 ort = { workspace = true }

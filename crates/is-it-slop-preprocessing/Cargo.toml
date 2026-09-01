@@ -11,29 +11,21 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
-[lib]
-name = "is_it_slop_preprocessing"
-crate-type = ["cdylib", "rlib"]
-
-
 [dependencies]
 bpe-openai = { workspace = true }
-indicatif = { workspace = true, optional = true }
-pyo3 = { workspace = true, optional = true }
-pyo3-log = { workspace = true, optional = true }
 rayon = { workspace = true }
 regex = { workspace = true }
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+safetensors = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [features]
-default = []
-python = ["progress-bars", "dep:pyo3", "dep:pyo3-log"]
-progress-bars = ["dep:indicatif"]
-serde = ["dep:serde", "dep:serde_json"]
+all-testable = []
 
-all-testable = ["serde"]
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

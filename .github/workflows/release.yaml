@@ -55,8 +55,6 @@ jobs:
         python-crate:
           - path: python/is-it-slop
             name: is-it-slop
-          - path: python/is-it-slop-preprocessing
-            name: is-it-slop-preprocessing
     steps:
       - uses: actions/checkout@v6
         with:
@@ -107,8 +105,6 @@ jobs:
         python-crate:
           - path: python/is-it-slop
             name: is-it-slop
-          - path: python/is-it-slop-preprocessing
-            name: is-it-slop-preprocessing
     steps:
       - uses: actions/checkout@v6
         with:

@@ -1,15 +1,13 @@
 //! Frequency-ranked token vocabulary: raw o200k ids to compact embedding rows.
 //!
-//! Port of `build_vocab` in `notebooks/hierarchical_train.py`. Folding ids modulo a bound would
-//! make two *common* tokens share one embedding row at random; ranking by frequency confines
-//! collisions to the rare tail, which all shares a single OOV row.
+//! Folding ids modulo a bound would make two *common* tokens share one embedding row at random;
+//! ranking by frequency confines collisions to the rare tail, which all shares a single OOV row.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use is_it_slop_preprocessing::pre_processor::tokenize;
-
-use super::DataError;
+use super::EncoderError;
+use crate::pre_processor::tokenize;
 
 /// `o200k_base` ids fit comfortably below this; the lookup table covers the whole space.
 pub const O200K_CEILING: usize = 201_000;
@@ -96,8 +94,8 @@ impl Vocabulary {
     }
 
     /// Write the bundle's `token_vocabulary.safetensors`: one i32 tensor `token_to_row` of length
-    /// [`O200K_CEILING`], exactly what the Python trainer ships.
-    pub fn save(&self, path: &Path) -> Result<(), DataError> {
+    /// [`O200K_CEILING`].
+    pub fn save(&self, path: &Path) -> Result<(), EncoderError> {
         let data: Vec<u8> = self
             .lut
             .iter()
@@ -112,14 +110,18 @@ impl Vocabulary {
         Ok(())
     }
 
-    /// Load a saved vocabulary. `vocab_size` is recovered as the OOV row value, the largest in
-    /// the table.
-    pub fn load(path: &Path) -> Result<Self, DataError> {
-        let bytes = std::fs::read(path)?;
-        let tensors = safetensors::SafeTensors::deserialize(&bytes)?;
+    /// Load a saved vocabulary from disk.
+    pub fn load(path: &Path) -> Result<Self, EncoderError> {
+        Self::from_bytes(&std::fs::read(path)?)
+    }
+
+    /// Parse a saved vocabulary from `token_vocabulary.safetensors` bytes (e.g. embedded in a
+    /// binary). `vocab_size` is recovered as the OOV row value, the largest in the table.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, EncoderError> {
+        let tensors = safetensors::SafeTensors::deserialize(bytes)?;
         let view = tensors.tensor("token_to_row")?;
         if view.dtype() != safetensors::Dtype::I32 || view.shape() != [O200K_CEILING] {
-            return Err(DataError::Contract(format!(
+            return Err(EncoderError::Contract(format!(
                 "token_to_row must be i32 [{O200K_CEILING}], got {:?} {:?}",
                 view.dtype(),
                 view.shape()
@@ -130,7 +132,7 @@ impl Vocabulary {
         for chunk in view.data().chunks_exact(4) {
             let value = i32::from_le_bytes(chunk.try_into().expect("4-byte chunks"));
             if !(0..=i32::from(u16::MAX)).contains(&value) {
-                return Err(DataError::Contract(format!(
+                return Err(EncoderError::Contract(format!(
                     "token_to_row value {value} outside the compact row range"
                 )));
             }
@@ -141,7 +143,7 @@ impl Vocabulary {
         // Same invariant `from_token_lists` asserts: the pad row (vocab_size + 1) must fit u16,
         // or `pad_id()` overflows.
         if u16::try_from(vocab_size + 2).is_err() {
-            return Err(DataError::Contract(format!(
+            return Err(EncoderError::Contract(format!(
                 "vocabulary of {vocab_size} rows no longer fits u16 with OOV and padding"
             )));
         }

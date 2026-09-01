@@ -6,13 +6,12 @@
 //! batch the encoded documents each epoch. Python cached encodings on disk because re-encoding
 //! there was slow; here encoding is a one-off parallel pass at startup.
 
-mod encoder;
 mod splits;
-mod vocabulary;
 
-pub use encoder::{DocumentEncoder, EncoderBundleConfig};
+pub use is_it_slop_preprocessing::encoder::{
+    DocumentEncoder, EncodedDocument, EncoderBundleConfig, EncoderError, O200K_CEILING, Vocabulary,
+};
 pub use splits::{SplitData, read_split};
-pub use vocabulary::{O200K_CEILING, Vocabulary};
 
 use burn::data::dataloader::batcher::Batcher;
 use burn::tensor::backend::Backend;
@@ -29,25 +28,12 @@ pub enum DataError {
     /// Parquet reading failure.
     #[error(transparent)]
     Polars(#[from] polars::error::PolarsError),
-    /// Vocabulary (de)serialization failure.
+    /// Encoder artifact failure.
     #[error(transparent)]
-    Safetensors(#[from] safetensors::SafeTensorError),
+    Encoder(#[from] EncoderError),
     /// The data does not match the artifact contract.
     #[error("{0}")]
     Contract(String),
-}
-
-/// One document, encoded to the rectangular `[max_chunks * chunk_size]` grid of compact token
-/// ids (padding included), plus its label.
-///
-/// Ids are `u16`: the vocabulary asserts `vocab_size + 2` fits, and the compact width keeps a
-/// full encoded split ~4x smaller in memory than wide ids would.
-#[derive(Debug, Clone)]
-pub struct EncodedDocument {
-    /// Compact token ids, row-major `[max_chunks, chunk_size]`.
-    pub ids: Vec<u16>,
-    /// 1.0 for AI, 0.0 for human.
-    pub label: f32,
 }
 
 /// Stacks encoded documents into `[batch, max_chunks, chunk_size]` id tensors.

@@ -1,55 +1,31 @@
 # is-it-slop-preprocessing
 
-Text preprocessing for AI text detection: cleaning, BPE tokenization, and chunking.
+Text preprocessing for AI text detection: cleaning, BPE tokenization, and document encoding.
 
-> **Note:** This is primarily an internal crate used by [`is-it-slop`](https://crates.io/crates/is-it-slop). For AI text detection, use the main [`is-it-slop`](https://crates.io/crates/is-it-slop) crate instead.
+> **Note:** This is an internal crate used by [`is-it-slop`](https://crates.io/crates/is-it-slop). For AI text detection, use the main [`is-it-slop`](https://crates.io/crates/is-it-slop) crate instead.
 
 ## Purpose
 
-This crate provides the text side of the is-it-slop pipeline:
+This crate provides the text side of the is-it-slop pipeline — the one implementation both training and inference encode through:
 
 - **Text cleaning** (two-stage: universal + dataset artifacts)
 - **Tokenization** (tiktoken BPE o200k_base)
-- **Token-based chunking** (fixed-size token windows for long documents)
-
-## Use Cases
-
-1. **Dataset curation**: The Python bindings expose cleaning and tokenization for building training datasets
-2. **Internal use**: Powers the [`is-it-slop`](https://crates.io/crates/is-it-slop) inference pipeline and the Rust training crate
-
-## Features
-
-- `python`: PyO3 bindings for Python dataset workflows
-- `serde`: JSON serialization for configuration types
-- `progress-bars`: Progress indicators for long-running operations
+- **Document encoding** (frequency-ranked vocabulary + fixed-size token-grid chunking)
 
 ## Quick Start
 
 ```rust
-use is_it_slop_preprocessing::pre_processor::{text_cleaner_for_inference, tokenize};
+use is_it_slop_preprocessing::encoder::{DocumentEncoder, Vocabulary};
 
-let cleaner = text_cleaner_for_inference();
-let clean_text = cleaner.clean("Raw input text");
-let tokens = tokenize(&[clean_text]);
+// Training: rank a vocabulary on the training corpus and encode documents.
+let texts = ["some document", "another document"];
+let vocabulary = Vocabulary::build(&texts, 16_384);
+let encoder = DocumentEncoder::new(vocabulary);
+let encoded = encoder.encode_batch(&texts, &[0.0, 1.0]);
+
+// Inference: reconstruct the exact shipped encoding from bundle artifacts.
+// let encoder = DocumentEncoder::from_bundle(vocab_bytes, config_json)?;
 ```
-
-## Python Bindings
-
-For dataset curation in Python:
-
-```bash
-uv add is-it-slop-preprocessing
-```
-
-```python
-from is_it_slop_preprocessing import CleaningMode, TextCleaner, tokenize
-
-cleaner = TextCleaner(CleaningMode.TRAINING)
-clean_texts = cleaner.clean_batch(train_texts)
-tokens = tokenize(clean_texts)
-```
-
-See the [Python package documentation](https://pypi.org/project/is-it-slop-preprocessing/) for the complete API reference.
 
 ## Architecture
 
@@ -60,8 +36,8 @@ See the [Python package documentation](https://pypi.org/project/is-it-slop-prepr
 
 > Two cleaners ensure that the model learns actual patterns rather than overfitting to specific dataset quirks (which there are a lot that I could find and still likely missed many).
 
-**Chunking:**
-Splits long token sequences into fixed-size windows, enabling consistent handling regardless of document length.
+**Encoding:**
+Tokens map through a frequency-ranked vocabulary onto compact embedding rows (rare tokens share one OOV row), then fill fixed-size chunk grids — padded, never back-filled — that the model consumes directly.
 
 ## For AI Text Detection
 
@@ -84,7 +60,6 @@ See the [is-it-slop documentation](https://docs.rs/is-it-slop) for the complete 
 
 - [API Documentation](https://docs.rs/is-it-slop-preprocessing)
 - [Main Project](https://github.com/SamBroomy/is-it-slop)
-- [Python Package](https://pypi.org/project/is-it-slop-preprocessing/)
 
 ## License
 

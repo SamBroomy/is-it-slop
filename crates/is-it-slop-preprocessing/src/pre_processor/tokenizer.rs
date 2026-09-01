@@ -7,8 +7,6 @@
 //! - Sequential: smaller workloads (avoids thread overhead)
 
 use bpe_openai::o200k_base;
-#[cfg(feature = "progress-bars")]
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rayon::slice::ParallelSlice; // For par_chunks
 use tracing::{debug, instrument};
@@ -23,22 +21,6 @@ const MIN_TEXTS_FOR_PARALLEL: usize = 1_000;
 /// Minimum total bytes to consider parallelization (~1MB)
 const MIN_BYTES_FOR_PARALLEL: usize = 1_000_000;
 
-#[cfg(feature = "progress-bars")]
-fn progress_bar_setup(
-    len: usize,
-    message: impl Into<std::borrow::Cow<'static, str>>,
-) -> ProgressBar {
-    let pb = ProgressBar::new(len as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-            .unwrap()
-            .progress_chars("#>-"),
-    );
-    pb.set_message(message);
-    pb
-}
-
 #[instrument(level = "debug", skip(texts), fields(num_texts = texts.len()))]
 fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     debug!(num_texts = texts.len(), "Using parallel tokenization");
@@ -48,26 +30,10 @@ fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
     // Process ~100-1000 chunks instead of creating millions of parallel tasks
     let chunk_size = (texts.len() / 100).max(1000);
 
-    #[cfg(feature = "progress-bars")]
-    let pb = progress_bar_setup(texts.len(), "Tokenizing texts in parallel");
-
     let token_chunks: Vec<Vec<Vec<u32>>> = texts
         .par_chunks(chunk_size)
-        .map(|chunk| {
-            chunk
-                .iter()
-                .map(|text| {
-                    let tokens = bpe.encode(text);
-                    #[cfg(feature = "progress-bars")]
-                    pb.inc(1);
-                    tokens
-                })
-                .collect()
-        })
+        .map(|chunk| chunk.iter().map(|text| bpe.encode(text)).collect())
         .collect();
-
-    #[cfg(feature = "progress-bars")]
-    pb.finish_with_message("Parallel tokenization complete");
 
     // Flatten chunks into single Vec
     token_chunks.into_iter().flatten().collect()

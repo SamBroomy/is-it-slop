@@ -48,7 +48,6 @@ readme = { file = "./README.md", content-type = "text/markdown" }
 
 
 dependencies = [
-    "is-it-slop-preprocessing",
     "is-it-slop",
     "datasets>=4.4.1",
     "huggingface-hub>=1.1.5",
@@ -99,8 +98,7 @@ Issues = "https://github.com/SamBroomy/is-it-slop/issues"
 package = false
 
 [tool.uv.workspace]
-members = ["python/is-it-slop", "python/is-it-slop-preprocessing"]
+members = ["python/is-it-slop"]
 
 [tool.uv.sources]
 is-it-slop = { workspace = true }
-is-it-slop-preprocessing = { workspace = true }

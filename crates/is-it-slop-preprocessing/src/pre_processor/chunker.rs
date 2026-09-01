@@ -36,8 +36,7 @@ use rayon::prelude::*;
 ///
 /// Uses an optimization algorithm to evenly distribute tokens across chunks,
 /// avoiding tiny trailing chunks that would violate `min_chunk_size`.
-#[derive(Clone, Debug, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Copy, serde::Serialize, serde::Deserialize)]
 pub struct TokenChunker {
     /// Size of each chunk in tokens, e.g., 150 tokens
     pub chunk_size: usize,
@@ -176,7 +175,6 @@ impl TokenChunker {
     }
 
     /// Serialize the `TokenChunker` to a JSON string.
-    #[cfg(feature = "serde")]
     pub fn from_json_str(json_str: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json_str)
     }
@@ -332,7 +330,6 @@ mod tests {
     // Serialization tests
 
     #[test]
-    #[cfg(feature = "serde")]
     fn test_json_round_trip() {
         use serde_json;
 
@@ -355,7 +352,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
     fn test_from_json_str() {
         let json = r#"{"chunk_size": 150, "overlap": 15, "min_chunk_size": 30}"#;
         let chunker = TokenChunker::from_json_str(json).expect("Should parse JSON");
@@ -366,7 +362,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
     fn test_json_serialization_format() {
         // Verify JSON format is human-readable and correct
         let chunker = TokenChunker {

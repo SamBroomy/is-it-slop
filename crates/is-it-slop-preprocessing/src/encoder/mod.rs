@@ -1,28 +1,40 @@
-//! Text to the model's rectangular id grid.
+//! Text to the model's rectangular id grid — the one encoding shared by training and inference.
 //!
-//! Port of `chunk_document`/`encode_corpus` in `notebooks/hierarchical_train.py`: strip, tokenize
-//! through the shared preprocessing crate, apply the vocabulary, and cut constant-size
-//! non-overlapping chunks, padding the remainder. No cleaner runs here — the released parquets
-//! were cleaned during curation and the Python trainer applies none either (the known skew
-//! recorded in `NEXT_RELEASE.md` Phase 2).
-//!
-//! This is the seam `NEXT_RELEASE` plans to move into `is-it-slop-preprocessing` as
-//! `DocumentEncoder::from_bundle`, so training and inference encode through one implementation.
+//! Strip (optionally clean), tokenize, apply the vocabulary, and cut constant-size
+//! non-overlapping chunks, padding the remainder. Training builds the encoder from a fresh
+//! [`Vocabulary`]; inference reconstructs the exact same encoding from a shipped bundle via
+//! [`DocumentEncoder::from_bundle`].
 
-use is_it_slop_preprocessing::pre_processor::tokenize;
+mod vocabulary;
 
-use super::{EncodedDocument, Vocabulary};
+pub use vocabulary::{O200K_CEILING, Vocabulary};
+
+use crate::pre_processor::{text_cleaner_for_inference, tokenize};
+
+/// Failures loading or validating encoder artifacts.
+#[derive(Debug, thiserror::Error)]
+pub enum EncoderError {
+    /// Filesystem failure.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// Vocabulary (de)serialization failure.
+    #[error(transparent)]
+    Safetensors(#[from] safetensors::SafeTensorError),
+    /// `encoder_config.json` (de)serialization failure.
+    #[error(transparent)]
+    Config(#[from] serde_json::Error),
+    /// The artifact does not match the encoding contract.
+    #[error("{0}")]
+    Contract(String),
+}
 
 /// The bundle's `encoder_config.json`: everything inference needs to reproduce this encoding.
-///
-/// Key names match what `notebooks/hierarchical_train.py` wrote, so any consumer reads both.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct EncoderBundleConfig {
-    /// Which build of the shared preprocessing crate produced this bundle; inference must
-    /// tokenize identically.
-    pub preprocessing_version: &'static str,
+    /// Which build of this crate produced the bundle; inference must tokenize identically.
+    pub preprocessing_version: String,
     /// The BPE scheme behind the token ids.
-    pub tokenizer: &'static str,
+    pub tokenizer: String,
     /// Tokens per chunk.
     pub chunk_size: usize,
     /// The training-time chunk budget; the network accepts any count.
@@ -39,16 +51,43 @@ pub struct EncoderBundleConfig {
     pub pad_id: u16,
 }
 
+/// One document, encoded to the rectangular `[max_chunks * chunk_size]` grid of compact token
+/// ids (padding included), plus its label.
+///
+/// Ids are `u16`: the vocabulary asserts `vocab_size + 2` fits, and the compact width keeps a
+/// full encoded split ~4x smaller in memory than wide ids would.
+#[derive(Debug, Clone)]
+pub struct EncodedDocument {
+    /// Compact token ids, row-major `[max_chunks, chunk_size]`.
+    pub ids: Vec<u16>,
+    /// 1.0 for AI, 0.0 for human.
+    pub label: f32,
+}
+
+/// Whether the encoder cleans text before tokenizing.
+///
+/// The training parquets were cleaned during dataset curation, so the training path tokenizes
+/// them as-is; raw user input at inference gets the universal cleanup first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextCleaning {
+    /// Tokenize the input as-is (training on curated data).
+    Off,
+    /// Apply the universal inference cleaner first (raw user input).
+    Inference,
+}
+
 /// Encodes documents into `[max_chunks, chunk_size]` grids of compact ids.
 pub struct DocumentEncoder {
     vocabulary: Vocabulary,
     chunk_size: usize,
     max_chunks: usize,
     min_fill: f64,
+    cleaning: TextCleaning,
 }
 
 impl DocumentEncoder {
     /// The frozen encoding: 192-token chunks, 8-chunk training budget, 10% minimum fill.
+    /// Cleaning is off — the training path encodes curated data.
     #[must_use]
     pub const fn new(vocabulary: Vocabulary) -> Self {
         Self {
@@ -56,7 +95,49 @@ impl DocumentEncoder {
             chunk_size: 192,
             max_chunks: 8,
             min_fill: 0.10,
+            cleaning: TextCleaning::Off,
         }
+    }
+
+    /// Reconstruct the encoder a bundle shipped: the exact grid shape and vocabulary the model
+    /// was trained with, with inference cleaning on for raw user input.
+    pub fn from_bundle(vocab_bytes: &[u8], config_json: &str) -> Result<Self, EncoderError> {
+        let config: EncoderBundleConfig = serde_json::from_str(config_json)?;
+        if config.tokenizer != "o200k_base" {
+            return Err(EncoderError::Contract(format!(
+                "bundle tokenizer {:?} is not o200k_base",
+                config.tokenizer
+            )));
+        }
+        if config.overlap != 0 {
+            return Err(EncoderError::Contract(format!(
+                "bundle overlap {} is not 0; this encoder cuts contiguous chunks",
+                config.overlap
+            )));
+        }
+        let vocabulary = Vocabulary::from_bytes(vocab_bytes)?;
+        if vocabulary.vocab_size() != config.vocab_size
+            || vocabulary.oov_id() != config.oov_id
+            || vocabulary.pad_id() != config.pad_id
+        {
+            return Err(EncoderError::Contract(format!(
+                "vocabulary ({} rows, oov {}, pad {}) disagrees with encoder_config.json \
+                 ({}, {}, {})",
+                vocabulary.vocab_size(),
+                vocabulary.oov_id(),
+                vocabulary.pad_id(),
+                config.vocab_size,
+                config.oov_id,
+                config.pad_id
+            )));
+        }
+        Ok(Self {
+            vocabulary,
+            chunk_size: config.chunk_size,
+            max_chunks: config.max_chunks_seen_in_training,
+            min_fill: config.min_fill,
+            cleaning: TextCleaning::Inference,
+        })
     }
 
     /// Override the grid shape (for tests and experiments; the defaults are the frozen recipe).
@@ -65,6 +146,13 @@ impl DocumentEncoder {
         self.chunk_size = chunk_size;
         self.max_chunks = max_chunks;
         self.min_fill = min_fill;
+        self
+    }
+
+    /// Override the cleaning mode.
+    #[must_use]
+    pub const fn with_cleaning(mut self, cleaning: TextCleaning) -> Self {
+        self.cleaning = cleaning;
         self
     }
 
@@ -86,14 +174,12 @@ impl DocumentEncoder {
         &self.vocabulary
     }
 
-    /// Everything the bundle's `encoder_config.json` records, matching the Python trainer's keys.
+    /// Everything the bundle's `encoder_config.json` records.
     #[must_use]
     pub fn bundle_config(&self) -> EncoderBundleConfig {
         EncoderBundleConfig {
-            // The preprocessing crate is version-locked to the workspace (`=` pin in the root
-            // Cargo.toml), so this crate's own version identifies the tokenizer build.
-            preprocessing_version: env!("CARGO_PKG_VERSION"),
-            tokenizer: "o200k_base",
+            preprocessing_version: env!("CARGO_PKG_VERSION").to_string(),
+            tokenizer: "o200k_base".to_string(),
             chunk_size: self.chunk_size,
             max_chunks_seen_in_training: self.max_chunks,
             min_fill: self.min_fill,
@@ -104,21 +190,34 @@ impl DocumentEncoder {
         }
     }
 
+    /// Clean (per the encoder's mode), trim, and tokenize; tokenization parallelizes internally
+    /// for large batches.
+    fn token_lists<T: AsRef<str> + Sync>(&self, texts: &[T]) -> Vec<Vec<u32>> {
+        match self.cleaning {
+            TextCleaning::Off => {
+                let trimmed: Vec<&str> = texts.iter().map(|t| t.as_ref().trim()).collect();
+                tokenize(&trimmed)
+            }
+            TextCleaning::Inference => {
+                let cleaner = text_cleaner_for_inference();
+                let cleaned: Vec<String> = cleaner.clean_batch(texts);
+                let trimmed: Vec<&str> = cleaned.iter().map(|t| t.trim()).collect();
+                tokenize(&trimmed)
+            }
+        }
+    }
+
     /// Encode a batch of raw texts with their labels, one grid per document.
     ///
     /// A document longer than the grid is truncated — this is the evaluation-side encoding,
-    /// where one document must yield exactly one prediction. Texts are trimmed before
-    /// tokenization, as the Python cache builder did; tokenization parallelizes internally for
-    /// large batches.
+    /// where one document must yield exactly one prediction.
     pub fn encode_batch<T: AsRef<str> + Sync>(
         &self,
         texts: &[T],
         labels: &[f32],
     ) -> Vec<EncodedDocument> {
         assert_eq!(texts.len(), labels.len());
-        let trimmed: Vec<&str> = texts.iter().map(|t| t.as_ref().trim()).collect();
-        let token_lists = tokenize(&trimmed);
-        token_lists
+        self.token_lists(texts)
             .iter()
             .zip(labels)
             .map(|(tokens, &label)| EncodedDocument {
@@ -144,9 +243,7 @@ impl DocumentEncoder {
         labels: &[f32],
     ) -> Vec<EncodedDocument> {
         assert_eq!(texts.len(), labels.len());
-        let trimmed: Vec<&str> = texts.iter().map(|t| t.as_ref().trim()).collect();
-        let token_lists = tokenize(&trimmed);
-        token_lists
+        self.token_lists(texts)
             .iter()
             .zip(labels)
             .flat_map(|(tokens, &label)| {
@@ -318,5 +415,33 @@ mod tests {
         assert_eq!(got[0], 0);
         assert_eq!(got[1], enc.vocabulary().oov_id());
         assert_eq!(got[2], 3);
+    }
+
+    #[test]
+    fn from_bundle_round_trips_the_shipped_encoding() {
+        let vocab = Vocabulary::from_token_lists(&[vec![0, 1, 2, 3, 4, 5]], 6);
+        let training_encoder = DocumentEncoder::new(vocab).with_grid(4, 3, 0.10);
+        let config_json = serde_json::to_string(&training_encoder.bundle_config()).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let vocab_path = dir.path().join("token_vocabulary.safetensors");
+        training_encoder.vocabulary().save(&vocab_path).unwrap();
+        let vocab_bytes = std::fs::read(&vocab_path).unwrap();
+
+        let restored = DocumentEncoder::from_bundle(&vocab_bytes, &config_json).unwrap();
+        assert_eq!(restored.chunk_size(), 4);
+        assert_eq!(restored.max_chunks(), 3);
+        assert_eq!(restored.cleaning, TextCleaning::Inference);
+
+        // Grids agree between the training encoder and the reconstructed one.
+        let tokens: Vec<u32> = (0..10).collect();
+        assert_eq!(restored.grid(&tokens), training_encoder.grid(&tokens));
+
+        // A config that disagrees with the vocabulary is refused.
+        let mut bad: EncoderBundleConfig =
+            serde_json::from_str(&config_json).expect("config parses");
+        bad.vocab_size = 999;
+        let bad_json = serde_json::to_string(&bad).unwrap();
+        assert!(DocumentEncoder::from_bundle(&vocab_bytes, &bad_json).is_err());
     }
 }

@@ -38,5 +38,4 @@ Both `PyPI Publish` and `Release Assets` accept a `workflow_dispatch` with a `ta
 
 | Crate | `python` | `cli` |
 | --- | --- | --- |
-| `is-it-slop-preprocessing` | `bincode, numpy, progress-bars, pyo3, pyo3-log, rkyv, serde` | — |
 | `is-it-slop` | `pyo3` | `clap, serde, anyhow` |

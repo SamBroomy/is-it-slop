@@ -57,14 +57,6 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Preprocessing bindings
-        working-directory: python/is-it-slop-preprocessing
-        run: |
-          uv sync --dev --no-install-project -q
-          uv run maturin develop --uv -q
-          uv run ruff check
-          uv run pytest tests/ -q
-
       - name: Inference bindings
         working-directory: python/is-it-slop
         run: |

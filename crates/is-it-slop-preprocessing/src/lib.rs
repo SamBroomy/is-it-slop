@@ -6,10 +6,8 @@
 //! 2. **Tokenization** — text → BPE token IDs using tiktoken `o200k_base`
 //! 3. **Chunking** — token IDs → fixed-size segments for long documents
 //!
-//! Used from both training (via Python bindings) and inference (native Rust).
-//! Large batches parallelize automatically via rayon.
+//! Used from both training and inference so text becomes the same token grid
+//! everywhere. Large batches parallelize automatically via rayon.
 
-#[cfg(feature = "python")]
-mod python;
-
+pub mod encoder;
 pub mod pre_processor;
