@@ -1,6 +1,6 @@
 [project]
 name = "is-it-slop-package"
-version = "0.3.2"
+version = "0.4.0"
 description = "Extremely fast embedded AI text detector, using classic ML, written and served in rust."
 authors = [
     { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
