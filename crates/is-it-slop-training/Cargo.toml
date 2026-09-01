@@ -39,6 +39,7 @@ burn = { workspace = true, features = ["std", "autodiff", "train", "tui",
     "autotune","fusion"] }
 burn-store = { workspace = true }
 clap = { workspace = true }
+is-it-slop-model = { workspace = true }
 is-it-slop-preprocessing = { workspace = true }
 polars = { workspace = true }
 safetensors = { workspace = true }

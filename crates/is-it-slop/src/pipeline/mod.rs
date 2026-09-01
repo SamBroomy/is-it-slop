@@ -5,28 +5,26 @@
 //!
 //! # Pipeline Flow
 //!
-//! 1. **Text Cleaning**: Remove HTML entities, encoding artifacts (universal cleaning only)
-//! 2. **Tokenization**: Convert text to BPE token IDs using tiktoken `o200k_base`
-//! 3. **Chunking**: Split token sequences into overlapping 150-token chunks
-//! 4. **Vectorization**: Transform chunks to sparse TF-IDF feature vectors
-//! 5. **ONNX Inference**: Run batched prediction on all chunks
-//! 6. **Aggregation**: Combine chunk predictions into document-level result
+//! 1. **Encoding**: clean (universal rules), tokenize with tiktoken `o200k_base`, map tokens
+//!    through the bundle vocabulary, and tile into 192-token chunks — the exact encoding the
+//!    model was trained with, reconstructed from the shipped bundle
+//! 2. **Forward pass**: one Burn forward over `[batch, chunks, 192]`; the network's document
+//!    head aggregates the chunks (learned end to end — nothing outside the model recombines
+//!    chunk scores)
+//! 3. **Calibration**: document probability = `sigmoid(doc_logit / T)`; the shipped
+//!    classification threshold was fitted on these calibrated probabilities
 //!
-//! # Aggregation Methods
-//!
-//! Multiple strategies for combining chunk predictions:
-//! - [`AggregationMethod::Mean`]: Simple average of chunk probabilities
-//! - [`AggregationMethod::Max`]: Most suspicious chunk (highest AI probability)
-//! - [`AggregationMethod::WeightedMean`]: Weight by distance from threshold (default)
+//! Long documents are *not* truncated: the chunk axis is dynamic, so every full window of the
+//! document goes through the same forward pass (up to [`MAX_WINDOWS_PER_DOCUMENT`]).
 //!
 //! # Public API
 //!
-//! - [`predict`]: Single text prediction with aggregation
-//! - [`predict_batch`]: Batch prediction for multiple texts
+//! - [`predict`]: single text prediction
+//! - [`predict_batch`]: batch prediction for multiple texts
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust
 //! use is_it_slop::Predictor;
 //!
 //! let predictor = Predictor::new();
@@ -44,153 +42,116 @@
 mod classification;
 mod prediction;
 
-use std::sync::Mutex;
-
+use burn::tensor::activation::sigmoid;
+use burn::tensor::{Int, Tensor};
 pub use classification::Classification;
 pub use error::{PipelineError, Result};
-use is_it_slop_preprocessing::pre_processor::{text_cleaner_for_inference, tokenize};
-use ndarray::Ix2;
-use ort::{
-    session::Session,
-    value::{Tensor, Value},
-};
-pub use prediction::{AggregationMethod, Prediction, UnifiedPrediction};
-use sprs::CsMat;
+pub use prediction::{ChunkInfo, ConfidenceMetrics, Prediction, UnifiedPrediction};
 
-use crate::model::{PRE_PROCESSOR, TOKEN_CHUNKER};
+use crate::model::{Backend, CALIBRATION_TEMPERATURE, ENCODER, MODEL};
 
-fn prepare_input_for_inference(
-    input_vector: &CsMat<f32>,
-) -> ort::Result<Value<ort::value::TensorValueType<f32>>> {
-    let dense = input_vector.to_dense();
-    let shape = dense.shape().to_vec();
-    let data = dense.into_raw_vec_and_offset().0.into_boxed_slice();
-    Tensor::from_array((shape, data))
-}
+/// Cap on `max_chunks`-sized windows per document (~49k tokens at the shipped encoding).
+///
+/// The chunk axis is dynamic but batch memory grows with the longest document, so extremely
+/// long inputs are judged on their first ~49k tokens.
+pub const MAX_WINDOWS_PER_DOCUMENT: usize = 32;
 
-fn run_model_inference(
-    model: &mut Session,
-    input: Value<ort::value::TensorValueType<f32>>,
-) -> ort::Result<ort::session::SessionOutputs<'_>> {
-    let input_name = model.inputs()[0].name().to_string();
-    let inputs = ort::inputs![input_name => input];
-    model.run(inputs)
-}
+/// Run the model over already-validated texts, one forward pass for the whole batch.
+fn infer(texts: &[&str]) -> Vec<UnifiedPrediction> {
+    let chunk_size = ENCODER.chunk_size();
+    let window_chunks = ENCODER.max_chunks();
+    let pad = ENCODER.vocabulary().pad_id();
 
-fn parse_model_outputs_batch(
-    outputs: &ort::session::SessionOutputs<'_>,
-) -> ort::Result<Vec<Prediction>> {
-    let probs_array = outputs[1]
-        .try_extract_array::<f32>()?
-        .into_dimensionality::<Ix2>()
-        .expect("valid 2d array");
+    let mut window_grids = ENCODER.encode_batch_windows(texts);
+    for windows in &mut window_grids {
+        windows.truncate(MAX_WINDOWS_PER_DOCUMENT);
+    }
 
-    Ok(probs_array
-        .outer_iter()
-        .map(|row| [row[0], row[1]].into())
-        .collect())
-}
+    let batch = window_grids.len();
+    let max_chunks = window_grids
+        .iter()
+        .map(|w| w.len() * window_chunks)
+        .max()
+        .expect("at least one text")
+        .max(1);
 
-fn run_inference_batch(
-    model: &mut Session,
-    input: Value<ort::value::TensorValueType<f32>>,
-) -> ort::Result<Vec<Prediction>> {
-    let outputs = run_model_inference(model, input)?;
-    parse_model_outputs_batch(&outputs)
+    // One rectangular id block; documents shorter than the widest one are padded with pad-id
+    // chunks, which the model masks out of every pooling step.
+    let mut ids = vec![i64::from(pad); batch * max_chunks * chunk_size];
+    for (doc, windows) in window_grids.iter().enumerate() {
+        let doc_offset = doc * max_chunks * chunk_size;
+        for (w, grid) in windows.iter().enumerate() {
+            let start = doc_offset + w * window_chunks * chunk_size;
+            for (slot, &id) in ids[start..start + grid.len()].iter_mut().zip(grid) {
+                *slot = i64::from(id);
+            }
+        }
+    }
+
+    let device = burn::backend::flex::FlexDevice;
+    let ids = Tensor::<Backend, 1, Int>::from_ints(ids.as_slice(), &device)
+        .reshape([batch, max_chunks, chunk_size]);
+
+    let output = MODEL.forward(ids);
+
+    let doc_probs: Vec<f32> = sigmoid(output.doc_logits / f64::from(CALIBRATION_TEMPERATURE))
+        .into_data()
+        .to_vec()
+        .expect("document probabilities");
+    let chunk_probs: Vec<f32> = sigmoid(output.chunk_logits)
+        .into_data()
+        .to_vec()
+        .expect("chunk probabilities");
+    let chunk_mask: Vec<bool> = output.chunk_mask.into_data().to_vec().expect("chunk mask");
+
+    doc_probs
+        .iter()
+        .enumerate()
+        .map(|(doc, &p)| {
+            let row = doc * max_chunks..(doc + 1) * max_chunks;
+            let real_chunk_probs: Vec<f32> = chunk_probs[row.clone()]
+                .iter()
+                .zip(&chunk_mask[row])
+                .filter_map(|(&prob, &real)| real.then_some(prob))
+                .collect();
+            UnifiedPrediction::new(p, &real_chunk_probs)
+        })
+        .collect()
 }
 
 /// Predict classification for a single text.
 ///
-/// Runs the complete pipeline: clean → tokenize → chunk → vectorize → ONNX → aggregate.
-///
-/// # Arguments
-///
-/// * `session` - ONNX Runtime session (typically [`MODEL`](crate::model::MODEL))
-/// * `input` - Text to classify
-/// * `agg_method` - Strategy for combining chunk predictions
-///
-/// # Returns
-///
-/// [`UnifiedPrediction`] containing aggregated probabilities, individual chunk predictions,
-/// and chunk agreement score.
+/// Runs the complete pipeline: encode → forward → calibrate.
 ///
 /// # Example
 ///
 /// ```rust
-/// use is_it_slop::{
-///     model::MODEL,
-///     pipeline::{AggregationMethod, PipelineError, predict},
-/// };
+/// use is_it_slop::pipeline::{PipelineError, predict};
 ///
-/// let result = predict(&MODEL, "Some text", AggregationMethod::default())?;
+/// let result = predict("Some text")?;
 /// println!(
 ///     "AI probability: {:.2}%",
 ///     result.prediction.ai_probability() * 100.0
 /// );
 /// # Ok::<(), PipelineError>(())
 /// ```
-pub fn predict(
-    session: &Mutex<Session>,
-    input: &str,
-    agg_method: AggregationMethod,
-) -> Result<UnifiedPrediction> {
+pub fn predict(input: &str) -> Result<UnifiedPrediction> {
     if input.trim().is_empty() {
         return Err(PipelineError::EmptyInput);
     }
-    let input = text_cleaner_for_inference().clean(input);
-    if input.trim().is_empty() {
-        return Err(PipelineError::EmptyInput);
-    }
-    let tokens = tokenize(&[input]);
-    let tokens = tokens[0].as_ref();
-
-    let chunks = TOKEN_CHUNKER.chunk(tokens);
-
-    // Capture token count for single-chunk documents
-    let single_chunk_token_count = if chunks.len() == 1 {
-        Some(chunks[0].len())
-    } else {
-        None
-    };
-
-    let chunk_features = PRE_PROCESSOR.vectorize_from_tokens(&chunks);
-    let input_tensor = prepare_input_for_inference(&chunk_features)?;
-
-    let output = {
-        let mut model = session.lock().unwrap();
-        run_inference_batch(&mut model, input_tensor)
-    }?;
-
-    let mut prediction = UnifiedPrediction::new(output, agg_method);
-    prediction.single_chunk_token_count = single_chunk_token_count;
-    Ok(prediction)
+    let mut results = infer(&[input]);
+    Ok(results.remove(0))
 }
 
-/// Predict classifications for multiple texts.
-///
-/// Processes texts in parallel through the pipeline. Each text is independently:
-/// cleaned → tokenized → chunked → vectorized → predicted → aggregated.
-///
-/// # Arguments
-///
-/// * `session` - ONNX Runtime session (typically [`MODEL`](crate::model::MODEL))
-/// * `inputs` - Slice of texts to classify
-/// * `agg_method` - Strategy for combining chunk predictions (applied to each text)
-///
-/// # Returns
-///
-/// Vector of [`UnifiedPrediction`] values, one per input text.
+/// Predict classifications for multiple texts in one forward pass.
 ///
 /// # Example
 ///
 /// ```rust
-/// use is_it_slop::{
-///     model::MODEL,
-///     pipeline::{AggregationMethod, PipelineError, predict_batch},
-/// };
+/// use is_it_slop::pipeline::{PipelineError, predict_batch};
 ///
 /// let texts = vec!["Text 1", "Text 2", "Text 3"];
-/// let results = predict_batch(&MODEL, &texts, AggregationMethod::default())?;
+/// let results = predict_batch(&texts)?;
 ///
 /// for (i, result) in results.iter().enumerate() {
 ///     println!(
@@ -201,11 +162,7 @@ pub fn predict(
 /// }
 /// # Ok::<(), PipelineError>(())
 /// ```
-pub fn predict_batch(
-    session: &Mutex<Session>,
-    inputs: &[&str],
-    agg_method: AggregationMethod,
-) -> Result<Vec<UnifiedPrediction>> {
+pub fn predict_batch(inputs: &[&str]) -> Result<Vec<UnifiedPrediction>> {
     if inputs.is_empty() {
         return Err(PipelineError::EmptyInput);
     }
@@ -215,58 +172,7 @@ pub fn predict_batch(
     if inputs.iter().all(|i| i.trim().is_empty()) {
         return Err(PipelineError::EmptyInput);
     }
-    let text_cleaner = text_cleaner_for_inference();
-    let a = inputs
-        .iter()
-        .map(|i| text_cleaner.clean(i))
-        .collect::<Vec<_>>();
-    let tokens = tokenize(&a);
-
-    let chunked_inputs = TOKEN_CHUNKER.chunk_batch(&tokens);
-
-    // Flatten to process all chunks at once.
-    // Keep track of chunk counts per input for later aggregation.
-    let total_chunks: usize = chunked_inputs.iter().map(Vec::len).sum();
-    let mut chunk_counts = Vec::with_capacity(chunked_inputs.len());
-    let mut single_chunk_token_counts = Vec::with_capacity(chunked_inputs.len());
-    let mut all_chunks = Vec::with_capacity(total_chunks);
-    for chunks in &chunked_inputs {
-        chunk_counts.push(chunks.len());
-        // Track token counts for single-chunk documents
-        if chunks.len() == 1 {
-            single_chunk_token_counts.push(Some(chunks[0].len()));
-        } else {
-            single_chunk_token_counts.push(None);
-        }
-        all_chunks.extend_from_slice(chunks);
-    }
-
-    let chunk_features = PRE_PROCESSOR.vectorize_from_tokens(&all_chunks);
-    let input_tensor = prepare_input_for_inference(&chunk_features)?;
-
-    let output = {
-        let mut session = session.lock().unwrap();
-        run_inference_batch(&mut session, input_tensor)
-    }?;
-
-    // Aggregate predictions back to original inputs.
-    // Use index-based slicing instead of drain() to avoid shifting elements.
-    let results: Vec<UnifiedPrediction> = {
-        let mut offset = 0;
-        chunk_counts
-            .iter()
-            .zip(single_chunk_token_counts.iter())
-            .map(|(&count, &token_count)| {
-                let chunk_preds = output[offset..offset + count].to_vec();
-                offset += count;
-                let mut prediction = UnifiedPrediction::new(chunk_preds, agg_method);
-                prediction.single_chunk_token_count = token_count;
-                prediction
-            })
-            .collect()
-    };
-
-    Ok(results)
+    Ok(infer(inputs))
 }
 
 mod error {
@@ -285,25 +191,17 @@ mod error {
         /// etc.) with no real content left after the universal cleaning step.
         #[error("Input text must be non-empty")]
         EmptyInput,
-        /// An error occurred during ONNX model inference.
-        #[error("Inference error: {0}")]
-        InferenceError(#[from] ort::Error),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::MODEL;
 
     #[test]
     fn test_predict_end_to_end() {
-        let result = predict(
-            &MODEL,
-            "This is a test sentence for the full pipeline.",
-            AggregationMethod::default(),
-        )
-        .expect("End-to-end predict should succeed");
+        let result =
+            predict("This is a test sentence for the full pipeline.").expect("predict succeeds");
 
         assert!(result.prediction.human_probability() >= 0.0);
         assert!(result.prediction.human_probability() <= 1.0);
@@ -319,13 +217,12 @@ mod tests {
 
     #[test]
     fn test_predict_batch_end_to_end() {
-        let texts = vec![
+        let texts = [
             "First test sentence.",
             "Second test sentence here.",
             "Third example of text.",
         ];
-        let results = predict_batch(&MODEL, &texts, AggregationMethod::default())
-            .expect("Batch predict should succeed");
+        let results = predict_batch(&texts).expect("batch predict succeeds");
 
         assert_eq!(results.len(), 3);
         for result in &results {
@@ -335,135 +232,62 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_matches_single() {
+        // The rectangular batch pads shorter documents with pad chunks; masking must make the
+        // batched result identical to running each text alone.
+        let long = "This sentence repeats to span multiple chunks of the encoding. ".repeat(80);
+        let texts = ["Short text.", long.as_str()];
+
+        let batched = predict_batch(&texts).expect("batch");
+        for (text, from_batch) in texts.iter().zip(&batched) {
+            let alone = predict(text).expect("single");
+            assert!(
+                (alone.prediction.ai_probability() - from_batch.prediction.ai_probability()).abs()
+                    < 1e-5,
+                "batched and single predictions disagree for {text:?}"
+            );
+            assert_eq!(
+                alone.chunk_predictions.len(),
+                from_batch.chunk_predictions.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_long_document_uses_all_chunks() {
+        // ~24 tokens * 150 ≈ 3600 tokens, past one 8-chunk (1536-token) window: the dynamic
+        // chunk axis must grow instead of truncating.
+        let long = "The quick brown fox jumps over the lazy dog while contemplating \
+                    the nature of statistical language models and their outputs. "
+            .repeat(150);
+        let result = predict(&long).expect("long predict succeeds");
+        assert!(
+            result.chunk_predictions.len() > 8,
+            "expected more than one window of chunks, got {}",
+            result.chunk_predictions.len()
+        );
+    }
+
+    #[test]
     fn test_predict_rejects_empty() {
-        assert!(predict(&MODEL, "", AggregationMethod::default()).is_err());
-        assert!(predict(&MODEL, "   \n\t  ", AggregationMethod::default()).is_err());
+        assert!(predict("").is_err());
+        assert!(predict("   \n\t  ").is_err());
     }
 
     #[test]
     fn test_predict_batch_rejects_empty() {
         let empty: &[&str] = &[];
-        assert!(predict_batch(&MODEL, empty, AggregationMethod::default()).is_err());
+        assert!(predict_batch(empty).is_err());
 
-        let all_whitespace = vec!["   ", "\t\t", "\n\n"];
-        assert!(predict_batch(&MODEL, &all_whitespace, AggregationMethod::default()).is_err());
+        let all_whitespace = ["   ", "\t\t", "\n\n"];
+        assert!(predict_batch(&all_whitespace).is_err());
     }
 
     #[test]
-    fn test_prepare_input_for_inference_shape() {
-        // Test that sparse matrix conversion produces correct tensor shape
-        use sprs::CsMat;
-
-        // Create a simple 2x3 sparse matrix
-        let indptr = vec![0, 2, 3];
-        let indices = vec![0, 2, 1];
-        let data = vec![1.0, 2.0, 3.0];
-        let sparse = CsMat::new((2, 3), indptr, indices, data);
-
-        let tensor_result = prepare_input_for_inference(&sparse);
-        assert!(
-            tensor_result.is_ok(),
-            "Should convert sparse to dense tensor"
-        );
-    }
-
-    #[test]
-    fn test_predict_empty_string_handling() {
-        // Empty string should tokenize to empty token sequence
-        // Should produce single chunk (even if empty)
-        // Document expected behavior (may need special handling)
-
-        let cleaner = text_cleaner_for_inference();
-        let cleaned = cleaner.clean("");
-        assert_eq!(cleaned, "");
-
-        let tokens = tokenize(&[cleaned]);
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].len(), 0);
-
-        // With empty tokens, chunker should return single empty chunk
-        let chunks = TOKEN_CHUNKER.chunk(&tokens[0]);
-        assert_eq!(
-            chunks.len(),
-            1,
-            "Empty input should produce single empty chunk"
-        );
-    }
-
-    #[test]
-    fn test_predict_whitespace_only() {
-        // Whitespace-only text should clean to empty or minimal content
-        let cleaner = text_cleaner_for_inference();
-        let cleaned = cleaner.clean("   \n\t  ");
-
-        // After cleaning, should have normalized whitespace
-        assert!(cleaned.trim().is_empty() || cleaned.len() <= 1);
-    }
-
-    #[test]
-    fn test_predict_only_cleaning_artifacts() {
-        // Text with artifacts that get cleaned
-        let cleaner = text_cleaner_for_inference();
-
-        // HTML entities (may or may not be cleaned depending on implementation)
-        let cleaned = cleaner.clean("&nbsp;&mdash;&quot;");
-        // Just verify it doesn't panic and produces some output
-        assert!(!cleaned.is_empty(), "Cleaning should not panic");
-
-        // Encoding artifacts - verify cleaning doesn't panic
-        let _ = cleaner.clean("\u{c3}\u{a9}\u{c3}\u{ae}\u{c3}\u{b1}");
-    }
-
-    #[test]
-    fn test_text_cleaning_inference_mode() {
-        // Verify inference uses universal cleaning only (not dataset artifacts)
-        let cleaner = text_cleaner_for_inference();
-
-        // Universal cleaning should apply
-        let cleaned = cleaner.clean("Test&nbsp;text");
-        assert!(!cleaned.contains("&nbsp;"));
-
-        // Dataset artifact cleaning should NOT apply (these are training-only)
-        // Citations like [1], [2] should remain
-        let with_citation = cleaner.clean("Test text [1] more text");
-        // In inference mode, citations might be kept (implementation-specific)
-        // The key is: no panic, consistent behavior
-        assert!(with_citation.contains("Test"));
-    }
-
-    #[test]
-    fn test_aggregation_method_default() {
-        // Verify default aggregation method uses chunk threshold
-        let default_agg = AggregationMethod::default();
-        assert!(matches!(default_agg, AggregationMethod::WeightedMean(_)));
-
-        if let AggregationMethod::WeightedMean(threshold) = default_agg {
-            assert!(*threshold > 0.0 && *threshold < 1.0);
-        }
-    }
-
-    #[test]
-    fn test_token_chunker_available() {
-        // Verify TOKEN_CHUNKER is initialized
-        let tokens: Vec<u32> = (0..200).collect();
-        let chunks = TOKEN_CHUNKER.chunk(&tokens);
-        assert!(!chunks.is_empty());
-        assert!(
-            chunks.len() > 1,
-            "200 tokens should produce multiple chunks"
-        );
-    }
-
-    #[test]
-    fn test_vectorizer_available() {
-        // Verify PRE_PROCESSOR is initialized
-        // Basic smoke test: vectorize should not panic
-        let tokens1 = vec![vec![1, 2, 3, 4, 5]];
-        let result = PRE_PROCESSOR.vectorize_from_tokens(&tokens1);
-        assert_eq!(result.rows(), 1);
-        assert!(
-            result.cols() > 0,
-            "Vectorizer should have non-zero vocabulary"
-        );
+    fn test_dispersion_present_for_multichunk() {
+        let long = "Different sentences with varied content and structure appear here. ".repeat(60);
+        let result = predict(&long).expect("predict succeeds");
+        assert!(result.chunk_predictions.len() > 1);
+        assert!(result.chunk_dispersion().is_some());
     }
 }

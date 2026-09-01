@@ -166,8 +166,9 @@ Result object with classification and probabilities:
 - `classification` (str): Either `"Human"` or `"AI"`
 - `human_probability` (float): Probability of human-written text (0.0-1.0)
 - `ai_probability` (float): Probability of AI-generated text (0.0-1.0)
-- `num_chunks` (int): Number of text chunks processed (1 for short texts, more for long)
-- `chunk_agreement` (float): Agreement across chunks (0.5-1.0). 1.0 = all chunks agree
+- `confidence` (float): Calibrated confidence (0.0-1.0). 0.0 = coin flip, 1.0 = certain
+- `num_chunks` (int): Number of 192-token chunks processed (1 for short texts, more for long)
+- `chunk_dispersion` (float | None): Std dev of per-chunk AI probabilities; high values suggest mixed human/AI content. None for single-chunk texts
 
 **Note:** `human_probability + ai_probability == 1.0`
 

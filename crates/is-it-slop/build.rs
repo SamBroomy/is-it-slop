@@ -248,8 +248,8 @@ fn main() {
 
     // Check if the model doesn't need to be downloaded (e.g docs-only build)
     let is_docs_rs = env::var("DOCS_RS").is_ok();
-    let is_stub_model = env::var("IS_IT_SLOP_STUB_MODEL").is_ok()
-        || env::var("CARGO_FEATURE_STUB_MODEL").is_ok();
+    let is_stub_model =
+        env::var("IS_IT_SLOP_STUB_MODEL").is_ok() || env::var("CARGO_FEATURE_STUB_MODEL").is_ok();
     if is_docs_rs || is_stub_model {
         println!("cargo:warning=Building with stub model artifacts (docs-only build)");
         println!(

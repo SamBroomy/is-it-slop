@@ -26,6 +26,8 @@
 //! - `human_probability`: P(Human) in [0.0, 1.0]
 //! - `ai_probability`: P(AI) in [0.0, 1.0]
 //! - `classification`: "Human" or "AI"
+//! - `confidence`: calibrated margin in [0.0, 1.0]
+//! - `num_chunks` / `chunk_dispersion`: per-chunk analysis
 
 use pyo3::prelude::*;
 
@@ -37,8 +39,10 @@ use crate::{Threshold, pipeline::PipelineError};
 ///     `human_probability` (float): Probability that the text is human-written (0.0 to 1.0)
 ///     `ai_probability` (float): Probability that the text is AI-generated (0.0 to 1.0)
 ///     classification (str): Classification label ("Human" or "AI")
-///     `num_chunks` (int): Number of text chunks processed
-///     `chunk_agreement` (float): Agreement score across chunks (0.5-1.0)
+///     confidence (float): Calibrated margin from the coin-flip point (0.0 to 1.0)
+///     `num_chunks` (int): Number of 192-token chunks the document produced
+///     `chunk_dispersion` (float | None): Std dev of chunk AI probabilities; high values
+///         suggest mixed human/AI content. None for single-chunk documents.
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 struct PredictionResult {
@@ -49,9 +53,11 @@ struct PredictionResult {
     #[pyo3(get)]
     classification: String,
     #[pyo3(get)]
+    confidence: f32,
+    #[pyo3(get)]
     num_chunks: usize,
     #[pyo3(get)]
-    chunk_agreement: f32,
+    chunk_dispersion: Option<f32>,
 }
 
 #[pymethods]
@@ -89,11 +95,6 @@ fn is_this_slop(py: Python<'_>, text: &str, threshold: Option<f32>) -> PyResult<
             PipelineError::EmptyInput => PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Input text is empty. Please provide a non-empty string.",
             ),
-            PipelineError::InferenceError(msg) => {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Inference failed: {msg}"
-                ))
-            }
         })?;
 
         let classification = prediction.classification(predictor.threshold());
@@ -103,8 +104,9 @@ fn is_this_slop(py: Python<'_>, text: &str, threshold: Option<f32>) -> PyResult<
             human_probability: prediction.prediction.human_probability(),
             ai_probability: prediction.prediction.ai_probability(),
             classification: classification.to_string(),
+            confidence: prediction.confidence(),
             num_chunks: chunk_info.num_chunks,
-            chunk_agreement: chunk_info.chunk_agreement,
+            chunk_dispersion: chunk_info.chunk_dispersion,
         })
     })
 }
@@ -131,11 +133,6 @@ fn is_this_slop_batch(
             PipelineError::EmptyInput => PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Input list is empty. Please provide at least one text.",
             ),
-            PipelineError::InferenceError(msg) => {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Inference failed: {msg}"
-                ))
-            }
         })?;
 
         let results = predictions
@@ -147,8 +144,9 @@ fn is_this_slop_batch(
                     human_probability: pred.prediction.human_probability(),
                     ai_probability: pred.prediction.ai_probability(),
                     classification: classification.to_string(),
+                    confidence: pred.confidence(),
                     num_chunks: chunk_info.num_chunks,
-                    chunk_agreement: chunk_info.chunk_agreement,
+                    chunk_dispersion: chunk_info.chunk_dispersion,
                 }
             })
             .collect();

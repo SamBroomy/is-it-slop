@@ -12,5 +12,6 @@
 
 pub mod data;
 pub mod evaluation;
-pub mod model;
 pub mod training;
+
+pub use is_it_slop_model as model;

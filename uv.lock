@@ -12,7 +12,6 @@ resolution-markers = [
 members = [
     "is-it-slop",
     "is-it-slop-package",
-    "is-it-slop-preprocessing",
 ]
 
 [[package]]
@@ -1507,7 +1506,6 @@ dependencies = [
     { name = "datasets" },
     { name = "huggingface-hub" },
     { name = "is-it-slop" },
-    { name = "is-it-slop-preprocessing" },
     { name = "kagglehub" },
     { name = "loguru" },
     { name = "matplotlib" },
@@ -1549,7 +1547,6 @@ requires-dist = [
     { name = "datasets", specifier = ">=4.4.1" },
     { name = "huggingface-hub", specifier = ">=1.1.5" },
     { name = "is-it-slop", editable = "python/is-it-slop" },
-    { name = "is-it-slop-preprocessing", editable = "python/is-it-slop-preprocessing" },
     { name = "kagglehub", specifier = ">=1.0.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "matplotlib", specifier = ">=3.10.7" },
@@ -1584,31 +1581,6 @@ dev = [
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "ruff", specifier = ">=0.14.0" },
     { name = "ty", specifier = ">=0.0.34" },
-]
-
-[[package]]
-name = "is-it-slop-preprocessing"
-source = { editable = "python/is-it-slop-preprocessing" }
-dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "maturin" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=2.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.13.1" },
-    { name = "pytest", specifier = ">=9.0.1" },
-    { name = "ruff", specifier = ">=0.15.12" },
 ]
 
 [[package]]

@@ -45,10 +45,9 @@ jobs:
             target: x86_64-pc-windows-msvc
             manylinux: null
           # macOS runners
-          # Note: x86_64-apple-darwin dropped - ort doesn't provide prebuilt ONNX Runtime binaries
-          # - runner: macos-15-intel
-          #   target: x86_64-apple-darwin
-          #   manylinux: null
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            manylinux: null
           - runner: macos-latest
             target: aarch64-apple-darwin
             manylinux: null

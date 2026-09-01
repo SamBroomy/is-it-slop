@@ -1,9 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/is-it-slop", "crates/is-it-slop-preprocessing", "crates/is-it-slop-training"]
+members = [
+    "crates/is-it-slop",
+    "crates/is-it-slop-model",
+    "crates/is-it-slop-preprocessing",
+    "crates/is-it-slop-training",
+]
 
 [workspace.package]
-version = "0.6.3"
+version = "0.7.0-alpha.1"
 edition = "2024"
 rust-version = "1.95"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
@@ -21,7 +26,7 @@ categories = [
 keywords = [
     "AI-text-detector",
     "Machine-learning",
-    "onnx",
+    "Burn",
     "text-classification",
     "ai-slop-detector",
 ]
@@ -29,7 +34,8 @@ keywords = [
 
 [workspace.dependencies]
 is-it-slop = { path = "crates/is-it-slop" }
-is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.6.3" }
+is-it-slop-model = { path = "crates/is-it-slop-model", version = "=0.7.0-alpha.1" }
+is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.7.0-alpha.1" }
 
 
 anyhow = "1.0.100"
@@ -40,15 +46,7 @@ bpe-openai = "0.3.1"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 indicatif = { version = "0.18.3", features = ["rayon"] }
 jni = "0.21"
-ndarray = "0.17"
 owo-colors = { version = "4.3", features = ["supports-colors"] }
-# ONNX Runtime with pure Rust tract backend for smaller binary size
-ort = { version = "=2.0.0-rc.12", default-features = false, features = [
-    "download-binaries",
-    "ndarray",
-    "tls-native",
-    "tracing",
-] }
 polars = { version = "0.53", default-features = false, features = [
     "parquet",
     # The released splits store `label` as Int8.
@@ -63,7 +61,6 @@ rayon = "1.11.0"
 regex = "1.12.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
-sprs = "0.11"
 thiserror = "2.0.18"
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = "0.3.20"

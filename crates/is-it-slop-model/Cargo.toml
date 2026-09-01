@@ -1,0 +1,24 @@
+[package]
+name = "is-it-slop-model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "The hierarchical slop classifier network, shared by training and inference."
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+burn = { workspace = true, features = ["std"] }
+
+[features]
+all-testable = []
+
+[dev-dependencies]
+burn = { workspace = true, features = ["std", "ndarray"] }
+
+[lints]
+workspace = true

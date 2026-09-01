@@ -254,6 +254,20 @@ impl DocumentEncoder {
             .collect()
     }
 
+    /// Encode a batch for inference: each document's full token stream as its
+    /// `max_chunks * chunk_size` window grids, nothing truncated.
+    ///
+    /// The model's chunk axis is dynamic — `max_chunks` is a training budget, not a limit — so
+    /// inference concatenates a document's windows into one `[windows * max_chunks, chunk_size]`
+    /// grid and the model masks out padding chunks wherever they fall. This is the same window
+    /// tiling as [`Self::encode_batch_split`], kept label-free and grouped per document.
+    pub fn encode_batch_windows<T: AsRef<str> + Sync>(&self, texts: &[T]) -> Vec<Vec<Vec<u16>>> {
+        self.token_lists(texts)
+            .iter()
+            .map(|tokens| self.split_grids(tokens))
+            .collect()
+    }
+
     /// One grid per `max_chunks * chunk_size` window of the tokens; see
     /// [`Self::encode_batch_split`] for the tail rule.
     fn split_grids(&self, tokens: &[u32]) -> Vec<Vec<u16>> {

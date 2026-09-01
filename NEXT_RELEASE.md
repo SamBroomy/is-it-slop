@@ -232,9 +232,14 @@ Open items, in order:
       paired with per-chunk highlighting; the doc-vs-chunk-agreement signal was measured weakest
       and dropped. The `check` subcommand re-scores full/f16/Q8 on validation and folds
       `artifact_checks` into `results.json` — run it after every training run; adopting f16 or
-      Q8 as *the* shipped form is that eval-gated decision. Remaining: the inference-crate swap
-      itself (build.rs `REQUIRED_ARTIFACTS`, the four statics, justfile `REQUIRED_FILES`,
-      `MODEL_VERSION` 4.0.0), and optionally shrinking the vocabulary LUT from i32 to u16
+      Q8 as *the* shipped form is that eval-gated decision. **The inference swap is done**:
+      `is-it-slop` embeds `model.f16.safetensors` (build.rs `MODEL_VERSION` 4.0.0) and runs it
+      on Burn's Flex CPU backend — ort, TF-IDF, sprs, and `AggregationMethod` are gone; the
+      network shares one definition via the `is-it-slop-model` crate and one text→grid path via
+      `is-it-slop-preprocessing::encoder`. Long documents are no longer truncated at inference
+      (dynamic chunk axis, capped at 32 windows ≈ 49k tokens) — a deliberate behavior change to
+      quantify on the full run's long-doc band, since T and the threshold were fit at the 8-chunk
+      eval encoding. Still optional: shrinking the vocabulary LUT from i32 to u16
       (~800KB -> ~400KB, breaking).
 - [ ] **CutMix**: port after the splitting re-baseline lands, as its own arm. The design, settled
       in review: chunk isolation makes spliced grids *clean* supervision for the chunk head (it
@@ -260,7 +265,9 @@ Open items, in order:
 ## Versioning
 
 Model artifacts **3.0.0 -> 4.0.0** — breaking: different files, different input shape, no vectorizer.
-`build.rs`, the `model_metadata.json` consumers and the `justfile` release targets all move together.
+`build.rs` and the `justfile` release targets moved together (done); `model_metadata.json` is no
+longer produced or required. The root README still describes the v3 TF-IDF/ONNX architecture and
+quotes v3 numbers — rewrite it alongside the v4 release once the full run's numbers land.
 
 Crate/package **1.0.0** once the contract above is frozen. The hesitation about the label is not the
 model — it is that 1.0.0 implies a stable contract while the three Phase 3 questions are open.
