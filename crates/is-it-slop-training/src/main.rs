@@ -104,6 +104,13 @@ fn launch<B: AutodiffBackend>(args: &Args, backend: &str, device: &B::Device) {
 
     let vocabulary = Vocabulary::build(&train_split.texts, args.vocab_size);
     std::fs::create_dir_all(&args.artifact_dir).expect("artifact dir");
+    // Clear the previous run's training outputs (as Burn's guide does) so the summary, metric
+    // logs, and checkpoints describe this run only. Nothing resumes from old checkpoints, and the
+    // model, vocabulary, and configs are re-saved below.
+    std::fs::remove_file(args.artifact_dir.join("experiment.log")).ok();
+    for stale in ["train", "valid", "checkpoint"] {
+        std::fs::remove_dir_all(args.artifact_dir.join(stale)).ok();
+    }
     vocabulary
         .save(&args.artifact_dir.join("token_vocabulary.safetensors"))
         .expect("saving the vocabulary");
