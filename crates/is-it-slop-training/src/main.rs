@@ -53,7 +53,7 @@ struct TrainArgs {
     /// Directory holding the released split parquets (train/validation/test).
     #[arg(long, default_value = "data/3.0.0")]
     data_dir: PathBuf,
-    /// Where checkpoints, metric logs, the vocabulary, and the trained model land.
+    /// Where metric logs, the vocabulary, and the trained model land.
     #[arg(long, default_value = "model_artifacts/burn")]
     artifact_dir: PathBuf,
     /// Vocabulary rows: 16384 for the accuracy/balanced picks, 8192 for minimal.
@@ -218,7 +218,7 @@ struct RunResults<'a> {
     training_config: &'a TrainingConfig,
     parameters: usize,
     train_seconds: f64,
-    /// Recovered from the newest checkpoint on disk; absent if none were written.
+    /// Recovered from the newest epoch metric logs on disk; absent if none were written.
     epochs_trained: Option<usize>,
     /// Which confidence signals rank validation errors — see [`UncertaintySignals`].
     uncertainty: UncertaintySignals,
@@ -276,9 +276,8 @@ fn uncertainty_signals(
 /// `model.safetensors` is the canonical shipped artifact (inspectable, ecosystem-standard, and
 /// the format the vocabulary already uses); `model.f16.safetensors` is the half-precision
 /// candidate, ~50% smaller; `model.bpk` is Burn's native store, a local artifact only (zero-copy
-/// embedding, and the checkpoint format once the Burn version allows it — until then checkpoints
-/// stay `MessagePack` because the `Learner`'s checkpointer takes a `Recorder`, which burn-store
-/// does not implement).
+/// embedding, and the natural checkpoint format if epoch checkpointing returns with resume
+/// support).
 fn save_model_artifacts<B: burn::tensor::backend::Backend>(
     model: &HierarchicalSlopClassifier<B>,
     artifact_dir: &Path,
@@ -307,16 +306,13 @@ fn save_model_artifacts<B: burn::tensor::backend::Backend>(
         .expect("saving model.f16.safetensors");
 }
 
-/// The last epoch that wrote a checkpoint — the number of epochs actually run.
+/// The last epoch that wrote metric logs — the number of epochs actually run.
 fn epochs_trained(artifact_dir: &Path) -> Option<usize> {
-    let entries = std::fs::read_dir(artifact_dir.join("checkpoint")).ok()?;
+    let entries = std::fs::read_dir(artifact_dir.join("train")).ok()?;
     entries
         .filter_map(|e| {
             let name = e.ok()?.file_name().into_string().ok()?;
-            name.strip_prefix("model-")?
-                .strip_suffix(".mpk")?
-                .parse()
-                .ok()
+            name.strip_prefix("epoch-")?.parse().ok()
         })
         .max()
 }

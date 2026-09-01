@@ -221,7 +221,7 @@ pub struct Batch<B: Backend> {
 }
 
 /// The classifier plus the loss weighting its steps need; this is the module the `Learner`
-/// trains and checkpoints.
+/// trains.
 #[derive(Module, Debug)]
 pub struct TrainableClassifier<B: Backend> {
     /// The network itself.
@@ -423,7 +423,7 @@ impl burn::train::renderer::MetricsRenderer for ThrottledRenderer {
 /// Run the frozen recipe on Burn's `Learner` harness.
 ///
 /// `renderer` overrides the default metrics dashboard (pass
-/// `None::<burn::train::renderer::CliMetricsRenderer>` to keep it); checkpoints, metric logs and
+/// `None::<burn::train::renderer::CliMetricsRenderer>` to keep it); metric logs and
 /// the summary land under `artifact_dir`.
 ///
 /// Three knowing deviations from the original Python loop, all from leaning on Burn's built-ins:
@@ -445,7 +445,6 @@ pub fn train<B: AutodiffBackend>(
     device: &B::Device,
     renderer: Option<impl burn::train::renderer::MetricsRenderer + 'static>,
 ) -> LearningResult<TrainableClassifier<B::InnerBackend>> {
-    use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
     use burn::train::metric::store::{Aggregate, Direction, Split};
     use burn::train::metric::{
         AccuracyMetric, AurocMetric, IterationSpeedMetric, LearningRateMetric, LossMetric,
@@ -475,8 +474,11 @@ pub fn train<B: AutodiffBackend>(
         },
     );
 
-    // Full precision checkpoints: a resumed or reloaded model must carry the trained weights,
-    // not an f16 rounding of them.
+    // No epoch checkpointer: nothing resumes from checkpoints yet (NEXT_RELEASE, "Resume a
+    // training run"), the returned model carries the final weights, and burn 0.21's
+    // AsyncCheckpointer races the fusion backend — a checkpointer-thread panic ("Should have
+    // handle for tensor") killed a full run at the next epoch's checkpoint hand-off
+    // (SendError abort). Checkpoints return with resume support, on a sync recorder.
     let mut training = SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_valid)
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
@@ -485,7 +487,6 @@ pub fn train<B: AutodiffBackend>(
         .metric_valid_numeric(AccuracyMetric::new())
         .metric_train_numeric(LearningRateMetric::new())
         .metric_train(IterationSpeedMetric::new())
-        .with_file_checkpointer(NamedMpkFileRecorder::<FullPrecisionSettings>::new())
         .early_stopping(early_stopping)
         .num_epochs(config.epochs)
         .summary();
