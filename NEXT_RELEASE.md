@@ -255,6 +255,22 @@ Open items, in order:
       quantify on the full run's long-doc band, since T and the threshold were fit at the 8-chunk
       eval encoding. Still optional: shrinking the vocabulary LUT from i32 to u16
       (~800KB -> ~400KB, breaking).
+- [ ] **Resume a training run.** A killed or crashed run currently restarts from scratch even
+      though the `Learner` writes full-precision checkpoints every epoch — wire up
+      checkpoint resume (a `--resume`/`--from-checkpoint` flag on `train`) so a multi-hour full
+      run survives interruption. Care points: the LR schedule and early-stopping state must
+      resume from the same step, and the encoded-split/vocabulary must be rebuilt identically
+      (seeded, so they are).
+- [ ] **Improve the training CLI.** The `train` subcommand exposes a fraction of what the Python
+      trainer took (the richer clap surface was explicitly deferred): batch size, epochs,
+      patience, LR, chunk-loss weight, dropout are all recompile-only today. Bring the
+      `TrainingConfig` knobs up as flags with the frozen recipe as defaults, and make `check`
+      accept a specific weights file rather than assuming the artifact-dir layout.
+- [ ] **Regression benchmarks** (late-game want): a small runnable suite that pins today's
+      numbers so upgrades (Burn 0.22, toolchains) can't silently regress — training throughput
+      (`examples/step_bench.rs` already exists; give it a recorded baseline), inference
+      latency/throughput on the Flex backend, and end-model quality via a fixed `--limit` run
+      with a tolerance band.
 - [ ] **CutMix**: port after the splitting re-baseline lands, as its own arm. The design, settled
       in review: chunk isolation makes spliced grids *clean* supervision for the chunk head (it
       sees only its own chunk, so per-chunk labels from different source documents are exact);
