@@ -186,6 +186,20 @@ It does far too much at import time:
 Wanted: paths and constants as plain values or a small function, no argv parsing, no I/O and no
 directory creation at import, and one source of truth for the model version shared with `build.rs`.
 
+### Port dataset curation to Rust
+
+`notebooks/dataset_curation.py` is **currently broken**: it imported `TextCleaner`/`tokenize` from
+the preprocessing Python bindings, which were removed with the rest of the Python training env
+(the training-time cleaning and tokenization it needs still exist in Rust — only the bindings are
+gone). It is the last Python step in the pipeline: download the source datasets (kagglehub,
+HuggingFace), clean, dedupe, stratify, and write the released `data/<version>` parquet splits.
+Port it as a `dataset-curation` subcommand or crate alongside `is-it-slop-training` — polars is
+already a workspace dependency, and the cleaner/tokenizer are one crate away. Until then, curating
+a new dataset version means either resurrecting the bindings locally (`git checkout 9725e29 --
+crates/is-it-slop-preprocessing python/is-it-slop-preprocessing` and `maturin develop`) or calling
+tiktoken directly from Python. The existing `data/3.0.0` splits are unaffected — training runs
+read the released parquets and never re-curate.
+
 ## Burn training port
 
 The training pipeline is ported to Rust (`crates/is-it-slop-training`, Burn 0.21) and **passed the
