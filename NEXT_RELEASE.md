@@ -211,14 +211,29 @@ Open items, in order:
       benches with `examples/step_bench.rs` + `notebooks/step_bench.py`. Known sharp edge: a
       forward-only loop on the `Autodiff` backend leaks and gets SIGKILLed — validation belongs
       on the inner backend.
-- [ ] **Evaluation harness**: the binary reports full-split AUC only. Threshold fitting
-      (best-F1, precision>=0.99 on validation), per-dataset and per-length breakdowns still live in
-      Python (`compare_models.py`); port or keep, decide with the artifact contract.
-- [ ] **Artifact contract**: Burn cannot export ONNX, so shipping the Burn-trained model means
-      Burn-native inference (record/Burnpack + the existing `token_vocabulary.safetensors`) and
-      retiring `ort` — the Phase 3/4 decision this port was building toward. The trained bundle
-      currently saves `model.mpk` + vocabulary + configs.
-- [ ] **CutMix** remains unported pending the chunk-output decision (its deltas are inside noise).
+- [ ] **Evaluation harness**: threshold fitting (best-F1, precision>=0.99) and an uncertainty
+      block (temperature calibration plus three error-ranking confidence signals: calibrated
+      margin, chunk dispersion, doc-vs-chunk agreement) are ported and land in `results.json`
+      each run. Still Python-only: per-dataset and per-length breakdowns (`compare_models.py`) —
+      the per-length one is also how the long-document-splitting arm gets judged. Plan: a light
+      script over the inference Python bindings once those run the Burn model; the notebooks
+      retire then.
+- [ ] **Artifact contract**: weight formats decided and emitted — `model.safetensors` is the
+      canonical shipped artifact (inspectable, consistent with the vocabulary), `model.bpk` the
+      zero-copy-embeddable Burn-native store (`BurnpackStore::from_static`; safetensors embeds
+      via `from_bytes` with one ~4.6MB memcpy at startup, irrelevant at this size), and
+      `model.f16.safetensors` the half-size candidate whose validation-AUC cost is measured
+      in-run (`results.json` `artifact_checks`). Q8 min-max quantization is measured in-run too
+      but not yet emitted; adopting it (or f16) as *the* shipped form is an eval-gated decision.
+      Remaining: the inference-crate swap itself (build.rs `REQUIRED_ARTIFACTS`, the four
+      statics, justfile `REQUIRED_FILES`, `MODEL_VERSION` 4.0.0), and optionally shrinking the
+      vocabulary LUT from i32 to u16 (~800KB -> ~400KB, breaking). Checkpoints stay MessagePack
+      until the 0.22 migration — the `Learner` checkpointer takes a `Recorder`, which burn-store
+      does not implement.
+- [ ] **CutMix** remains unported pending the chunk-output decision (its deltas are inside
+      noise). Long-document splitting does not conflict with it — splitting feeds more
+      single-source grids; CutMix splices across documents for per-chunk labels — but porting it
+      needs `Batch` to carry chunk labels instead of deriving them from the document label.
 
 ## Versioning
 
