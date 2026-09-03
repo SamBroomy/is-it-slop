@@ -316,3 +316,6 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 - ~~`--max-chunks` for the shipped model.~~ **Answered**: k=16 ties k=8 on headline and buys only
   the 2000+-token tail (0.9984 -> 0.9992 on 3.2% of docs) at 2.7x train cost. k=32 has nothing left
   to win. Ship k=8 unless the long tail matters to the product.
+
+- Proper error types in the library interface.
+- Speed benchmarks on infrence.
