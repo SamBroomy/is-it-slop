@@ -319,7 +319,9 @@ mod tests {
     fn chunk_texts_line_up_with_chunk_predictions() {
         let long =
             "Each sentence here adds a handful of tokens to the running document. ".repeat(120);
-        for text in ["Short text.", "  padded  ", long.as_str()] {
+        // `""` (two quote characters) is non-blank but cleans to nothing: the model's slot-0
+        // rule still yields one chunk prediction, so one (empty) chunk text must match it.
+        for text in ["Short text.", "  padded  ", "\"\"", long.as_str()] {
             let chunks = chunk_texts(text);
             let prediction = predict(text).expect("predict");
             assert_eq!(

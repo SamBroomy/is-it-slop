@@ -87,10 +87,6 @@ impl Pretty {
             return Ok(());
         }
 
-        if let Some(chunk_texts) = &scored.chunk_texts {
-            self.write_chunks(out, &prediction.chunk_predictions, chunk_texts)?;
-        }
-
         if self.detail == Detail::Verbose && prediction.chunk_predictions.len() > 1 {
             let chunk_info = prediction.chunk_info();
             writeln!(out)?;
@@ -140,6 +136,11 @@ impl Pretty {
                 "{}",
                 self.paint("Low confidence — prediction uncertain", STYLE_WARN)
             )?;
+        }
+
+        // Last: the list can be long, and the summary above should not scroll away.
+        if let Some(chunk_texts) = &scored.chunk_texts {
+            self.write_chunks(out, &prediction.chunk_predictions, chunk_texts)?;
         }
         Ok(())
     }
