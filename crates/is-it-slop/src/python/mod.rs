@@ -167,7 +167,7 @@ fn is_this_slop_batch(
 fn cli_main() -> PyResult<()> {
     use clap::Parser;
 
-    use crate::cli::{Cli, Commands, RunOutcome, run};
+    use crate::cli::{Cli, Commands, run};
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -196,14 +196,15 @@ fn cli_main() -> PyResult<()> {
     }
 
     match run(&cli) {
-        Ok(RunOutcome::Normal | RunOutcome::ClassifyAi | RunOutcome::ClassifyHuman) => {}
+        Ok(0) => Ok(()),
+        Ok(code) => Err(PyErr::new::<pyo3::exceptions::PySystemExit, _>(i32::from(
+            code,
+        ))),
         Err(e) => {
             eprintln!("Error: {e:#}");
-            return Err(PyErr::new::<pyo3::exceptions::PySystemExit, _>(1));
+            Err(PyErr::new::<pyo3::exceptions::PySystemExit, _>(1))
         }
     }
-
-    Ok(())
 }
 
 #[pymodule]

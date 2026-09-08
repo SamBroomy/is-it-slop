@@ -29,7 +29,8 @@ pub enum Framing {
     Lines,
     /// A JSON array of strings or `{"id": ..., "text": ...}` objects.
     Json,
-    /// One JSON string or `{"id": ..., "text": ...}` object per line.
+    /// One JSON string or `{"id": ..., "text": ...}` object per line; stops at the first
+    /// malformed record.
     Jsonl,
 }
 
@@ -113,6 +114,15 @@ pub struct Document {
     pub text: String,
 }
 
+/// A document that could not be read, identified so it can be reported in its place.
+#[derive(Debug)]
+pub struct SourceError {
+    /// What failed: the whole location, or the line or record within it.
+    pub id: DocumentId,
+    /// Why.
+    pub error: anyhow::Error,
+}
+
 /// Something the CLI can open for bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Location {
@@ -188,12 +198,15 @@ impl Input {
 
     /// The documents, in order. A location that cannot be opened, read or parsed yields an
     /// error item in its place.
-    pub fn documents(&self) -> impl Iterator<Item = Result<Document>> + '_ {
+    pub fn documents(&self) -> impl Iterator<Item = Result<Document, SourceError>> + '_ {
         self.locations
             .iter()
             .flat_map(move |location| match location.open() {
                 Ok(reader) => frame(reader, location.source(), self.framing),
-                Err(e) => Box::new(iter::once(Err(e))),
+                Err(error) => Box::new(iter::once(Err(SourceError {
+                    id: DocumentId::Whole(location.source()),
+                    error,
+                }))),
             })
     }
 }
@@ -203,33 +216,37 @@ fn frame<'a>(
     reader: Box<dyn BufRead + 'a>,
     source: Source,
     framing: Framing,
-) -> Box<dyn Iterator<Item = Result<Document>> + 'a> {
+) -> Box<dyn Iterator<Item = Result<Document, SourceError>> + 'a> {
     match framing {
         Framing::Text => {
-            let text = read_all(reader, &source);
-            Box::new(iter::once(text.map(|text| Document {
-                id: DocumentId::Whole(source),
-                text,
-            })))
+            let id = DocumentId::Whole(source.clone());
+            let item = read_all(reader, &source)
+                .map(|text| Document {
+                    id: id.clone(),
+                    text,
+                })
+                .map_err(|error| SourceError { id, error });
+            Box::new(iter::once(item))
         }
         Framing::Lines => Box::new(reader.lines().enumerate().filter_map(move |(i, line)| {
             let index = i + 1;
+            let id = DocumentId::Record {
+                source: source.clone(),
+                index,
+                id: None,
+            };
             let line = match line {
                 Ok(line) => line,
                 Err(e) => {
-                    return Some(
-                        Err(e).with_context(|| format!("Failed to read line {index} of {source}")),
-                    );
+                    let error = anyhow::Error::new(e)
+                        .context(format!("Failed to read line {index} of {source}"));
+                    return Some(Err(SourceError { id, error }));
                 }
             };
             let text = line.trim();
             (!text.is_empty()).then(|| {
                 Ok(Document {
-                    id: DocumentId::Record {
-                        source: source.clone(),
-                        index,
-                        id: None,
-                    },
+                    id,
                     text: text.to_owned(),
                 })
             })
@@ -246,7 +263,10 @@ fn frame<'a>(
                         .enumerate()
                         .map(move |(i, record)| Ok(record.into_document(source.clone(), i + 1))),
                 ),
-                Err(e) => Box::new(iter::once(Err(e))),
+                Err(error) => Box::new(iter::once(Err(SourceError {
+                    id: DocumentId::Whole(source),
+                    error,
+                }))),
             }
         }
         Framing::Jsonl => Box::new(
@@ -257,8 +277,15 @@ fn frame<'a>(
                     let index = i + 1;
                     record
                         .map(|record| record.into_document(source.clone(), index))
-                        .with_context(|| {
-                            format!("Failed to parse JSON record {index} from {source}")
+                        .map_err(|e| SourceError {
+                            id: DocumentId::Record {
+                                source: source.clone(),
+                                index,
+                                id: None,
+                            },
+                            error: anyhow::Error::new(e).context(format!(
+                                "Failed to parse JSON record {index} from {source}"
+                            )),
                         })
                 }),
         ),
@@ -311,7 +338,7 @@ mod tests {
         }
     }
 
-    fn collect(input: &Input) -> Vec<Result<Document>> {
+    fn collect(input: &Input) -> Vec<Result<Document, SourceError>> {
         input.documents().collect()
     }
 
@@ -388,8 +415,13 @@ mod tests {
     fn json_framing_reports_parse_failure_once() {
         let docs = collect(&argument("[1, 2]", Framing::Json));
         assert_eq!(docs.len(), 1);
-        let err = docs[0].as_ref().unwrap_err().to_string();
-        assert!(err.contains("JSON array"), "{err}");
+        let err = docs[0].as_ref().unwrap_err();
+        assert_eq!(err.id, DocumentId::Whole(Source::Argument));
+        assert!(
+            err.error.to_string().contains("JSON array"),
+            "{}",
+            err.error
+        );
     }
 
     #[test]
@@ -407,10 +439,19 @@ mod tests {
 
     #[test]
     fn jsonl_framing_yields_good_records_before_a_bad_one() {
-        let docs = collect(&argument("\"ok\"\n{not json}\n", Framing::Jsonl));
+        let docs = collect(&argument(
+            "\"ok\"\n{not json}\n\"never reached\"\n",
+            Framing::Jsonl,
+        ));
         assert!(docs[0].is_ok());
-        let err = docs[1].as_ref().unwrap_err().to_string();
-        assert!(err.contains("record 2"), "{err}");
+        let err = docs[1].as_ref().unwrap_err();
+        assert_eq!(err.id, record(2, None));
+        assert!(err.error.to_string().contains("record 2"), "{}", err.error);
+        assert_eq!(
+            docs.len(),
+            2,
+            "the stream stops at the first malformed record"
+        );
     }
 
     #[test]
@@ -435,8 +476,13 @@ mod tests {
         let first = docs[0].as_ref().unwrap();
         assert_eq!(first.id, DocumentId::Whole(Source::File(a)));
         assert_eq!(first.text, "first");
-        let err = docs[1].as_ref().unwrap_err().to_string();
-        assert!(err.contains("missing.txt"), "{err}");
+        let err = docs[1].as_ref().unwrap_err();
+        assert_eq!(err.id, DocumentId::Whole(Source::File(missing)));
+        assert!(
+            err.error.to_string().contains("missing.txt"),
+            "{}",
+            err.error
+        );
         assert_eq!(docs[2].as_ref().unwrap().text, "second");
     }
 

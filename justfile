@@ -47,19 +47,19 @@ run-cli:
     cargo run --release --features cli,self-update --bin is-it-slop -- "This is a test text to check if it's AI generated."
     @echo ""
     @echo "2. Classification label only:"
-    cargo run --release --features cli,self-update --bin is-it-slop -- --label "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- -o label "This is a test text."
     @echo ""
-    @echo "3. Label with score:"
-    cargo run --release --features cli,self-update --bin is-it-slop -- --label --score "This is a test text."
+    @echo "3. Tab-separated id, label and score:"
+    cargo run --release --features cli,self-update --bin is-it-slop -- -o tsv "This is a test text."
     @echo ""
     @echo "4. JSON format:"
-    cargo run --release --features cli,self-update --bin is-it-slop -- --json "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- -o json "This is a test text."
     @echo ""
-    @echo "5. JSONL format (streaming):"
-    cargo run --release --features cli,self-update --bin is-it-slop -- --jsonl "This is a test text."
+    @echo "5. JSONL format:"
+    cargo run --release --features cli,self-update --bin is-it-slop -- -o jsonl "This is a test text."
     @echo ""
     @echo "6. Bare score for scripting:"
-    cargo run --release --features cli,self-update --bin is-it-slop -- --score "This is a test text."
+    cargo run --release --features cli,self-update --bin is-it-slop -- -o score "This is a test text."
     @echo ""
     @echo "=== Examples complete ==="
 
@@ -69,7 +69,7 @@ build-cli:
 
 # Run a quick test with custom text
 test-cli TEXT:
-    cargo run --release --features cli,self-update --bin is-it-slop -- "{{ TEXT }}" --format json --verbose
+    cargo run --release --features cli,self-update --bin is-it-slop -- "{{ TEXT }}" --verbose
 
 # Show CLI help
 cli-help:

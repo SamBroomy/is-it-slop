@@ -32,6 +32,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 owo-colors = { workspace = true, optional = true }
+supports-color = { workspace = true, optional = true }
 # Install source detection dependencies
 dirs = { workspace = true }
 which = { workspace = true }
@@ -57,7 +58,7 @@ required-features = ["cli"]
 default = ["cli"]
 python = ["pyo3"]
 pyo3 = ["dep:pyo3"]
-cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors"]
+cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors", "dep:supports-color"]
 serde = ["dep:serde"]
 # Enable self-update for standalone binaries (not package manager installs).
 self-update = []

@@ -68,28 +68,25 @@ The package includes a CLI that can be used after installation:
 is-it-slop "Your text here"
 
 # Classification label only
-is-it-slop "Text" --label
+is-it-slop "Text" -o label
 # Output: Human
 
-# Label with score
-is-it-slop "Text" --label --score
-# Output: Human (0.2340)
-
 # Bare AI probability for scripting
-is-it-slop "Text" --score
+is-it-slop "Text" -o score
 # Output: 0.2340
 
-# Exit code mode (0=AI, 1=Human, 2=error)
-is-it-slop "Text" --classify
+# Tab-separated id, label and score
+is-it-slop "Text" -o tsv
 
-# Full JSON output
-is-it-slop "Text" --json
+# Exit status: 0 if AI, 1 if Human, 2 on error (works with any output format)
+is-it-slop "Text" -e -o label
 
-# JSON lines (one object per line, useful for streaming)
-is-it-slop "Text" --jsonl
+# JSON array of results, or one JSON object per line
+is-it-slop "Text" -o json
+is-it-slop "Text" -o jsonl
 
 # One document per file
-is-it-slop -f essay.txt -f draft.txt --score
+is-it-slop -f essay.txt -f draft.txt -o score
 
 # One document per line; --input also takes json (array) and jsonl
 is-it-slop -f texts.txt --input lines
