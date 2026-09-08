@@ -316,14 +316,14 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::backend::NdArray;
-    use burn::backend::ndarray::NdArrayDevice;
+    use burn::backend::Flex;
+    use burn::backend::flex::FlexDevice;
 
-    type B = NdArray;
+    type B = Flex;
 
     #[test]
     fn forward_shapes_and_finiteness() {
-        let device = NdArrayDevice::default();
+        let device = FlexDevice;
         let cfg = HierarchicalModelConfig::new();
         let model = cfg.init::<B>(&device);
         let pad = cfg.pad_id() as i64;
@@ -359,7 +359,7 @@ mod tests {
     fn parameter_count_matches_python() {
         // Python reported 1,183,363 parameters for v16384-d64 at group=4. At group=2 the first
         // trunk layer halves its input: 1,183,363 - (4-2) * 64 * 256 = 1,150,595.
-        let model = HierarchicalModelConfig::new().init::<B>(&NdArrayDevice::default());
+        let model = HierarchicalModelConfig::new().init::<B>(&FlexDevice);
         assert_eq!(model.num_params(), 1_150_595);
     }
 }

@@ -88,8 +88,11 @@ is-it-slop "Text" --json
 # JSON lines (one object per line, useful for streaming)
 is-it-slop "Text" --jsonl
 
-# Batch processing (auto-detects .json vs line-delimited)
-is-it-slop -b texts.txt
+# One document per file
+is-it-slop -f essay.txt -f draft.txt --score
+
+# One document per line; --input also takes json (array) and jsonl
+is-it-slop -f texts.txt --input lines
 
 # Custom threshold
 is-it-slop "Text" --threshold 0.7

@@ -43,9 +43,14 @@ jni = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 
 [[bin]]
 name = "is-it-slop"
+required-features = ["cli"]
+
+[[test]]
+name = "cli"
 required-features = ["cli"]
 
 [features]

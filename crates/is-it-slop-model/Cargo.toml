@@ -18,7 +18,7 @@ burn = { workspace = true, features = ["std"] }
 all-testable = []
 
 [dev-dependencies]
-burn = { workspace = true, features = ["std", "ndarray"] }
+burn = { workspace = true, features = ["std", "flex"] }
 
 [lints]
 workspace = true

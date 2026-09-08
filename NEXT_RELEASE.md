@@ -210,7 +210,7 @@ implementation is the reference now; encoder and vocabulary behaviour is frozen 
 the PyTorch weight-parity scaffolding is retired. The binary
 (`cargo run -p is-it-slop-training --features metal`) trains with the TUI dashboard and prints the
 full-split AUCs; backends are additive features (metal/cuda/rocm/vulkan/wgpu/tch/remote/flex,
-ndarray default) with `f16`/`flex32` element options.
+ndarray default) with a `flex32` element option (pure f16 was removed after it NaN'd).
 
 Open items, in order:
 
@@ -219,12 +219,14 @@ Open items, in order:
       backward pass (~97 vs ~31 ms/iter): forward is at kernel parity (12.2 vs 11.4 ms), and
       harness, dataloader, optimizer, metric sync, and transfers are all noise. It reproduces on
       burn-tch, so it is Burn's backward decomposition, not CubeCL — fixing it means upstream
-      Burn work, not changes here. Accepted for now: training is a per-release one-off. If epoch
-      time ever matters, the only in-repo lever left is `--features metal,f16` (halves backward
-      bandwidth too; needs a parity re-check since the recipe was tuned at f32). Rerun the
-      benches with `examples/step_bench.rs` + `notebooks/step_bench.py`. Known sharp edge: a
-      forward-only loop on the `Autodiff` backend leaks and gets SIGKILLed — validation belongs
-      on the inner backend.
+      Burn work, not changes here. Accepted for now: training is a per-release one-off.
+      **A pure-f16 training element does not work and the feature was removed**: a full-data
+      attempt (2026-09-01) produced NaN loss from epoch 1 — no loss scaling means this recipe
+      overflows (BCE exp/log, attention softmax). Reviving it means loss scaling, i.e. real work.
+      `--features metal,flex32` (f32 semantics, backend free to relax intermediate precision) is
+      the untested remaining candidate. Rerun the benches with `examples/step_bench.rs` +
+      `notebooks/step_bench.py`. Known sharp edge: a forward-only loop on the `Autodiff` backend
+      leaks and gets SIGKILLed — validation belongs on the inner backend.
 - [ ] **Evaluation harness**: threshold fitting (best-F1, precision>=0.99) and an uncertainty
       block (temperature calibration plus three error-ranking confidence signals: calibrated
       margin, chunk dispersion, doc-vs-chunk agreement) are ported and land in `results.json`
@@ -244,7 +246,7 @@ Open items, in order:
       Uncertainty contract: calibrated distance-from-0.5 is the confidence number (strongest
       error-ranker); chunk-probability dispersion is the secondary "mixed content" indicator,
       paired with per-chunk highlighting; the doc-vs-chunk-agreement signal was measured weakest
-      and dropped. The `check` subcommand re-scores full/f16/Q8 on validation and folds
+      and dropped. The `evaluate` subcommand (renamed from `check`) re-scores full/f16/Q8 on validation and folds
       `artifact_checks` into `results.json` — run it after every training run; adopting f16 or
       Q8 as *the* shipped form is that eval-gated decision. **The inference swap is done**:
       `is-it-slop` embeds `model.f16.safetensors` (build.rs `MODEL_VERSION` 4.0.0) and runs it
@@ -264,7 +266,7 @@ Open items, in order:
 - [ ] **Improve the training CLI.** The `train` subcommand exposes a fraction of what the Python
       trainer took (the richer clap surface was explicitly deferred): batch size, epochs,
       patience, LR, chunk-loss weight, dropout are all recompile-only today. Bring the
-      `TrainingConfig` knobs up as flags with the frozen recipe as defaults, and make `check`
+      `TrainingConfig` knobs up as flags with the frozen recipe as defaults, and make `evaluate`
       accept a specific weights file rather than assuming the artifact-dir layout.
 - [ ] **Regression benchmarks** (late-game want): a small runnable suite that pins today's
       numbers so upgrades (Burn 0.22, toolchains) can't silently regress — training throughput
@@ -283,7 +285,7 @@ Open items, in order:
 - [ ] **Training cost is now the binding constraint**, and it reshapes the model-size strategy.
       Burn trains ~2.4x slower than the old torch path, and quantization being measured as nearly
       free (f16 and Q8-matrices cost ~1e-6 and ~1e-4 validation AUC on the smoke; confirm at full
-      scale via `check`) means the balanced/minimal picks lose their reason to exist: train the
+      scale via `evaluate`) means the balanced/minimal picks lose their reason to exist: train the
       accuracy model once, ship it at f16 (~2.3MB) or Q8 (~1.3MB of matrices) instead of training
       smaller models. It also opens the larger-embedding arm the campaign priced out — train big,
       quantize down. Practical cadence: `--limit` runs for iteration, full/larger runs scheduled
@@ -314,3 +316,9 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 - ~~`--max-chunks` for the shipped model.~~ **Answered**: k=16 ties k=8 on headline and buys only
   the 2000+-token tail (0.9984 -> 0.9992 on 3.2% of docs) at 2.7x train cost. k=32 has nothing left
   to win. Ship k=8 unless the long tail matters to the product.
+
+- Proper error types in the library interface.
+- Speed benchmarks on infrence.
+- text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is
+  detecting formatting rather than style? A control arm stripping markdown from all text would
+  answer that.

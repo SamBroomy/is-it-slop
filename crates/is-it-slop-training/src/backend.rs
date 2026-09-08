@@ -1,38 +1,31 @@
-//! Compile-time backend and element-type selection for the training binary.
+//! Compile-time backend selection for the training binary.
 //!
 //! Mirrors Burn's text-classification example: each backend is a cargo feature, and when several
 //! are enabled the highest-priority one wins — metal > cuda > rocm > vulkan > wgpu > tch-gpu >
-//! tch-cpu > remote > flex > ndarray (the default, so tests and plain builds always compile).
-//! `f16`/`flex32` select the float element for backends that take one.
+//! tch-cpu > remote > flex (the no-feature fallback, so tests and plain builds always compile).
+//!
+//! The float element is always f32. A pure-f16 element is deliberately not offered: without loss
+//! scaling this recipe overflows to NaN from epoch 1 (measured on a full-data Metal run). Burn's
+//! `flex32` relaxed element is the untried middle ground if training throughput ever matters.
 
 use burn::backend::Autodiff;
 use burn::tensor::Device;
 
-/// Float element used by the selected backend.
-#[cfg(not(any(feature = "f16", feature = "flex32")))]
-pub type Elem = f32;
-/// Float element used by the selected backend.
-#[cfg(all(feature = "f16", not(feature = "flex32")))]
-pub type Elem = burn::tensor::f16;
-/// Float element used by the selected backend.
-#[cfg(feature = "flex32")]
-pub type Elem = burn::tensor::flex32;
-
 #[cfg(feature = "metal")]
 mod selected {
-    pub type Inner = burn::backend::Metal<super::Elem, i32>;
+    pub type Inner = burn::backend::Metal<f32, i32>;
     pub const NAME: &str = "metal";
 }
 
 #[cfg(all(feature = "cuda", not(feature = "metal")))]
 mod selected {
-    pub type Inner = burn::backend::Cuda<super::Elem, i32>;
+    pub type Inner = burn::backend::Cuda<f32, i32>;
     pub const NAME: &str = "cuda";
 }
 
 #[cfg(all(feature = "rocm", not(any(feature = "metal", feature = "cuda"))))]
 mod selected {
-    pub type Inner = burn::backend::Rocm<super::Elem, i32>;
+    pub type Inner = burn::backend::Rocm<f32, i32>;
     pub const NAME: &str = "rocm";
 }
 
@@ -41,7 +34,7 @@ mod selected {
     not(any(feature = "metal", feature = "cuda", feature = "rocm"))
 ))]
 mod selected {
-    pub type Inner = burn::backend::Vulkan<super::Elem, i32>;
+    pub type Inner = burn::backend::Vulkan<f32, i32>;
     pub const NAME: &str = "vulkan";
 }
 
@@ -55,7 +48,7 @@ mod selected {
     ))
 ))]
 mod selected {
-    pub type Inner = burn::backend::Wgpu<super::Elem, i32>;
+    pub type Inner = burn::backend::Wgpu<f32, i32>;
     pub const NAME: &str = "wgpu";
 }
 
@@ -70,7 +63,7 @@ mod selected {
     ))
 ))]
 mod selected {
-    pub type Inner = burn::backend::libtorch::LibTorch<super::Elem>;
+    pub type Inner = burn::backend::libtorch::LibTorch<f32>;
     #[cfg(feature = "tch-gpu")]
     pub const NAME: &str = "tch-gpu";
     #[cfg(not(feature = "tch-gpu"))]
@@ -94,24 +87,6 @@ mod selected {
     pub const NAME: &str = "remote";
 }
 
-#[cfg(all(
-    feature = "flex",
-    not(any(
-        feature = "metal",
-        feature = "cuda",
-        feature = "rocm",
-        feature = "vulkan",
-        feature = "wgpu",
-        feature = "tch-gpu",
-        feature = "tch-cpu",
-        feature = "remote"
-    ))
-))]
-mod selected {
-    pub type Inner = burn::backend::Flex;
-    pub const NAME: &str = "flex";
-}
-
 #[cfg(not(any(
     feature = "metal",
     feature = "cuda",
@@ -120,12 +95,11 @@ mod selected {
     feature = "wgpu",
     feature = "tch-gpu",
     feature = "tch-cpu",
-    feature = "remote",
-    feature = "flex"
+    feature = "remote"
 )))]
 mod selected {
-    pub type Inner = burn::backend::NdArray<super::Elem>;
-    pub const NAME: &str = "ndarray";
+    pub type Inner = burn::backend::Flex;
+    pub const NAME: &str = "flex";
 }
 
 /// The training backend the enabled features selected.

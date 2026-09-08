@@ -1,16 +1,17 @@
 //! Train the hierarchical slop classifier and inspect its artifacts.
 //!
 //! The backend is a compile-time feature, following Burn's text-classification example: build
-//! with `--features metal` (Apple GPU), `wgpu`, or `cuda`; the default `ndarray` runs on CPU.
-//! `train` runs the frozen recipe with the terminal metrics dashboard; `check` re-scores a
-//! trained bundle's shrunk weight forms afterwards, deliberately outside the training run so a
-//! backend limitation there can never cost a finished run its outputs.
+//! with `--features metal` (Apple GPU), `wgpu`, or `cuda`; with no feature the Flex pure-Rust
+//! CPU backend runs everywhere. `train` runs the frozen recipe with the terminal metrics
+//! dashboard; `evaluate` re-scores a trained bundle's shrunk weight forms afterwards,
+//! deliberately outside the training run so a backend limitation there can never cost a
+//! finished run its outputs.
 //!
 //! ```sh
 //! cargo run --release -p is-it-slop-training --features metal -- \
 //!     train --data-dir data/3.0.0 --artifact-dir model_artifacts/burn/v16384-d64
 //! cargo run --release -p is-it-slop-training --features metal -- \
-//!     check --data-dir data/3.0.0 --artifact-dir model_artifacts/burn/v16384-d64
+//!     evaluate --data-dir data/3.0.0 --artifact-dir model_artifacts/burn/v16384-d64
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -44,7 +45,7 @@ enum Command {
     /// Train with the frozen campaign recipe and write the bundle artifacts.
     Train(TrainArgs),
     /// Re-score a trained bundle's shrunk weight forms (f16 roundtrip, Q8) on validation.
-    Check(CheckArgs),
+    Evaluate(EvaluateArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -52,7 +53,7 @@ struct TrainArgs {
     /// Directory holding the released split parquets (train/validation/test).
     #[arg(long, default_value = "data/3.0.0")]
     data_dir: PathBuf,
-    /// Where checkpoints, metric logs, the vocabulary, and the trained model land.
+    /// Where metric logs, the vocabulary, and the trained model land.
     #[arg(long, default_value = "model_artifacts/burn")]
     artifact_dir: PathBuf,
     /// Vocabulary rows: 16384 for the accuracy/balanced picks, 8192 for minimal.
@@ -70,8 +71,8 @@ struct TrainArgs {
 }
 
 #[derive(clap::Args, Debug)]
-struct CheckArgs {
-    /// The trained bundle to check (weights, configs, vocabulary).
+struct EvaluateArgs {
+    /// The trained bundle to evaluate (weights, configs, vocabulary).
     #[arg(long)]
     artifact_dir: PathBuf,
     /// Directory holding the released split parquets.
@@ -103,7 +104,7 @@ fn main() {
         Command::Train(args) => {
             launch::<backend::Selected>(&args, backend::NAME, &backend::device());
         }
-        Command::Check(args) => check::<Inner>(&args, &backend::device()),
+        Command::Evaluate(args) => evaluate::<Inner>(&args, &backend::device()),
     }
 }
 
@@ -166,12 +167,19 @@ fn predictions<B: burn::tensor::backend::Backend>(
             .sqrt();
 
         out.labels.extend(docs.iter().map(|d| d.label));
-        out.logits
-            .extend(output.doc_logits.into_data().to_vec::<f32>().unwrap());
+        // convert() first: on an f16/flex32 element backend the data arrives in that type.
+        out.logits.extend(
+            output
+                .doc_logits
+                .into_data()
+                .convert::<f32>()
+                .to_vec::<f32>()
+                .unwrap(),
+        );
         out.chunk_std
-            .extend(std.into_data().to_vec::<f32>().unwrap());
+            .extend(std.into_data().convert::<f32>().to_vec::<f32>().unwrap());
         out.real_chunks
-            .extend(count.into_data().to_vec::<f32>().unwrap());
+            .extend(count.into_data().convert::<f32>().to_vec::<f32>().unwrap());
     }
     out
 }
@@ -203,14 +211,14 @@ impl SplitResults {
 }
 
 /// The run summary written next to the model, the useful subset of Python's `results.json`.
-/// The `check` subcommand later inserts an `artifact_checks` block.
+/// The `evaluate` subcommand later inserts an `artifact_checks` block.
 #[derive(serde::Serialize)]
 struct RunResults<'a> {
     model_config: &'a HierarchicalModelConfig,
     training_config: &'a TrainingConfig,
     parameters: usize,
     train_seconds: f64,
-    /// Recovered from the newest checkpoint on disk; absent if none were written.
+    /// Recovered from the newest epoch metric logs on disk; absent if none were written.
     epochs_trained: Option<usize>,
     /// Which confidence signals rank validation errors — see [`UncertaintySignals`].
     uncertainty: UncertaintySignals,
@@ -268,9 +276,8 @@ fn uncertainty_signals(
 /// `model.safetensors` is the canonical shipped artifact (inspectable, ecosystem-standard, and
 /// the format the vocabulary already uses); `model.f16.safetensors` is the half-precision
 /// candidate, ~50% smaller; `model.bpk` is Burn's native store, a local artifact only (zero-copy
-/// embedding, and the checkpoint format once the Burn version allows it — until then checkpoints
-/// stay `MessagePack` because the `Learner`'s checkpointer takes a `Recorder`, which burn-store
-/// does not implement).
+/// embedding, and the natural checkpoint format if epoch checkpointing returns with resume
+/// support).
 fn save_model_artifacts<B: burn::tensor::backend::Backend>(
     model: &HierarchicalSlopClassifier<B>,
     artifact_dir: &Path,
@@ -299,16 +306,13 @@ fn save_model_artifacts<B: burn::tensor::backend::Backend>(
         .expect("saving model.f16.safetensors");
 }
 
-/// The last epoch that wrote a checkpoint — the number of epochs actually run.
+/// The last epoch that wrote metric logs — the number of epochs actually run.
 fn epochs_trained(artifact_dir: &Path) -> Option<usize> {
-    let entries = std::fs::read_dir(artifact_dir.join("checkpoint")).ok()?;
+    let entries = std::fs::read_dir(artifact_dir.join("train")).ok()?;
     entries
         .filter_map(|e| {
             let name = e.ok()?.file_name().into_string().ok()?;
-            name.strip_prefix("model-")?
-                .strip_suffix(".mpk")?
-                .parse()
-                .ok()
+            name.strip_prefix("epoch-")?.parse().ok()
         })
         .max()
 }
@@ -458,11 +462,11 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
         serde_json::to_string_pretty(&results).expect("serializing results"),
     )
     .expect("saving results");
-    println!("artifacts in {artifact_dir}; run the `check` subcommand for the f16/Q8 costs");
+    println!("artifacts in {artifact_dir}; run the `evaluate` subcommand for the f16/Q8 costs");
 }
 
 // --------------------------------------------------------------------------------------------
-// The `check` subcommand
+// The `evaluate` subcommand
 // --------------------------------------------------------------------------------------------
 
 /// Every shrunk form of the weights re-scored on validation, so a smaller artifact ships with
@@ -501,7 +505,7 @@ impl<B: burn::tensor::backend::Backend> burn::module::ModuleMapper<B> for Matrix
     }
 }
 
-fn check<B: burn::tensor::backend::Backend>(args: &CheckArgs, device: &B::Device) {
+fn evaluate<B: burn::tensor::backend::Backend>(args: &EvaluateArgs, device: &B::Device) {
     use burn::module::Quantizer;
     use burn::tensor::quantization::{Calibration, QuantScheme, QuantStore, QuantValue};
     use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};

@@ -413,6 +413,31 @@ per document, so the AUC statistic is unchanged in definition — but the next f
 baseline, not directly comparable to the parity numbers above, and the arm is judged on the
 2000+-token band.
 
+**The splitting baseline landed (2026-09-02, `model_artifacts/burn/v16384-d64-split`, the v4.0.0
+release bundle).** Full recipe, seed 42, Metal f32, 473,848 documents -> 508,870 examples, all 30
+epochs (no early stop), 3.9 h:
+
+| split | acc (best-F1) | F1 | MCC | AUC |
+|---|---|---|---|---|
+| validation | 0.9719 | 0.9767 | 0.9412 | 0.995896 |
+| test | 0.9746 | 0.9756 | 0.9492 | 0.996803 |
+
+Headline parity with the campaign's frozen-recipe best (0.9751 acc / 0.9501 MCC / 0.9968 AUC —
+inside the 0.27 pp seed-noise floor), with the long-document text now in training. The
+per-length-band breakdown that would show the 2000+ gain is still Python-only (NEXT_RELEASE,
+"Evaluation harness"). Contract numbers: temperature 2.5434, best-F1 threshold 0.4984 (a
+calibrated model's balanced threshold sits at ~0.5 — the calibration is doing its job), p99
+threshold 0.7377. Full-scale confidence signals: calibrated margin ranks the model's validation
+errors at AUC 0.944, chunk dispersion 0.869 (69,588 multi-chunk docs) — same ordering as the
+smoke, much stronger. Quantization at full scale: f16 costs +1e-6 validation AUC, Q8-matrices
++1.1e-5 (noise) — ship f16, and the train-large-then-quantize strategy stands.
+
+Sharp edges the full runs surfaced (both on burn 0.21): a **pure-f16 training element NaNs from
+epoch 1** (no loss scaling; feature removed), and **`AsyncCheckpointer` races the fusion
+backend** — a checkpointer-thread panic ("Should have handle for tensor") let training continue
+but aborted the run at the next epoch's checkpoint hand-off (`SendError` in a destructor).
+Checkpointing is removed until resume support lands on a sync recorder.
+
 Ruled out: fusion hygiene. Restructuring `encode_chunks` so every mask is derived before the trunk
 (one uninterrupted compute region) changed nothing — 114.8 vs 115.2 s/1000 iterations, within
 noise. The fusion boundaries were not where the 2.3x lives.
