@@ -1,29 +1,28 @@
 //! CLI module for the is-it-slop text classification tool.
 //!
-//! Detects AI-generated text from positional arguments, files, or stdin.
+//! Detects AI-generated text from a positional argument, files, or stdin. Input location and
+//! framing are orthogonal: `--input` says how each location splits into documents.
 //!
 //! # Examples
 //!
 //! ```bash
 //! is-it-slop "some text"
 //! is-it-slop --label "some text"
-//! is-it-slop --score "some text"      # bare float for scripting
-//! is-it-slop --classify "text"        # exit 0=AI, 1=Human, 2=error
-//! is-it-slop --json "some text"       # full JSON
-//! is-it-slop --jsonl "some text"      # JSON line (for streaming)
+//! is-it-slop --score "some text"              # bare float for scripting
+//! is-it-slop --classify "text"                # exit 0=AI, 1=Human, 2=error
+//! is-it-slop --json "some text"               # full JSON
+//! is-it-slop --jsonl "some text"              # JSON line
 //! echo "text" | is-it-slop
-//! is-it-slop -f document.txt
-//! is-it-slop -b texts.txt             # one per line
-//! is-it-slop -b texts.json            # JSON array (auto-detected)
-//! is-it-slop --jsonl -b texts.txt     # streaming JSONL batch
+//! is-it-slop -f document.txt                  # one document per file
+//! is-it-slop -f a.txt -f b.txt --score
+//! is-it-slop -f texts.txt --input lines       # one document per line
+//! is-it-slop -f texts.json --input json       # JSON array of strings or {id, text}
+//! cat texts.jsonl | is-it-slop -i jsonl --jsonl
 //! ```
 
-use std::{
-    io::{IsTerminal, Read},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{
     Args, Parser, Subcommand,
     builder::{
@@ -43,11 +42,13 @@ const STYLE_HUMAN_BAR: Style = Style::new().truecolor(0xFF, 0x8C, 0x00);
 
 use crate::{Classification, Predictor, Threshold, UnifiedPrediction};
 
-// Submodules
+pub mod input;
 #[cfg(not(feature = "self-update"))]
 pub mod install_source;
 #[cfg(feature = "self-update")]
 pub mod self_update;
+
+use input::{Document, DocumentId, Framing, Input};
 
 fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
     s.try_into()
@@ -83,8 +84,8 @@ fn output_welcome() {
     println!();
     println!("{}", section("Examples:"));
     println!("  is-it-slop \"Hello world\"              Classify text directly");
-    println!("  is-it-slop -f essay.txt               Classify from file");
-    println!("  is-it-slop -b texts.txt               Batch classify (one per line)");
+    println!("  is-it-slop -f essay.txt               Classify a file");
+    println!("  is-it-slop -f texts.txt -i lines      One document per line");
     println!("  echo \"text\" | is-it-slop              Pipe text on stdin");
     println!("  is-it-slop --help                     See all options & metric glossary");
 }
@@ -152,16 +153,16 @@ pub struct Cli {
     pub command: Option<Commands>,
 
     /// Text to analyze
-    #[arg(value_name = "TEXT", conflicts_with_all = ["file", "batch"])]
+    #[arg(value_name = "TEXT", conflicts_with = "file")]
     pub text: Option<String>,
 
-    /// Read text from file
-    #[arg(short, long, value_name = "PATH", conflicts_with_all = ["text", "batch"])]
-    pub file: Option<PathBuf>,
+    /// Read from files ("-" for stdin); repeatable
+    #[arg(short, long, value_name = "PATH")]
+    pub file: Vec<PathBuf>,
 
-    /// Batch process texts from file (one per line, or .json for JSON array)
-    #[arg(short, long, value_name = "PATH", conflicts_with_all = ["text", "file"])]
-    pub batch: Option<PathBuf>,
+    /// How each input splits into documents
+    #[arg(short, long, value_enum, value_name = "FRAMING", default_value_t)]
+    pub input: Framing,
 
     /// Output as JSON
     #[arg(
@@ -218,52 +219,6 @@ pub struct Cli {
     pub quiet: bool,
 }
 
-fn read_inputs(cli: &Cli) -> Result<Vec<String>> {
-    if let Some(text) = &cli.text {
-        return Ok(vec![text.clone()]);
-    }
-
-    if let Some(path) = &cli.file {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
-        return Ok(vec![text]);
-    }
-
-    if let Some(path) = &cli.batch {
-        let contents = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read batch file: {}", path.display()))?;
-
-        let is_json = path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
-
-        if is_json {
-            let texts: Vec<String> =
-                serde_json::from_str(&contents).context("Failed to parse JSON array")?;
-            return Ok(texts);
-        }
-
-        let texts: Vec<String> = contents
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .collect();
-        return Ok(texts);
-    }
-
-    if std::io::stdin().is_terminal() {
-        output_welcome();
-        std::process::exit(0);
-    }
-
-    let mut buffer = String::new();
-    std::io::stdin()
-        .read_to_string(&mut buffer)
-        .context("Failed to read from stdin")?;
-    Ok(vec![buffer])
-}
-
 fn render_bar(value: f32) -> String {
     let width = 20;
     let filled = (value * width as f32).round() as usize;
@@ -317,7 +272,6 @@ const BAR_WIDTH: usize = 20;
 fn output_compact(
     prediction: &UnifiedPrediction,
     threshold: Threshold,
-    prefix: &str,
     verbose: bool,
     quiet: bool,
 ) {
@@ -360,11 +314,10 @@ fn output_compact(
     };
 
     println!();
-    println!("{prefix}  {left_label}  [{bar_colored}]  {right_label}");
+    println!("  {left_label}  [{bar_colored}]  {right_label}");
 
-    // Indent to align percentages inside the [ ]:
-    // prefix.len() + 2sp + LABEL_WIDTH + 2sp + "[" = prefix.len() + LABEL_WIDTH + 5
-    let pct_indent = " ".repeat(prefix.len() + LABEL_WIDTH + 5);
+    // Indent to align percentages inside the [ ]: 2sp + LABEL_WIDTH + 2sp + "["
+    let pct_indent = " ".repeat(LABEL_WIDTH + 5);
     let pct_right_width = BAR_WIDTH - left_pct.len();
     println!("{pct_indent}{left_pct}{right_pct:>pct_right_width$}");
 
@@ -419,41 +372,50 @@ fn output_compact(
 /// Returns `RunOutcome` so `main()` can set the correct exit code
 /// for single-text `--classify` mode.
 pub fn run(cli: &Cli) -> Result<RunOutcome> {
-    let texts = read_inputs(cli)?;
-
     if cli.no_color {
         owo_colors::set_override(false);
     }
 
+    let Some(input) = Input::from_cli(cli) else {
+        output_welcome();
+        return Ok(RunOutcome::Normal);
+    };
+    let documents: Vec<Document> = input.documents().collect::<Result<_>>()?;
     let predictor = Predictor::default().with_threshold(cli.threshold);
 
-    if cli.batch.is_some() {
-        eprintln!("Processing {} texts...", texts.len());
+    if input.is_multi() {
+        eprintln!("Processing {} texts...", documents.len());
+        let texts: Vec<&str> = documents.iter().map(|d| d.text.as_str()).collect();
         let predictions = predictor.predict_batch(&texts)?;
         eprintln!("Done.");
+        let results = documents.iter().map(|d| &d.id).zip(&predictions);
 
         if cli.classify {
-            for (i, pred) in predictions.iter().enumerate() {
-                let prefix = format!("[{}] ", i + 1);
+            for (id, pred) in results {
                 match pred.classification(cli.threshold) {
-                    Classification::AI => println!("{prefix}0"),
-                    Classification::Human => println!("{prefix}1"),
+                    Classification::AI => println!("{id}: 0"),
+                    Classification::Human => println!("{id}: 1"),
                 }
             }
             return Ok(RunOutcome::Normal);
         }
 
         if cli.json {
-            output_batch_json(&predictions, cli.threshold)?;
+            output_batch_json(results, cli.threshold)?;
         } else if cli.jsonl {
-            output_batch_jsonl(&predictions, cli.threshold)?;
+            for (id, pred) in results {
+                println!(
+                    "{}",
+                    serde_json::to_string(&prediction_json(pred, cli.threshold, Some(id)))?
+                );
+            }
         } else {
-            for (i, pred) in predictions.iter().enumerate() {
+            for (id, pred) in results {
                 if cli.label || cli.score {
-                    output_single(pred, cli, i)?;
+                    output_single(pred, cli, Some(id))?;
                 } else {
-                    println!("--- [{}/{}] ---", i + 1, predictions.len());
-                    output_single(pred, cli, i)?;
+                    println!("--- {id} ---");
+                    output_single(pred, cli, None)?;
                     println!();
                 }
             }
@@ -462,11 +424,10 @@ pub fn run(cli: &Cli) -> Result<RunOutcome> {
         return Ok(RunOutcome::Normal);
     }
 
-    // Single input mode
-    let text = texts
+    let document = documents
         .first()
-        .expect("read_inputs guarantees at least one text for non-batch inputs");
-    let prediction = predictor.predict(text)?;
+        .expect("a single-location text-framed input yields exactly one document");
+    let prediction = predictor.predict(&document.text)?;
 
     if cli.classify {
         let class = prediction.classification(cli.threshold);
@@ -483,13 +444,18 @@ pub fn run(cli: &Cli) -> Result<RunOutcome> {
         });
     }
 
-    output_single(&prediction, cli, 0)?;
+    output_single(&prediction, cli, None)?;
     Ok(RunOutcome::Normal)
 }
 
-fn prediction_json(prediction: &UnifiedPrediction, threshold: Threshold) -> serde_json::Value {
+/// The JSON object for one result; `id` is included only for multi-document runs.
+fn prediction_json(
+    prediction: &UnifiedPrediction,
+    threshold: Threshold,
+    id: Option<&DocumentId>,
+) -> serde_json::Value {
     let class = prediction.classification(threshold);
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "status": "ok",
         "class": class,
         "class_label": class.to_string(),
@@ -502,23 +468,24 @@ fn prediction_json(prediction: &UnifiedPrediction, threshold: Threshold) -> serd
         "chunk_predictions": prediction.chunk_predictions.iter().map(|p| {
             (p.human_probability(), p.ai_probability())
         }).collect::<Vec<_>>(),
-    })
+    });
+    if let Some(id) = id {
+        value["id"] = serde_json::Value::String(id.to_string());
+    }
+    value
 }
 
-fn output_single(prediction: &UnifiedPrediction, cli: &Cli, index: usize) -> Result<()> {
+/// Print one result in the selected format; `id` prefixes the line in multi-document runs.
+fn output_single(prediction: &UnifiedPrediction, cli: &Cli, id: Option<&DocumentId>) -> Result<()> {
     if cli.json || cli.jsonl {
         println!(
             "{}",
-            serde_json::to_string(&prediction_json(prediction, cli.threshold))?
+            serde_json::to_string(&prediction_json(prediction, cli.threshold, id))?
         );
         return Ok(());
     }
 
-    let prefix = if index > 0 || cli.batch.is_some() {
-        format!("[{}] ", index + 1)
-    } else {
-        String::new()
-    };
+    let prefix = id.map(|id| format!("{id}: ")).unwrap_or_default();
 
     if cli.label && cli.score {
         println!(
@@ -532,26 +499,18 @@ fn output_single(prediction: &UnifiedPrediction, cli: &Cli, index: usize) -> Res
     } else if cli.score {
         println!("{}{:.4}", prefix, prediction.prediction.ai_probability());
     } else {
-        output_compact(prediction, cli.threshold, &prefix, cli.verbose, cli.quiet);
+        output_compact(prediction, cli.threshold, cli.verbose, cli.quiet);
     }
     Ok(())
 }
 
-fn output_batch_json(predictions: &[UnifiedPrediction], threshold: Threshold) -> Result<()> {
-    let json_array: Vec<_> = predictions
-        .iter()
-        .map(|pred| prediction_json(pred, threshold))
+fn output_batch_json<'a>(
+    results: impl Iterator<Item = (&'a DocumentId, &'a UnifiedPrediction)>,
+    threshold: Threshold,
+) -> Result<()> {
+    let json_array: Vec<_> = results
+        .map(|(id, pred)| prediction_json(pred, threshold, Some(id)))
         .collect();
     println!("{}", serde_json::to_string(&json_array)?);
-    Ok(())
-}
-
-fn output_batch_jsonl(predictions: &[UnifiedPrediction], threshold: Threshold) -> Result<()> {
-    for pred in predictions {
-        println!(
-            "{}",
-            serde_json::to_string(&prediction_json(pred, threshold))?
-        );
-    }
     Ok(())
 }
