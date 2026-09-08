@@ -70,11 +70,14 @@ const AFTER_LONG_HELP: &str = "\
   0 if any document is AI, 1 if none are, 2 if any document could not be scored.
 ";
 
-fn output_welcome() {
+fn output_welcome(color: bool) {
     let version = env!("CARGO_PKG_VERSION");
     let bold = |text: &str| {
-        text.if_supports_color(owo_colors::Stream::Stdout, |s| s.bold())
-            .to_string()
+        if color {
+            text.bold().to_string()
+        } else {
+            text.to_owned()
+        }
     };
     println!(
         "{} v{version} — {}",
@@ -195,13 +198,14 @@ pub fn run(cli: &Cli) -> Result<u8> {
         anyhow::bail!("--verbose and --quiet only apply to --output pretty");
     }
 
+    let color = cli.color.enabled();
     let Some(input) = Input::from_cli(cli) else {
-        output_welcome();
+        output_welcome(color);
         return Ok(0);
     };
     let mut sink = cli.output.sink(SinkOptions {
         labelled: input.is_multi(),
-        color: cli.color.enabled(),
+        color,
         detail: Detail::from_flags(cli.verbose, cli.quiet),
     });
     let predictor = Predictor::default().with_threshold(cli.threshold);
