@@ -124,11 +124,7 @@ impl Threshold {
     /// Panics if `value` is not in the range `[0.0, 1.0]`.
     #[must_use]
     pub fn new(value: f32) -> Self {
-        assert!(
-            (0.0..=1.0).contains(&value),
-            "threshold must be in [0.0, 1.0], got {value}"
-        );
-        Self(value)
+        Self::try_new(value).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// Create a `Threshold`, returning `Err` if `value` is outside `[0.0, 1.0]`.

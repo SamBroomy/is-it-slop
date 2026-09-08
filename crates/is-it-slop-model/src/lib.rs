@@ -116,7 +116,7 @@ impl HierarchicalModelConfig {
 
     /// Check the shape constraints a configuration read from a bundle may violate.
     pub fn validate(&self) -> Result<(), ModelConfigError> {
-        if self.group == 0 || !self.chunk_size.is_multiple_of(self.group) {
+        if self.group == 0 || self.chunk_size == 0 || !self.chunk_size.is_multiple_of(self.group) {
             return Err(ModelConfigError::ChunkSizeNotGrouped {
                 chunk_size: self.chunk_size,
                 group: self.group,
