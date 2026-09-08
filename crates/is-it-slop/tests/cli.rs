@@ -231,6 +231,75 @@ fn verbose_and_quiet_only_apply_to_pretty() {
 }
 
 #[test]
+fn results_keep_input_order_across_batches_with_errors_in_place() {
+    // 70 records span three batches of 32; record 35 is blank and must fail in place.
+    let mut stdin = String::new();
+    for i in 1..=70 {
+        let text = if i == 35 {
+            String::new()
+        } else {
+            format!("Record number {i} has some ordinary text in it.")
+        };
+        stdin.push_str(&format!("{{\"id\": {i}, \"text\": \"{text}\"}}\n"));
+    }
+    let output = run(&["-i", "jsonl", "-o", "jsonl"], &stdin);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "one failed record fails the run"
+    );
+    let rows: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 70);
+    for (i, row) in rows.iter().enumerate() {
+        assert_eq!(row["id"], i as u64 + 1, "row {i} out of order: {row}");
+        let expected = if i + 1 == 35 { "error" } else { "ok" };
+        assert_eq!(row["status"], expected, "row {i}: {row}");
+    }
+}
+
+#[test]
+fn a_full_batch_is_written_before_stdin_closes() {
+    use std::{
+        io::{BufRead, BufReader},
+        sync::mpsc,
+        time::Duration,
+    };
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_is-it-slop"))
+        .args(["-i", "lines", "-o", "score", "--color", "never"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+
+    // Exactly one batch, and the pipe stays open so a collect-everything loop would never print.
+    for i in 1..=32 {
+        writeln!(stdin, "Line {i} of text that is still waiting for more.").unwrap();
+    }
+    stdin.flush().unwrap();
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut first = String::new();
+        BufReader::new(stdout).read_line(&mut first).unwrap();
+        tx.send(first).unwrap();
+    });
+    let first = rx
+        .recv_timeout(Duration::from_secs(120))
+        .expect("the first batch streams out while stdin is still open");
+    assert!(first.starts_with("1: "), "{first:?}");
+
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn empty_lines_input_yields_an_empty_json_array() {
     let output = run(&["-i", "lines", "-o", "json"], "\n\n");
     assert_eq!(stdout_lines(&output), vec!["[]"]);

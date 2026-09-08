@@ -45,7 +45,7 @@ pub mod self_update;
 use input::{Document, DocumentId, Framing, Input, SourceError};
 use output::{ColorChoice, Detail, Item, OutputFormat, RunSummary, Scored, Sink, SinkOptions};
 
-use crate::{Predictor, Threshold, pipeline::PipelineError};
+use crate::{Predictor, Threshold};
 
 fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
     s.try_into()
@@ -256,56 +256,75 @@ fn is_broken_pipe(error: &anyhow::Error) -> bool {
         .is_some_and(|e| e.kind() == io::ErrorKind::BrokenPipe)
 }
 
-/// Score every document and hand each result to the sink in input order.
+/// Documents per forward pass. The batch is padded to its longest document, so this bounds
+/// memory and how much output waits on the model at once.
+const BATCH_SIZE: usize = 32;
+
+/// Stream documents through the model in batches, handing each result to the sink in input
+/// order as soon as its batch is scored.
 fn drive(
     input: &Input,
     predictor: &Predictor,
     sink: &mut dyn Sink,
     out: &mut dyn Write,
 ) -> Result<RunSummary> {
-    let documents: Vec<Result<Document, SourceError>> = input.documents().collect();
-
-    // predict_batch does not validate its items and a blank document scores as confidently AI,
-    // so blanks are failed here and only the rest reach the model.
-    let texts: Vec<&str> = documents
-        .iter()
-        .filter_map(|d| d.as_ref().ok())
-        .filter(|d| !is_blank(&d.text))
-        .map(|d| d.text.as_str())
-        .collect();
-    let mut predictions = if texts.is_empty() {
-        Vec::new()
-    } else {
-        predictor.predict_batch(&texts)?
-    }
-    .into_iter();
-
-    sink.begin(out)?;
-    let mut summary = RunSummary::default();
-    for document in documents {
-        let (id, item): (DocumentId, Item) = match document {
-            Err(SourceError { id, error }) => (id, Err(error)),
-            Ok(Document { id, text }) if is_blank(&text) => {
-                (id, Err(PipelineError::EmptyInput.into()))
+    let mut run = Run {
+        predictor,
+        sink,
+        out,
+        summary: RunSummary::default(),
+        pending: Vec::with_capacity(BATCH_SIZE),
+    };
+    run.sink.begin(run.out)?;
+    for document in input.documents() {
+        match document {
+            Ok(document) => {
+                run.pending.push(document);
+                if run.pending.len() == BATCH_SIZE {
+                    run.score_pending()?;
+                }
             }
-            Ok(Document { id, .. }) => {
-                let prediction = predictions
-                    .next()
-                    .expect("one prediction per non-blank document");
-                (id, Ok(Scored::new(prediction, predictor.threshold())))
+            Err(SourceError { id, error }) => {
+                // Flush first so the failure lands where the source produced it.
+                run.score_pending()?;
+                run.emit(&id, &Err(error))?;
             }
-        };
-        match &item {
-            Ok(scored) => sink.emit(out, &id, scored)?,
-            Err(error) => sink.emit_error(out, &id, error)?,
         }
-        summary.record(&item);
     }
-    sink.finish(out, &summary)?;
-    out.flush()?;
-    Ok(summary)
+    run.score_pending()?;
+    run.sink.finish(run.out, &run.summary)?;
+    run.out.flush()?;
+    Ok(run.summary)
 }
 
-fn is_blank(text: &str) -> bool {
-    text.trim().is_empty()
+/// One run's moving parts: the batch waiting to be scored and where results go.
+struct Run<'a> {
+    predictor: &'a Predictor,
+    sink: &'a mut dyn Sink,
+    out: &'a mut dyn Write,
+    summary: RunSummary,
+    pending: Vec<Document>,
+}
+
+impl Run<'_> {
+    fn score_pending(&mut self) -> Result<()> {
+        let texts: Vec<&str> = self.pending.iter().map(|d| d.text.as_str()).collect();
+        let results = self.predictor.predict_each(&texts);
+        for (document, result) in std::mem::take(&mut self.pending).into_iter().zip(results) {
+            let item = result
+                .map(|prediction| Scored::new(prediction, self.predictor.threshold()))
+                .map_err(Into::into);
+            self.emit(&document.id, &item)?;
+        }
+        Ok(())
+    }
+
+    fn emit(&mut self, id: &DocumentId, item: &Item) -> Result<()> {
+        match item {
+            Ok(scored) => self.sink.emit(self.out, id, scored)?,
+            Err(error) => self.sink.emit_error(self.out, id, error)?,
+        }
+        self.summary.record(item);
+        Ok(())
+    }
 }

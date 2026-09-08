@@ -20,7 +20,8 @@
 //! # Public API
 //!
 //! - [`predict`]: single text prediction
-//! - [`predict_batch`]: batch prediction for multiple texts
+//! - [`predict_batch`]: batch prediction for multiple texts, all or nothing
+//! - [`predict_each`]: batch prediction with a result per text
 //!
 //! # Example
 //!
@@ -143,7 +144,50 @@ pub fn predict(input: &str) -> Result<UnifiedPrediction> {
     Ok(results.remove(0))
 }
 
+/// Predict each text, running one forward pass over all the valid ones.
+///
+/// A blank text fails on its own with [`PipelineError::EmptyInput`] rather than failing the
+/// batch, so callers processing a stream can report it in place. An empty slice yields an
+/// empty vector.
+///
+/// # Example
+///
+/// ```rust
+/// use is_it_slop::pipeline::predict_each;
+///
+/// let results = predict_each(&["Text 1", "   ", "Text 3"]);
+/// assert!(results[0].is_ok());
+/// assert!(results[1].is_err());
+/// assert!(results[2].is_ok());
+/// ```
+#[must_use]
+pub fn predict_each(inputs: &[&str]) -> Vec<Result<UnifiedPrediction>> {
+    let is_blank = |text: &&str| text.trim().is_empty();
+    let valid: Vec<&str> = inputs.iter().copied().filter(|t| !is_blank(t)).collect();
+    let mut predictions = if valid.is_empty() {
+        Vec::new()
+    } else {
+        infer(&valid)
+    }
+    .into_iter();
+    inputs
+        .iter()
+        .map(|text| {
+            if is_blank(text) {
+                Err(PipelineError::EmptyInput)
+            } else {
+                Ok(predictions
+                    .next()
+                    .expect("one prediction per non-blank input"))
+            }
+        })
+        .collect()
+}
+
 /// Predict classifications for multiple texts in one forward pass.
+///
+/// Fails with [`PipelineError::EmptyInput`] if the slice is empty or any text is blank; use
+/// [`predict_each`] for per-text results.
 ///
 /// # Example
 ///
@@ -166,13 +210,7 @@ pub fn predict_batch(inputs: &[&str]) -> Result<Vec<UnifiedPrediction>> {
     if inputs.is_empty() {
         return Err(PipelineError::EmptyInput);
     }
-    // This should really check for any input is empty and we should return a
-    // Vec<Result<UnifiedPrediction>> instead of failing the whole batch, but for simplicity we'll
-    // just check if all are empty and return a single error if so.
-    if inputs.iter().all(|i| i.trim().is_empty()) {
-        return Err(PipelineError::EmptyInput);
-    }
-    Ok(infer(inputs))
+    predict_each(inputs).into_iter().collect()
 }
 
 mod error {
@@ -272,6 +310,28 @@ mod tests {
     fn test_predict_rejects_empty() {
         assert!(predict("").is_err());
         assert!(predict("   \n\t  ").is_err());
+    }
+
+    #[test]
+    fn test_predict_each_fails_blank_texts_in_place() {
+        let results = predict_each(&["Real text here.", "   ", "", "More real text."]);
+        assert_eq!(results.len(), 4);
+        assert!(results[0].is_ok());
+        assert!(matches!(results[1], Err(PipelineError::EmptyInput)));
+        assert!(matches!(results[2], Err(PipelineError::EmptyInput)));
+        let alone = predict("More real text.").unwrap();
+        let batched = results[3].as_ref().unwrap();
+        assert!(
+            (alone.prediction.ai_probability() - batched.prediction.ai_probability()).abs() < 1e-5
+        );
+
+        assert!(predict_each(&[]).is_empty());
+        assert!(predict_each(&["  "]).iter().all(Result::is_err));
+    }
+
+    #[test]
+    fn test_predict_batch_rejects_any_blank_text() {
+        assert!(predict_batch(&["Real text here.", "   "]).is_err());
     }
 
     #[test]

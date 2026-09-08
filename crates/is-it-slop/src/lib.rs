@@ -239,15 +239,27 @@ impl Predictor {
         pipeline::predict(text.as_ref())
     }
 
-    /// Predict probabilities for multiple texts.
+    /// Predict probabilities for multiple texts, all or nothing.
     ///
-    /// Returns a vector of `Prediction` values, one for each input text.
+    /// Fails if the slice is empty or any text is blank; see [`Predictor::predict_each`] for
+    /// per-text results.
     pub fn predict_batch<T: AsRef<str> + Sync>(
         &self,
         texts: &[T],
     ) -> pipeline::Result<Vec<UnifiedPrediction>> {
         let strs: Vec<&str> = texts.iter().map(AsRef::as_ref).collect();
         pipeline::predict_batch(&strs)
+    }
+
+    /// Predict each text in one forward pass, with a result per text.
+    ///
+    /// A blank text fails on its own instead of failing the batch.
+    pub fn predict_each<T: AsRef<str> + Sync>(
+        &self,
+        texts: &[T],
+    ) -> Vec<pipeline::Result<UnifiedPrediction>> {
+        let strs: Vec<&str> = texts.iter().map(AsRef::as_ref).collect();
+        pipeline::predict_each(&strs)
     }
 
     /// Classify a single text using the configured threshold.

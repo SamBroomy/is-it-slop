@@ -131,7 +131,7 @@ fn is_this_slop_batch(
 
         let predictions = predictor.predict_batch(&texts).map_err(|e| match e {
             PipelineError::EmptyInput => PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Input list is empty. Please provide at least one text.",
+                "Input list is empty or contains an empty text.",
             ),
         })?;
 
