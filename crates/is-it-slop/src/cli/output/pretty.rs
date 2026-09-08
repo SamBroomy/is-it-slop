@@ -5,9 +5,10 @@ use std::io::{self, Write};
 use owo_colors::{OwoColorize, Style};
 
 use super::{Detail, RunSummary, Scored, Sink, SinkOptions, report_error};
-use crate::{Classification, cli::input::DocumentId};
+use crate::{Classification, Prediction, cli::input::DocumentId};
 
 const STYLE_HEADER: Style = Style::new().bold();
+const STYLE_DIM: Style = Style::new().dimmed();
 const STYLE_WARN: Style = Style::new().yellow();
 const STYLE_AI_LABEL: Style = Style::new().cyan().bold();
 const STYLE_HUMAN_LABEL: Style = Style::new().truecolor(0xFF, 0x8C, 0x00).bold();
@@ -17,11 +18,14 @@ const STYLE_HUMAN_BAR: Style = Style::new().truecolor(0xFF, 0x8C, 0x00);
 // "Human" (5 chars) is the widest label; BAR_WIDTH matches render_bar's visual width.
 const LABEL_WIDTH: usize = 5;
 const BAR_WIDTH: usize = 20;
+/// Characters of each chunk's text shown in the chunk list.
+const CHUNK_PREVIEW_CHARS: usize = 60;
 
 pub struct Pretty {
     labelled: bool,
     color: bool,
     detail: Detail,
+    chunks: bool,
 }
 
 impl Pretty {
@@ -30,6 +34,7 @@ impl Pretty {
             labelled: options.labelled,
             color: options.color,
             detail: options.detail,
+            chunks: options.chunks,
         }
     }
 
@@ -132,6 +137,43 @@ impl Pretty {
                 self.paint("Low confidence — prediction uncertain", STYLE_WARN)
             )?;
         }
+
+        // Last: the list can be long, and the summary above should not scroll away.
+        if let Some(chunk_texts) = &scored.chunk_texts {
+            self.write_chunks(out, &prediction.chunk_predictions, chunk_texts)?;
+        }
+        Ok(())
+    }
+
+    /// One line per chunk: its AI score as a bar and the start of its text. Chunk scores come
+    /// from the auxiliary chunk head and are not calibrated, so the bar is always AI-oriented
+    /// and coloured by which side of 0.5 it falls, not by the run's threshold.
+    fn write_chunks(
+        &self,
+        out: &mut dyn Write,
+        predictions: &[Prediction],
+        texts: &[String],
+    ) -> io::Result<()> {
+        writeln!(out)?;
+        writeln!(
+            out,
+            "{} {}",
+            self.paint("Chunks", STYLE_HEADER),
+            self.paint("(uncalibrated chunk scores)", STYLE_DIM)
+        )?;
+        let index_width = predictions.len().to_string().len();
+        for (i, (prediction, text)) in predictions.iter().zip(texts).enumerate() {
+            let ai = prediction.ai_probability();
+            let style = if ai >= 0.5 {
+                STYLE_AI_BAR
+            } else {
+                STYLE_HUMAN_BAR
+            };
+            let bar = self.paint(&render_bar(ai), style);
+            let pct = format!("{:>5.1}% AI", ai * 100.0);
+            let preview = self.paint(&preview(text), STYLE_DIM);
+            writeln!(out, "  {:>index_width$}  [{bar}]  {pct}  {preview}", i + 1)?;
+        }
         Ok(())
     }
 
@@ -144,7 +186,31 @@ impl Pretty {
     }
 }
 
+/// The start of a chunk on one line: whitespace collapsed, cut at [`CHUNK_PREVIEW_CHARS`].
+fn preview(text: &str) -> String {
+    let mut out: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(CHUNK_PREVIEW_CHARS + 1)
+        .collect();
+    if out.chars().count() > CHUNK_PREVIEW_CHARS {
+        out.truncate(
+            out.char_indices()
+                .nth(CHUNK_PREVIEW_CHARS)
+                .map_or(out.len(), |(i, _)| i),
+        );
+        out.push('…');
+    }
+    out
+}
+
 impl Sink for Pretty {
+    fn wants_chunk_texts(&self) -> bool {
+        self.chunks
+    }
+
     fn emit(&mut self, out: &mut dyn Write, id: &DocumentId, scored: &Scored) -> io::Result<()> {
         if self.labelled {
             writeln!(out, "--- {id} ---")?;
@@ -216,7 +282,48 @@ mod tests {
             labelled,
             color: false,
             detail: Detail::Normal,
+            chunks: false,
         }
+    }
+
+    #[test]
+    fn chunk_list_shows_one_scored_line_per_chunk() {
+        let sink = &mut Pretty::new(SinkOptions {
+            chunks: true,
+            ..options(false)
+        });
+        assert!(sink.wants_chunk_texts());
+        let item = scored(0.9, &[0.95, 0.10]).with_chunk_texts(vec![
+            "First   chunk\nof the document.".to_owned(),
+            "x".repeat(200),
+        ]);
+        let text = render(sink, &[(DocumentId::Whole(Source::Argument), Ok(item))]);
+        assert!(
+            text.contains("Chunks (uncalibrated chunk scores)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  1  [███████████████████░]   95.0% AI  First chunk of the document."),
+            "{text}"
+        );
+        let long_line = text
+            .lines()
+            .find(|l| l.starts_with("  2  "))
+            .expect("second chunk");
+        assert!(long_line.contains("10.0% AI"), "{long_line}");
+        assert!(long_line.ends_with('…'), "{long_line}");
+        assert_eq!(
+            long_line.chars().filter(|&c| c == 'x').count(),
+            CHUNK_PREVIEW_CHARS
+        );
+
+        let without = &mut Pretty::new(options(false));
+        assert!(!without.wants_chunk_texts());
+        let text = render(
+            without,
+            &[(DocumentId::Whole(Source::Argument), Ok(scored(0.9, &[0.9])))],
+        );
+        assert!(!text.contains("Chunks ("), "{text}");
     }
 
     #[test]

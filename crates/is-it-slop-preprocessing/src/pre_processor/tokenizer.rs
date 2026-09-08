@@ -86,6 +86,13 @@ pub fn tokenize<T: AsRef<str>>(texts: &[T]) -> Vec<Vec<u32>> {
     tokenize_strs(&crate::as_strs(texts))
 }
 
+/// Byte length of one `o200k_base` token: the encoding is byte-level, so a text's tokens'
+/// lengths sum to its byte length and prefix sums give token positions back in the text.
+#[must_use]
+pub fn token_len(token: u32) -> usize {
+    o200k_base().bpe.token_len(token)
+}
+
 #[instrument(level = "debug", skip(texts), fields(num_texts = texts.len(), use_parallel = should_use_parallel(texts)))]
 fn tokenize_strs(texts: &[&str]) -> Vec<Vec<u32>> {
     if should_use_parallel(texts) {

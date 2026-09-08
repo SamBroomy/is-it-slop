@@ -25,6 +25,9 @@ pub struct Scored {
     pub prediction: UnifiedPrediction,
     /// The prediction thresholded.
     pub class: Classification,
+    /// The text behind each chunk prediction, when the sink asked for it
+    /// ([`Sink::wants_chunk_texts`]).
+    pub chunk_texts: Option<Vec<String>>,
 }
 
 impl Scored {
@@ -32,7 +35,19 @@ impl Scored {
     #[must_use]
     pub fn new(prediction: UnifiedPrediction, threshold: Threshold) -> Self {
         let class = prediction.classification(threshold);
-        Self { prediction, class }
+        Self {
+            prediction,
+            class,
+            chunk_texts: None,
+        }
+    }
+
+    /// Attach the chunk texts, index for index with `prediction.chunk_predictions`.
+    #[must_use]
+    pub fn with_chunk_texts(mut self, chunk_texts: Vec<String>) -> Self {
+        debug_assert_eq!(chunk_texts.len(), self.prediction.chunk_predictions.len());
+        self.chunk_texts = Some(chunk_texts);
+        self
     }
 }
 
@@ -63,6 +78,12 @@ pub trait Sink {
         let _ = (out, summary);
         Ok(())
     }
+
+    /// Whether emitted items should carry [`Scored::chunk_texts`]; the texts cost a second
+    /// tokenization per document, so they are only produced on request.
+    fn wants_chunk_texts(&self) -> bool {
+        false
+    }
 }
 
 /// Per-run settings a sink may need.
@@ -74,6 +95,8 @@ pub struct SinkOptions {
     pub color: bool,
     /// How much the pretty format shows per document.
     pub detail: Detail,
+    /// Whether the pretty format lists every chunk with its score and text.
+    pub chunks: bool,
 }
 
 /// How much the pretty format shows per document.

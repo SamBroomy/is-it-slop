@@ -9,9 +9,11 @@ mod vocabulary;
 
 pub use vocabulary::{O200K_CEILING, Vocabulary};
 
+use std::{borrow::Cow, ops::Range};
+
 use crate::{
     as_strs,
-    pre_processor::{text_cleaner_for_inference, tokenize},
+    pre_processor::{text_cleaner_for_inference, token_len, tokenize},
 };
 
 /// Failures loading or validating encoder artifacts.
@@ -254,6 +256,50 @@ impl DocumentEncoder {
         }
     }
 
+    /// The text the tokenizer sees for one document: [`Self::token_lists`] for a single text.
+    fn cleaned<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        match self.cleaning {
+            TextCleaning::Off => Cow::Borrowed(text.trim()),
+            TextCleaning::Inference => {
+                Cow::Owned(text_cleaner_for_inference().clean(text).trim().to_owned())
+            }
+        }
+    }
+
+    /// The text of each chunk the model scores for `text`, in order.
+    ///
+    /// Same cleaning, tokenization and chunking as [`Self::encode_batch_windows`], so the k-th
+    /// string is what the k-th real chunk of the grid holds. Text a tail rule drops is absent;
+    /// a document that tokenizes to nothing yields one empty chunk, matching the model's
+    /// always-real first slot. Chunk boundaries fall between tokens, so they are snapped forward
+    /// to the next character boundary when a token straddles one.
+    #[must_use]
+    pub fn chunk_texts(&self, text: &str) -> Vec<String> {
+        let cleaned = self.cleaned(text);
+        let tokens = tokenize(&[cleaned.as_ref()]).remove(0);
+
+        // Byte offset of every token boundary; byte-level BPE covers the text exactly.
+        let mut starts = Vec::with_capacity(tokens.len() + 1);
+        let mut end = 0;
+        starts.push(end);
+        for &token in &tokens {
+            end += token_len(token);
+            starts.push(end);
+        }
+        debug_assert_eq!(end, cleaned.len());
+
+        let boundary = |byte: usize| -> usize {
+            (byte..=cleaned.len())
+                .find(|&b| cleaned.is_char_boundary(b))
+                .expect("the end of the text is a char boundary")
+        };
+        self.chunk_ranges(tokens.len())
+            .map(|chunk| {
+                cleaned[boundary(starts[chunk.start])..boundary(starts[chunk.end])].to_owned()
+            })
+            .collect()
+    }
+
     /// Encode a batch of raw texts with their labels, one grid per document.
     ///
     /// A document longer than the grid is truncated — this is the evaluation-side encoding,
@@ -326,40 +372,58 @@ impl DocumentEncoder {
     /// One grid per `max_chunks * chunk_size` window of the tokens; see
     /// [`Self::encode_batch_split`] for the tail rule.
     fn split_grids(&self, tokens: &[u32]) -> Vec<Vec<u16>> {
-        let span = self.max_chunks * self.chunk_size;
-        let full = tokens.len() / span;
-        let tail = tokens.len() % span;
-        let keep_tail = (tail as f64) >= self.min_fill * self.chunk_size as f64;
-        let windows = (full + usize::from(keep_tail)).max(1);
-        (0..windows)
-            .map(|w| self.grid(&tokens[w * span..((w + 1) * span).min(tokens.len())]))
+        self.window_ranges(tokens.len())
+            .map(|window| self.grid(&tokens[window]))
             .collect()
     }
 
     /// Fill a `[max_chunks * chunk_size]` grid with contiguous, non-overlapping chunks.
     ///
-    /// A trailing chunk below `min_fill` is dropped unless it is the only one, since with no
-    /// overlap it discards at most `min_fill * chunk_size` tokens. The final chunk is padded
-    /// rather than back-filled from earlier text: duplication is measurably harmful and padding
-    /// is masked out by the model.
+    /// The final chunk is padded rather than back-filled from earlier text: duplication is
+    /// measurably harmful and padding is masked out by the model.
     fn grid(&self, tokens: &[u32]) -> Vec<u16> {
         let cs = self.chunk_size;
-        let pad = self.vocabulary.pad_id();
-        let mut out = vec![pad; self.max_chunks * cs];
-        if tokens.is_empty() {
-            return out;
-        }
-
-        let n_full = tokens.len() / cs;
-        let remainder = tokens.len() % cs;
-        let keep_tail = (remainder as f64) >= self.min_fill * cs as f64;
-        let n_chunks = (n_full + usize::from(keep_tail)).clamp(1, self.max_chunks);
-
-        let take = tokens.len().min(n_chunks * cs);
-        for (slot, token) in out.iter_mut().zip(&tokens[..take]) {
-            *slot = self.vocabulary.row(*token);
+        let mut out = vec![self.vocabulary.pad_id(); self.max_chunks * cs];
+        for (k, chunk) in self.chunk_ranges_in(0..tokens.len()).enumerate() {
+            for (slot, &token) in out[k * cs..].iter_mut().zip(&tokens[chunk]) {
+                *slot = self.vocabulary.row(token);
+            }
         }
         out
+    }
+
+    /// Token ranges of every chunk the model scores, in order across windows: the one
+    /// definition of "which tokens are real" that the grids and [`Self::chunk_texts`] share.
+    fn chunk_ranges(&self, n_tokens: usize) -> impl Iterator<Item = Range<usize>> {
+        self.window_ranges(n_tokens)
+            .flat_map(move |window| self.chunk_ranges_in(window))
+    }
+
+    /// Token ranges of the `max_chunks * chunk_size` windows tiling a document. A trailing
+    /// window shorter than `min_fill * chunk_size` tokens is dropped; there is always at least
+    /// one window.
+    fn window_ranges(&self, n_tokens: usize) -> impl Iterator<Item = Range<usize>> {
+        let span = self.max_chunks * self.chunk_size;
+        let full = n_tokens / span;
+        let tail = n_tokens % span;
+        let keep_tail = (tail as f64) >= self.min_fill * self.chunk_size as f64;
+        let windows = (full + usize::from(keep_tail)).max(1);
+        (0..windows).map(move |w| w * span..((w + 1) * span).min(n_tokens))
+    }
+
+    /// Token ranges of the chunks within one window.
+    ///
+    /// A trailing chunk below `min_fill` is dropped unless it is the only one, since with no
+    /// overlap it discards at most `min_fill * chunk_size` tokens. An empty window still has
+    /// one (empty) chunk: the model always treats slot 0 as real.
+    fn chunk_ranges_in(&self, window: Range<usize>) -> impl Iterator<Item = Range<usize>> {
+        let cs = self.chunk_size;
+        let n_full = window.len() / cs;
+        let remainder = window.len() % cs;
+        let keep_tail = (remainder as f64) >= self.min_fill * cs as f64;
+        let n_chunks = (n_full + usize::from(keep_tail)).clamp(1, self.max_chunks);
+        (0..n_chunks)
+            .map(move |k| window.start + k * cs..(window.start + (k + 1) * cs).min(window.end))
     }
 }
 
@@ -484,6 +548,59 @@ mod tests {
         assert_eq!(got[0], 0);
         assert_eq!(got[1], enc.vocabulary().oov_id());
         assert_eq!(got[2], 3);
+    }
+
+    /// Chunks the model would score for `text`: rows with any real token, at least one.
+    fn real_chunks(enc: &DocumentEncoder, text: &str) -> usize {
+        let pad = enc.vocabulary().pad_id();
+        enc.encode_batch_windows(&[text])
+            .remove(0)
+            .iter()
+            .flat_map(|grid| grid.chunks(enc.chunk_size()))
+            .filter(|chunk| chunk.iter().any(|&r| r != pad))
+            .count()
+            .max(1)
+    }
+
+    #[test]
+    fn chunk_texts_partition_the_text_the_grid_holds() {
+        // chunk_size 4, max_chunks 3, min_fill 0.10: every tail survives.
+        let enc = encoder(4, 3);
+        let text = "  one two three four five six seven eight nine ten eleven twelve thirteen \
+                    fourteen fifteen sixteen seventeen eighteen nineteen twenty  ";
+        let chunks = enc.chunk_texts(text);
+        assert_eq!(chunks.len(), real_chunks(&enc, text));
+        assert!(chunks.len() > 3, "spans more than one window: {chunks:?}");
+        assert_eq!(chunks.concat(), text.trim(), "chunks tile the trimmed text");
+        assert!(chunks.iter().all(|c| !c.is_empty()));
+
+        // A short text is one chunk; nothing is one empty chunk (the model's slot-0 rule).
+        assert_eq!(enc.chunk_texts("hi"), vec!["hi"]);
+        assert_eq!(enc.chunk_texts("   "), vec![""]);
+        assert_eq!(real_chunks(&enc, "   "), 1);
+
+        // A runt tail below min_fill is dropped from the text as it is from the grid.
+        let enc = encoder(10, 2).with_grid(10, 2, 0.2);
+        let tokens_21 = "a b c d e f g h i j k l m n o p q r s t u";
+        assert_eq!(
+            tokenize(&[tokens_21]).remove(0).len(),
+            21,
+            "one token per word"
+        );
+        let chunks = enc.chunk_texts(tokens_21);
+        assert_eq!(chunks.len(), real_chunks(&enc, tokens_21));
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks.concat(), "a b c d e f g h i j k l m n o p q r s t");
+    }
+
+    #[test]
+    fn chunk_texts_never_split_a_character() {
+        let enc = encoder(3, 2);
+        let text = "日本語のテキスト 🎉🎊✨ e\u{301}e\u{301}e\u{301} Ünïcödé everywhere";
+        let chunks = enc.chunk_texts(text);
+        assert_eq!(chunks.len(), real_chunks(&enc, text));
+        assert_eq!(chunks.concat(), text, "no min_fill drop at these lengths");
+        assert!(chunks.iter().all(|c| !c.contains('\u{FFFD}')));
     }
 
     #[test]

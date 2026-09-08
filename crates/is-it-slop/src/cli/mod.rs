@@ -65,6 +65,10 @@ const AFTER_LONG_HELP: &str = "\
     \u{1b}[1mDispersion\u{1b}[0m   Standard deviation of per-chunk AI probabilities.
                 High dispersion = chunks disagree = possible mixed human/AI content.
 
+  Use --chunks to list every chunk with its AI score and the start of its text. Chunk
+  scores come from the model's auxiliary chunk head and are not calibrated: they locate
+  AI-looking passages but are not comparable to the document probability or --threshold.
+
 \u{1b}[1;33mExit status:\u{1b}[0m
   0 on success, 1 if any document could not be scored. With --exit-status:
   0 if any document is AI, 1 if none are, 2 if any document could not be scored.
@@ -177,18 +181,9 @@ pub struct Cli {
     )]
     pub output: OutputFormat,
 
-    /// Pretty output only: also show the chunk analysis
-    #[arg(
-        short = 'v',
-        long,
-        conflicts_with = "quiet",
-        help_heading = HEADING_OUTPUT
-    )]
-    pub verbose: bool,
-
-    /// Pretty output only: show the classification bar and nothing else
-    #[arg(short = 'q', long, help_heading = HEADING_OUTPUT)]
-    pub quiet: bool,
+    /// What the pretty format shows.
+    #[command(flatten)]
+    pub pretty: PrettyOptions,
 
     /// When to colour output (`NO_COLOR` is honoured in auto)
     #[arg(
@@ -215,6 +210,33 @@ pub struct Cli {
     pub exit_status: bool,
 }
 
+/// The flags that only the pretty format honours.
+#[derive(Args, Debug, Clone, Copy, Default)]
+pub struct PrettyOptions {
+    /// Pretty output only: also show the chunk analysis
+    #[arg(
+        short = 'v',
+        long,
+        conflicts_with = "quiet",
+        help_heading = HEADING_OUTPUT
+    )]
+    pub verbose: bool,
+
+    /// Pretty output only: show the classification bar and nothing else
+    #[arg(short = 'q', long, help_heading = HEADING_OUTPUT)]
+    pub quiet: bool,
+
+    /// Pretty output only: list every 192-token chunk with its own score and text
+    #[arg(long, conflicts_with = "quiet", help_heading = HEADING_OUTPUT)]
+    pub chunks: bool,
+}
+
+impl PrettyOptions {
+    fn any(self) -> bool {
+        self.verbose || self.quiet || self.chunks
+    }
+}
+
 const HEADING_INPUT: &str = "Input";
 const HEADING_OUTPUT: &str = "Output";
 const HEADING_CLASSIFICATION: &str = "Classification";
@@ -224,8 +246,8 @@ const HEADING_CLASSIFICATION: &str = "Classification";
 /// Results go to stdout. Documents that cannot be scored are reported by the sink; only setup
 /// failures come back as `Err`.
 pub fn run(cli: &Cli) -> Result<u8> {
-    if cli.output != OutputFormat::Pretty && (cli.verbose || cli.quiet) {
-        anyhow::bail!("--verbose and --quiet only apply to --output pretty");
+    if cli.output != OutputFormat::Pretty && cli.pretty.any() {
+        anyhow::bail!("--verbose, --quiet and --chunks only apply to --output pretty");
     }
 
     let color = cli.color.enabled();
@@ -236,7 +258,8 @@ pub fn run(cli: &Cli) -> Result<u8> {
     let mut sink = cli.output.sink(SinkOptions {
         labelled: input.is_multi(),
         color,
-        detail: Detail::from_flags(cli.verbose, cli.quiet),
+        detail: Detail::from_flags(cli.pretty.verbose, cli.pretty.quiet),
+        chunks: cli.pretty.chunks,
     });
     let predictor = Predictor::default().with_threshold(cli.threshold);
 
@@ -312,9 +335,17 @@ impl Run<'_> {
         let results = pipeline::predict_each(&texts);
         // Swapped out so the buffer keeps its capacity across batches.
         let mut batch = std::mem::take(&mut self.pending);
+        let want_chunk_texts = self.sink.wants_chunk_texts();
         for (document, result) in batch.iter().zip(results) {
             let item = result
-                .map(|prediction| Scored::new(prediction, self.predictor.threshold()))
+                .map(|prediction| {
+                    let scored = Scored::new(prediction, self.predictor.threshold());
+                    if want_chunk_texts {
+                        scored.with_chunk_texts(pipeline::chunk_texts(&document.text))
+                    } else {
+                        scored
+                    }
+                })
                 .map_err(Into::into);
             self.emit(&document.id, &item)?;
         }

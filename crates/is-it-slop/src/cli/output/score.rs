@@ -50,6 +50,7 @@ mod tests {
             labelled: false,
             color: false,
             detail: Detail::Normal,
+            chunks: false,
         };
         let text = render(
             &mut Score::new(options),

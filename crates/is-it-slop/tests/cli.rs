@@ -305,3 +305,26 @@ fn empty_lines_input_yields_an_empty_json_array() {
     let output = run(&["-i", "lines", "-o", "json"], "\n\n");
     assert_eq!(stdout_lines(&output), vec!["[]"]);
 }
+
+#[test]
+fn chunks_lists_each_chunk_with_its_text() {
+    let output = run(&["--chunks", "A short single-chunk document."], "");
+    let lines = stdout_lines(&output);
+    assert!(
+        lines.iter().any(|l| l.starts_with("Chunks (uncalibrated")),
+        "{lines:?}"
+    );
+    let row = lines
+        .iter()
+        .find(|l| l.starts_with("  1  ["))
+        .expect("one chunk row");
+    assert!(
+        row.contains("% AI  A short single-chunk document."),
+        "{row}"
+    );
+    assert!(!lines.iter().any(|l| l.starts_with("  2  [")), "{lines:?}");
+
+    let output = run(&["-o", "jsonl", "--chunks", "some text"], "");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("--chunks"), "{}", stderr(&output));
+}
