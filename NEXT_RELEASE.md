@@ -319,3 +319,6 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 
 - Proper error types in the library interface.
 - Speed benchmarks on infrence.
+- text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is
+  detecting formatting rather than style? A control arm stripping markdown from all text would
+  answer that.
