@@ -38,8 +38,8 @@ impl Classification {
 impl fmt::Display for Classification {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Human => write!(f, "Human"),
-            Self::AI => write!(f, "AI"),
+            Self::Human => f.pad("Human"),
+            Self::AI => f.pad("AI"),
         }
     }
 }

@@ -1,26 +1,29 @@
 //! CLI module for the is-it-slop text classification tool.
 //!
-//! Detects AI-generated text from a positional argument, files, or stdin. Input location and
-//! framing are orthogonal: `--input` says how each location splits into documents.
+//! A run is a pipeline: an [`input::Input`] yields documents, the predictor scores them, and an
+//! [`output::Sink`] writes each result in the `--output` format. Input location and framing are
+//! orthogonal (`--input`), and so are output format and exit policy (`--exit-status`).
 //!
 //! # Examples
 //!
 //! ```bash
 //! is-it-slop "some text"
-//! is-it-slop --label "some text"
-//! is-it-slop --score "some text"              # bare float for scripting
-//! is-it-slop --classify "text"                # exit 0=AI, 1=Human, 2=error
-//! is-it-slop --json "some text"               # full JSON
-//! is-it-slop --jsonl "some text"              # JSON line
+//! is-it-slop -o label "some text"
+//! is-it-slop -o score "some text"             # bare float for scripting
+//! is-it-slop -e -o label "text"               # exit 0 if AI, 1 if Human, 2 on error
+//! is-it-slop -o json "some text"              # JSON array of results
 //! echo "text" | is-it-slop
 //! is-it-slop -f document.txt                  # one document per file
-//! is-it-slop -f a.txt -f b.txt --score
-//! is-it-slop -f texts.txt --input lines       # one document per line
-//! is-it-slop -f texts.json --input json       # JSON array of strings or {id, text}
-//! cat texts.jsonl | is-it-slop -i jsonl --jsonl
+//! is-it-slop -f a.txt -f b.txt -o tsv
+//! is-it-slop -f texts.txt -i lines            # one document per line
+//! is-it-slop -f texts.json -i json            # JSON array of strings or {id, text}
+//! cat texts.jsonl | is-it-slop -i jsonl -o jsonl
 //! ```
 
-use std::path::PathBuf;
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 
 use anyhow::Result;
 use clap::{
@@ -30,25 +33,19 @@ use clap::{
         styling::{AnsiColor, Effects},
     },
 };
-use owo_colors::{OwoColorize, Style};
-
-const STYLE_HEADER: Style = Style::new().bold();
-const STYLE_WARN: Style = Style::new().yellow();
-const STYLE_OVERALL_LABEL: Style = Style::new().bold();
-const STYLE_AI_LABEL: Style = Style::new().cyan().bold();
-const STYLE_HUMAN_LABEL: Style = Style::new().truecolor(0xFF, 0x8C, 0x00).bold();
-const STYLE_AI_BAR: Style = Style::new().cyan();
-const STYLE_HUMAN_BAR: Style = Style::new().truecolor(0xFF, 0x8C, 0x00);
-
-use crate::{Classification, Predictor, Threshold, UnifiedPrediction, pipeline::PipelineError};
+use owo_colors::OwoColorize;
 
 pub mod input;
 #[cfg(not(feature = "self-update"))]
 pub mod install_source;
+pub mod output;
 #[cfg(feature = "self-update")]
 pub mod self_update;
 
-use input::{Document, DocumentId, Framing, Input};
+use input::{Document, DocumentId, Framing, Input, SourceError};
+use output::{ColorChoice, Detail, Item, OutputFormat, RunSummary, Scored, Sink, SinkOptions};
+
+use crate::{Predictor, Threshold, pipeline::PipelineError};
 
 fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
     s.try_into()
@@ -67,38 +64,37 @@ const AFTER_LONG_HELP: &str = "\
     \u{1b}[1mChunks\u{1b}[0m       Number of 192-token chunks analyzed.
     \u{1b}[1mDispersion\u{1b}[0m   Standard deviation of per-chunk AI probabilities.
                 High dispersion = chunks disagree = possible mixed human/AI content.
+
+\u{1b}[1;33mExit status:\u{1b}[0m
+  0 on success, 1 if any document could not be scored. With --exit-status:
+  0 if any document is AI, 1 if none are, 2 if any document could not be scored.
 ";
 
-fn output_welcome() {
+fn output_welcome(color: bool) {
     let version = env!("CARGO_PKG_VERSION");
-    let name = env!("CARGO_PKG_NAME")
-        .if_supports_color(owo_colors::Stream::Stdout, |s| s.bold())
-        .to_string();
+    let bold = |text: &str| {
+        if color {
+            text.bold().to_string()
+        } else {
+            text.to_owned()
+        }
+    };
     println!(
-        "{name} v{version} — {}",
-        section("Detect AI-generated text")
+        "{} v{version} — {}",
+        bold(env!("CARGO_PKG_NAME")),
+        bold("Detect AI-generated text")
     );
     println!();
-    println!("{}", section("Usage:"));
-    println!("  is-it-slop [OPTIONS] [TEXT]...");
+    println!("{}", bold("Usage:"));
+    println!("  is-it-slop [OPTIONS] [TEXT]");
     println!();
-    println!("{}", section("Examples:"));
+    println!("{}", bold("Examples:"));
     println!("  is-it-slop \"Hello world\"              Classify text directly");
     println!("  is-it-slop -f essay.txt               Classify a file");
     println!("  is-it-slop -f texts.txt -i lines      One document per line");
     println!("  echo \"text\" | is-it-slop              Pipe text on stdin");
+    println!("  is-it-slop -o jsonl -f texts.jsonl    Machine-readable output");
     println!("  is-it-slop --help                     See all options & metric glossary");
-}
-
-/// Outcome of `run()`, distinguishing normal mode from single-text `--classify`.
-#[derive(Debug, Clone, Copy)]
-pub enum RunOutcome {
-    /// Normal operation (exit 0 on success, 1 on error).
-    Normal,
-    /// Single-text --classify: prediction was AI (exit 0).
-    ClassifyAi,
-    /// Single-text --classify: prediction was Human (exit 1).
-    ClassifyHuman,
 }
 
 /// Top-level commands for is-it-slop
@@ -133,7 +129,7 @@ pub enum SelfCommand {
     version = env!("CARGO_PKG_VERSION"),
     about = "Detect AI-generated text",
     long_about = "Detect AI-generated text using machine learning.\n\n\
-        Analyze text from positional arguments, files, or stdin to determine\n\
+        Analyze text from a positional argument, files, or stdin to determine\n\
         whether it was written by a human or generated by AI.",
     after_long_help = AFTER_LONG_HELP,
     styles = Styles::styled()
@@ -146,7 +142,6 @@ pub enum SelfCommand {
         .valid(AnsiColor::Green.on_default()),
 
 )]
-#[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
     /// Subcommands
     #[command(subcommand)]
@@ -157,364 +152,160 @@ pub struct Cli {
     pub text: Option<String>,
 
     /// Read from files ("-" for stdin); repeatable
-    #[arg(short, long, value_name = "PATH")]
+    #[arg(short, long, value_name = "PATH", help_heading = HEADING_INPUT)]
     pub file: Vec<PathBuf>,
 
     /// How each input splits into documents
-    #[arg(short, long, value_enum, value_name = "FRAMING", default_value_t)]
+    #[arg(
+        short,
+        long,
+        value_enum,
+        value_name = "FRAMING",
+        default_value_t,
+        help_heading = HEADING_INPUT
+    )]
     pub input: Framing,
 
-    /// Output as JSON
+    /// Output format
+    #[arg(
+        short,
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        default_value_t,
+        help_heading = HEADING_OUTPUT
+    )]
+    pub output: OutputFormat,
+
+    /// Pretty output only: also show the chunk analysis
+    #[arg(
+        short = 'v',
+        long,
+        conflicts_with = "quiet",
+        help_heading = HEADING_OUTPUT
+    )]
+    pub verbose: bool,
+
+    /// Pretty output only: show the classification bar and nothing else
+    #[arg(short = 'q', long, help_heading = HEADING_OUTPUT)]
+    pub quiet: bool,
+
+    /// When to colour output (`NO_COLOR` is honoured in auto)
     #[arg(
         long,
-        conflicts_with_all = ["label", "score", "jsonl", "classify"]
+        value_enum,
+        value_name = "WHEN",
+        default_value_t,
+        help_heading = HEADING_OUTPUT
     )]
-    pub json: bool,
-
-    /// Output as JSON lines (one JSON object per line)
-    #[arg(
-        long,
-        conflicts_with_all = ["json", "label", "score", "classify"]
-    )]
-    pub jsonl: bool,
-
-    /// Output only the classification label (Human or AI)
-    #[arg(long, conflicts_with_all = ["json", "classify"])]
-    pub label: bool,
-
-    /// Output only the AI probability score (0.0-1.0)
-    #[arg(long, conflicts_with_all = ["json", "classify"])]
-    pub score: bool,
-
-    /// Output 0 (AI) or 1 (Human). Exit code matches output; 2 on error.
-    #[arg(
-        long,
-        conflicts_with_all = ["json", "jsonl", "label", "score"]
-    )]
-    pub classify: bool,
-
-    /// Disable colored output
-    #[arg(
-        long,
-        env = "NO_COLOR",
-        value_parser = clap::builder::FalseyValueParser::new(),
-    )]
-    pub no_color: bool,
+    pub color: ColorChoice,
 
     /// Classification threshold
     #[arg(
         short = 't',
         long,
         default_value_t = Threshold::classification_threshold(),
-        value_parser = parse_threshold
+        value_parser = parse_threshold,
+        help_heading = HEADING_CLASSIFICATION
     )]
     pub threshold: Threshold,
 
-    /// Show threshold distance and entropy confidence in addition to standard metrics
-    #[arg(short = 'v', long, conflicts_with_all = ["json", "jsonl", "label", "score", "classify"])]
-    pub verbose: bool,
-
-    /// Only output the classification bar, no metrics or analysis
-    #[arg(short = 'q', long, conflicts_with_all = ["verbose", "json", "jsonl", "label", "score", "classify"])]
-    pub quiet: bool,
+    /// Exit 0 if any document is AI, 1 if none are, 2 on error
+    #[arg(short, long, help_heading = HEADING_CLASSIFICATION)]
+    pub exit_status: bool,
 }
 
-fn render_bar(value: f32) -> String {
-    let width = 20;
-    let filled = (value * width as f32).round() as usize;
-    let filled = filled.min(width);
-    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
-}
+const HEADING_INPUT: &str = "Input";
+const HEADING_OUTPUT: &str = "Output";
+const HEADING_CLASSIFICATION: &str = "Classification";
 
-fn section(text: &str) -> String {
-    text.if_supports_color(owo_colors::Stream::Stdout, |s| s.style(STYLE_HEADER))
-        .to_string()
-}
-
-fn warn(text: &str) -> String {
-    text.if_supports_color(owo_colors::Stream::Stdout, |s| s.style(STYLE_WARN))
-        .to_string()
-}
-
-fn confidence_rgb(value: f32) -> (u8, u8, u8) {
-    let t = value.clamp(0.0, 1.0);
-    let r = (130.0 + t * (204.0 - 130.0)) as u8;
-    let g = (55.0 + t * (153.0 - 55.0)) as u8;
-    let b = (185.0 + t * (255.0 - 185.0)) as u8;
-    (r, g, b)
-}
-
-fn rose_rgb(t: f32) -> (u8, u8, u8) {
-    let t = t.clamp(0.0, 1.0);
-    let r = (185.0 + t * (255.0 - 185.0)) as u8;
-    let g = (75.0 + t * (176.0 - 75.0)) as u8;
-    let b = (115.0 + t * (204.0 - 115.0)) as u8;
-    (r, g, b)
-}
-
-fn rose_val(text: &str, t: f32) -> String {
-    let (r, g, b) = rose_rgb(t);
-    text.if_supports_color(owo_colors::Stream::Stdout, |s| s.truecolor(r, g, b))
-        .to_string()
-}
-
-fn metric_val(value: f32) -> String {
-    let (r, g, b) = confidence_rgb(value);
-    format!("{:>5.1}%", value * 100.0)
-        .if_supports_color(owo_colors::Stream::Stdout, |s| s.truecolor(r, g, b))
-        .to_string()
-}
-
-// "Human" (5 chars) is the widest label; BAR_WIDTH matches render_bar's visual width.
-const LABEL_WIDTH: usize = 5;
-const BAR_WIDTH: usize = 20;
-
-fn output_compact(
-    prediction: &UnifiedPrediction,
-    threshold: Threshold,
-    verbose: bool,
-    quiet: bool,
-) {
-    let human_prob = prediction.prediction.human_probability();
-    let ai_prob = prediction.prediction.ai_probability();
-    let metrics = prediction.confidence_metrics();
-    let class = prediction.classification(threshold);
-    let other_label = class.opposite();
-
-    let (bar_value, bar_style) = match class {
-        Classification::Human => (human_prob, STYLE_HUMAN_BAR),
-        Classification::AI => (ai_prob, STYLE_AI_BAR),
-    };
-    let bar = render_bar(bar_value);
-    let bar_colored = bar
-        .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(bar_style))
-        .to_string();
-
-    // Left = predicted class probability, right = other class probability.
-    let left_pct = format!("{:.1}%", bar_value * 100.0);
-    let right_pct = format!("{:.1}%", (1.0 - bar_value) * 100.0);
-
-    let left_label = {
-        let (text, style) = match class {
-            Classification::AI => ("AI", STYLE_AI_LABEL),
-            Classification::Human => ("Human", STYLE_HUMAN_LABEL),
-        };
-        format!("{text:>LABEL_WIDTH$}")
-            .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(style))
-            .to_string()
-    };
-    let right_label = {
-        let (text, style) = match other_label {
-            Classification::AI => ("AI", STYLE_AI_LABEL),
-            Classification::Human => ("Human", STYLE_HUMAN_LABEL),
-        };
-        format!("{text:<LABEL_WIDTH$}")
-            .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(style))
-            .to_string()
-    };
-
-    println!();
-    println!("  {left_label}  [{bar_colored}]  {right_label}");
-
-    // Indent to align percentages inside the [ ]: 2sp + LABEL_WIDTH + 2sp + "["
-    let pct_indent = " ".repeat(LABEL_WIDTH + 5);
-    let pct_right_width = BAR_WIDTH - left_pct.len();
-    println!("{pct_indent}{left_pct}{right_pct:>pct_right_width$}");
-
-    if quiet {
-        return;
-    }
-
-    if verbose && prediction.chunk_predictions.len() > 1 {
-        let chunk_info = prediction.chunk_info();
-        println!();
-        println!("{}", section("Chunk Analysis"));
-        let chunks_t = ((chunk_info.num_chunks as f32 - 4.0) / 6.0).clamp(0.0, 1.0);
-        println!(
-            "  {:<12} {}",
-            "Chunks",
-            rose_val(&chunk_info.num_chunks.to_string(), chunks_t)
-        );
-        if let Some(dispersion) = chunk_info.chunk_dispersion {
-            println!(
-                "  {:<12} {}",
-                "Dispersion",
-                rose_val(
-                    &format!("{dispersion:.3}"),
-                    1.0 - (dispersion * 3.0).min(1.0)
-                )
-            );
-        }
-    }
-
-    println!();
-    let confidence_label = format!("{:<12}", "Confidence")
-        .if_supports_color(owo_colors::Stream::Stdout, |s| s.style(STYLE_OVERALL_LABEL))
-        .to_string();
-    println!("  {confidence_label} {}", metric_val(metrics.confidence));
-
-    if metrics.chunk_dispersion.is_some_and(|d| d > 0.25) {
-        println!();
-        println!(
-            "{}",
-            warn("Chunks disagree — possible mixed human/AI content")
-        );
-    } else if metrics.confidence < 0.3 {
-        println!();
-        println!("{}", warn("Low confidence — prediction uncertain"));
-    }
-}
-
-/// Run the CLI with the given arguments.
+/// Run the CLI with the given arguments and return the process exit code.
 ///
-/// Prints results to stdout. Errors are returned to the caller for display.
-///
-/// Returns `RunOutcome` so `main()` can set the correct exit code
-/// for single-text `--classify` mode.
-pub fn run(cli: &Cli) -> Result<RunOutcome> {
-    if cli.no_color {
-        owo_colors::set_override(false);
+/// Results go to stdout. Documents that cannot be scored are reported by the sink; only setup
+/// failures come back as `Err`.
+pub fn run(cli: &Cli) -> Result<u8> {
+    if cli.output != OutputFormat::Pretty && (cli.verbose || cli.quiet) {
+        anyhow::bail!("--verbose and --quiet only apply to --output pretty");
     }
 
+    let color = cli.color.enabled();
     let Some(input) = Input::from_cli(cli) else {
-        output_welcome();
-        return Ok(RunOutcome::Normal);
+        output_welcome(color);
+        return Ok(0);
     };
-    let documents: Vec<Document> = input.documents().collect::<Result<_>>()?;
+    let mut sink = cli.output.sink(SinkOptions {
+        labelled: input.is_multi(),
+        color,
+        detail: Detail::from_flags(cli.verbose, cli.quiet),
+    });
     let predictor = Predictor::default().with_threshold(cli.threshold);
 
-    if input.is_multi() {
-        // predict_batch does not validate its items, and a blank document scores as confidently AI.
-        if let Some(blank) = documents.iter().find(|d| d.text.trim().is_empty()) {
-            anyhow::bail!("{}: {}", blank.id, PipelineError::EmptyInput);
-        }
-        eprintln!("Processing {} texts...", documents.len());
-        let texts: Vec<&str> = documents.iter().map(|d| d.text.as_str()).collect();
-        let predictions = predictor.predict_batch(&texts)?;
-        eprintln!("Done.");
-        let results = documents.iter().map(|d| &d.id).zip(&predictions);
-
-        if cli.classify {
-            for (id, pred) in results {
-                match pred.classification(cli.threshold) {
-                    Classification::AI => println!("{id}: 0"),
-                    Classification::Human => println!("{id}: 1"),
-                }
-            }
-            return Ok(RunOutcome::Normal);
-        }
-
-        if cli.json {
-            output_batch_json(results, cli.threshold)?;
-        } else if cli.jsonl {
-            for (id, pred) in results {
-                println!(
-                    "{}",
-                    serde_json::to_string(&prediction_json(pred, cli.threshold, Some(id)))?
-                );
-            }
-        } else {
-            for (id, pred) in results {
-                if cli.label || cli.score {
-                    output_single(pred, cli, Some(id))?;
-                } else {
-                    println!("--- {id} ---");
-                    output_single(pred, cli, None)?;
-                    println!();
-                }
-            }
-        }
-
-        return Ok(RunOutcome::Normal);
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    match drive(&input, &predictor, sink.as_mut(), &mut out) {
+        Ok(summary) => Ok(summary.exit_code(cli.exit_status)),
+        // A consumer such as `head` closed the pipe: it got what it asked for.
+        Err(e) if is_broken_pipe(&e) => Ok(0),
+        Err(e) => Err(e),
     }
-
-    let document = documents
-        .first()
-        .expect("a single-location text-framed input yields exactly one document");
-    let prediction = predictor.predict(&document.text)?;
-
-    if cli.classify {
-        let class = prediction.classification(cli.threshold);
-        println!(
-            "{}",
-            match class {
-                Classification::AI => "0",
-                Classification::Human => "1",
-            }
-        );
-        return Ok(match class {
-            Classification::AI => RunOutcome::ClassifyAi,
-            Classification::Human => RunOutcome::ClassifyHuman,
-        });
-    }
-
-    output_single(&prediction, cli, None)?;
-    Ok(RunOutcome::Normal)
 }
 
-/// The JSON object for one result; `id` is included only for multi-document runs.
-fn prediction_json(
-    prediction: &UnifiedPrediction,
-    threshold: Threshold,
-    id: Option<&DocumentId>,
-) -> serde_json::Value {
-    let class = prediction.classification(threshold);
-    let mut value = serde_json::json!({
-        "status": "ok",
-        "class": class,
-        "class_label": class.to_string(),
-        "probabilities": {
-            "human": prediction.prediction.human_probability(),
-            "ai": prediction.prediction.ai_probability(),
-        },
-        "confidence": prediction.confidence_metrics(),
-        "chunk_info": prediction.chunk_info(),
-        "chunk_predictions": prediction.chunk_predictions.iter().map(|p| {
-            (p.human_probability(), p.ai_probability())
-        }).collect::<Vec<_>>(),
-    });
-    if let Some(id) = id {
-        value["id"] = id.to_json();
-    }
-    value
+fn is_broken_pipe(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<io::Error>()
+        .is_some_and(|e| e.kind() == io::ErrorKind::BrokenPipe)
 }
 
-/// Print one result in the selected format; `id` prefixes the line in multi-document runs.
-fn output_single(prediction: &UnifiedPrediction, cli: &Cli, id: Option<&DocumentId>) -> Result<()> {
-    if cli.json || cli.jsonl {
-        println!(
-            "{}",
-            serde_json::to_string(&prediction_json(prediction, cli.threshold, id))?
-        );
-        return Ok(());
-    }
+/// Score every document and hand each result to the sink in input order.
+fn drive(
+    input: &Input,
+    predictor: &Predictor,
+    sink: &mut dyn Sink,
+    out: &mut dyn Write,
+) -> Result<RunSummary> {
+    let documents: Vec<Result<Document, SourceError>> = input.documents().collect();
 
-    let prefix = id.map(|id| format!("{id}: ")).unwrap_or_default();
-
-    if cli.label && cli.score {
-        println!(
-            "{}{} ({:.4})",
-            prefix,
-            prediction.classification(cli.threshold),
-            prediction.prediction.ai_probability()
-        );
-    } else if cli.label {
-        println!("{}{}", prefix, prediction.classification(cli.threshold));
-    } else if cli.score {
-        println!("{}{:.4}", prefix, prediction.prediction.ai_probability());
-    } else {
-        output_compact(prediction, cli.threshold, cli.verbose, cli.quiet);
-    }
-    Ok(())
-}
-
-fn output_batch_json<'a>(
-    results: impl Iterator<Item = (&'a DocumentId, &'a UnifiedPrediction)>,
-    threshold: Threshold,
-) -> Result<()> {
-    let json_array: Vec<_> = results
-        .map(|(id, pred)| prediction_json(pred, threshold, Some(id)))
+    // predict_batch does not validate its items and a blank document scores as confidently AI,
+    // so blanks are failed here and only the rest reach the model.
+    let texts: Vec<&str> = documents
+        .iter()
+        .filter_map(|d| d.as_ref().ok())
+        .filter(|d| !is_blank(&d.text))
+        .map(|d| d.text.as_str())
         .collect();
-    println!("{}", serde_json::to_string(&json_array)?);
-    Ok(())
+    let mut predictions = if texts.is_empty() {
+        Vec::new()
+    } else {
+        predictor.predict_batch(&texts)?
+    }
+    .into_iter();
+
+    sink.begin(out)?;
+    let mut summary = RunSummary::default();
+    for document in documents {
+        let (id, item): (DocumentId, Item) = match document {
+            Err(SourceError { id, error }) => (id, Err(error)),
+            Ok(Document { id, text }) if is_blank(&text) => {
+                (id, Err(PipelineError::EmptyInput.into()))
+            }
+            Ok(Document { id, .. }) => {
+                let prediction = predictions
+                    .next()
+                    .expect("one prediction per non-blank document");
+                (id, Ok(Scored::new(prediction, predictor.threshold())))
+            }
+        };
+        match &item {
+            Ok(scored) => sink.emit(out, &id, scored)?,
+            Err(error) => sink.emit_error(out, &id, error)?,
+        }
+        summary.record(&item);
+    }
+    sink.finish(out, &summary)?;
+    out.flush()?;
+    Ok(summary)
+}
+
+fn is_blank(text: &str) -> bool {
+    text.trim().is_empty()
 }

@@ -107,56 +107,66 @@ cargo add is-it-slop
 ```bash
 $ is-it-slop "Your text here"
 
-  Human  [███████████████████░]  AI
-          95.1%           4.9%
+  Human  [████████████████████]  AI
+          97.9%           2.1%
 
-Confidence Metrics
-  Model       95.1%
-  Sample      87.3%
-  Overall     85.1%
+  Confidence    95.8%
 ```
 
-Other output modes:
+The probability is calibrated, so the confidence is its distance from the 50% coin-flip point.
+
+Output formats, selected with `-o`:
 
 ```bash
 # Classification label only
-$ is-it-slop "Your text" --label
+$ is-it-slop "Your text" -o label
 Human
 
-# Label with AI probability score
-$ is-it-slop "Your text" --label --score
-Human (0.0880)
+# Bare AI probability for shell scripting
+$ is-it-slop "Your text" -o score
+0.0060
 
-# Bare float for shell scripting
-$ is-it-slop "Your text" --score
-0.0880
+# Tab-separated id, label and AI probability
+$ is-it-slop "Your text" -o tsv
+argument	Human	0.0060
 
-# Exit code mode (0=AI, 1=Human, 2=error)
-$ is-it-slop "Your text" --classify
+# JSON array of results, or one JSON object per line
+$ is-it-slop "Your text" -o json
+$ is-it-slop "Your text" -o jsonl
 
-# Full JSON (includes chunk predictions and confidence metrics)
-$ is-it-slop "Your text" --json
+# Exit status instead of reading output: 0 if AI, 1 if Human, 2 on error
+$ is-it-slop "Your text" -e -o label
+```
 
-# JSON lines format (for streaming)
-$ is-it-slop "Your text" --jsonl
+Inputs, with `-i` choosing how each splits into documents:
 
-# One document per file
-$ is-it-slop -f essay.txt -f draft.txt --score
+```bash
+# One document per file ("-" reads stdin)
+$ is-it-slop -f essay.txt -f draft.txt -o score
 
-# One document per line; --input also takes json (array) and jsonl
-$ is-it-slop -f texts.txt --input lines
+# One document per line
+$ is-it-slop -f texts.txt -i lines
 
-# JSON lines in, JSON lines out; record ids pass through
-$ cat texts.jsonl | is-it-slop --input jsonl --jsonl
+# JSON array of strings or {"id": ..., "text": ...} objects
+$ is-it-slop -f texts.json -i json
 
+# JSON lines in, JSON lines out; record ids pass through unchanged
+$ cat texts.jsonl | is-it-slop -i jsonl -o jsonl
+```
+
+Documents that cannot be read or are blank are reported with their id: on stderr for the
+human-readable formats, as `{"status": "error", ...}` rows for `json` and `jsonl`. Other options:
+
+```bash
 # Custom classification threshold
 $ is-it-slop "Your text" --threshold 0.7
 
-# Verbose: show model internals (threshold, entropy)
+# Pretty output only: chunk analysis for long documents, or just the bar
 $ is-it-slop "Your text" --verbose
-
-# Quiet: bar only, no metrics
 $ is-it-slop "Your text" --quiet
+
+# Colour: auto (default, honours NO_COLOR), always, never
+$ is-it-slop "Your text" --color never
 ```
 
 Run `is-it-slop --help` for all options.

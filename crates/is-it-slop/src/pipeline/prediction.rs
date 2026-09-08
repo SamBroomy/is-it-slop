@@ -142,6 +142,7 @@ pub struct ChunkInfo {
 /// The document probability comes straight from the network's document head (calibrated by the
 /// shipped temperature); the chunk probabilities are the auxiliary chunk head's view of each
 /// 192-token chunk, useful for locating AI-looking passages and measuring mixed content.
+#[derive(Debug, Clone)]
 pub struct UnifiedPrediction {
     /// Calibrated prediction for the full document.
     pub prediction: Prediction,
