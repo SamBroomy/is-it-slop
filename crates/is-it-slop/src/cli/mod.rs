@@ -152,23 +152,52 @@ pub struct Cli {
     pub text: Option<String>,
 
     /// Read from files ("-" for stdin); repeatable
-    #[arg(short, long, value_name = "PATH")]
+    #[arg(short, long, value_name = "PATH", help_heading = HEADING_INPUT)]
     pub file: Vec<PathBuf>,
 
     /// How each input splits into documents
-    #[arg(short, long, value_enum, value_name = "FRAMING", default_value_t)]
+    #[arg(
+        short,
+        long,
+        value_enum,
+        value_name = "FRAMING",
+        default_value_t,
+        help_heading = HEADING_INPUT
+    )]
     pub input: Framing,
 
     /// Output format
-    #[arg(short, long, value_enum, value_name = "FORMAT", default_value_t)]
+    #[arg(
+        short,
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        default_value_t,
+        help_heading = HEADING_OUTPUT
+    )]
     pub output: OutputFormat,
 
-    /// Exit 0 if any document is AI, 1 if none are, 2 on error
-    #[arg(short, long)]
-    pub exit_status: bool,
+    /// Pretty output only: also show the chunk analysis
+    #[arg(
+        short = 'v',
+        long,
+        conflicts_with = "quiet",
+        help_heading = HEADING_OUTPUT
+    )]
+    pub verbose: bool,
+
+    /// Pretty output only: show the classification bar and nothing else
+    #[arg(short = 'q', long, help_heading = HEADING_OUTPUT)]
+    pub quiet: bool,
 
     /// When to colour output (`NO_COLOR` is honoured in auto)
-    #[arg(long, value_enum, value_name = "WHEN", default_value_t)]
+    #[arg(
+        long,
+        value_enum,
+        value_name = "WHEN",
+        default_value_t,
+        help_heading = HEADING_OUTPUT
+    )]
     pub color: ColorChoice,
 
     /// Classification threshold
@@ -176,18 +205,19 @@ pub struct Cli {
         short = 't',
         long,
         default_value_t = Threshold::classification_threshold(),
-        value_parser = parse_threshold
+        value_parser = parse_threshold,
+        help_heading = HEADING_CLASSIFICATION
     )]
     pub threshold: Threshold,
 
-    /// Pretty output only: also show the chunk analysis
-    #[arg(short = 'v', long, conflicts_with = "quiet")]
-    pub verbose: bool,
-
-    /// Pretty output only: show the classification bar and nothing else
-    #[arg(short = 'q', long)]
-    pub quiet: bool,
+    /// Exit 0 if any document is AI, 1 if none are, 2 on error
+    #[arg(short, long, help_heading = HEADING_CLASSIFICATION)]
+    pub exit_status: bool,
 }
+
+const HEADING_INPUT: &str = "Input";
+const HEADING_OUTPUT: &str = "Output";
+const HEADING_CLASSIFICATION: &str = "Classification";
 
 /// Run the CLI with the given arguments and return the process exit code.
 ///
