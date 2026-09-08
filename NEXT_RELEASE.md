@@ -11,12 +11,12 @@ contract, then align the repo to it.** Everything below sits in one of those thr
 Four arms measured through one harness on the full 118,459-document test split, thresholds fitted on
 validation and only then applied to test.
 
-| arm | acc | F1 | MCC | AUC | artifact | ms/doc |
-|---|---|---|---|---|---|---|
-| production (shipped 3.0.0) | 0.9562 | 0.9579 | 0.9123 | 0.9889 | 11.41 MB | 2.74 |
-| magika flat window | 0.9681 | 0.9695 | 0.9360 | 0.9948 | 16.76 MB | 0.82 |
-| hierarchical v32768-d128 | **0.9714** | **0.9725** | **0.9427** | **0.9960** | 16.84 MB | 0.40 |
-| hierarchical v16384-d64 | 0.9677 | 0.9690 | 0.9353 | 0.9951 | **5.36 MB** | **0.25** |
+| arm                        | acc        | F1         | MCC        | AUC        | artifact    | ms/doc   |
+| -------------------------- | ---------- | ---------- | ---------- | ---------- | ----------- | -------- |
+| production (shipped 3.0.0) | 0.9562     | 0.9579     | 0.9123     | 0.9889     | 11.41 MB    | 2.74     |
+| magika flat window         | 0.9681     | 0.9695     | 0.9360     | 0.9948     | 16.76 MB    | 0.82     |
+| hierarchical v32768-d128   | **0.9714** | **0.9725** | **0.9427** | **0.9960** | 16.84 MB    | 0.40     |
+| hierarchical v16384-d64    | 0.9677     | 0.9690     | 0.9353     | 0.9951     | **5.36 MB** | **0.25** |
 
 The small hierarchical model beats what ships today on **every axis at once**: +1.16 pp accuracy,
 +2.32 pp MCC, 2.1x smaller, ~11x faster. That is the candidate.
@@ -78,7 +78,7 @@ Also untested at Magika defaults: `dropout`/`spatial_dropout` (0.1), `hidden` (2
 
 - [ ] **Markdown-stripped control.** `dataset_metadata.json` records markdown in 33.66% of AI
       samples against 5.97% of human — a 5.6x ratio, headings 0.991 vs 0.0003. `cleaner.rs:888`
-      asserts markdown survives cleaning, deliberately. So we still do not know how much of *any*
+      asserts markdown survives cleaning, deliberately. So we still do not know how much of _any_
       of these numbers is formatting detection rather than style. Needs a control arm building.
       **Still open — the one Phase 1 item the campaign did not touch.**
 - [x] **Seed repeats.** Noise floor measured: 0.27 pp accuracy / 0.0008 val AUC across three
@@ -114,14 +114,14 @@ These change the artifact, so deciding them after release means a breaking chang
 
 ### Goes
 
-| what | why |
-|---|---|
+| what                                               | why                                                           |
+| -------------------------------------------------- | ------------------------------------------------------------- |
 | `pre_processor/vectorizer/` (tfidf, count, params) | no TF-IDF path in the new model — this is the 4.4 MB artifact |
-| `pre_processor/ngrams.rs` | exists only to feed TF-IDF |
-| `pre_processor/features/statistical.rs` | experimental, flag-gated, unused |
-| sklearn ensemble + `skl2onnx` in `train.py` | replaced |
-| aggregation in `pipeline/prediction.rs` | now inside the ONNX graph |
-| `chunk_classification_threshold.txt` | no chunk threshold at document level |
+| `pre_processor/ngrams.rs`                          | exists only to feed TF-IDF                                    |
+| `pre_processor/features/statistical.rs`            | experimental, flag-gated, unused                              |
+| sklearn ensemble + `skl2onnx` in `train.py`        | replaced                                                      |
+| aggregation in `pipeline/prediction.rs`            | now inside the ONNX graph                                     |
+| `chunk_classification_threshold.txt`               | no chunk threshold at document level                          |
 
 Deleting the Rust aggregation is a real simplification, not just less code: production maintains a
 weighted mean in `train.py` **and** an equivalent in Rust that must agree forever. The graph emitting
@@ -240,7 +240,7 @@ Open items, in order:
       `model.f16.safetensors` is the half-size candidate; `model.bpk` is **local-only, never
       uploaded** (zero-copy embedding option, checkpoint format once the Burn version allows —
       until then checkpoints stay MessagePack because the `Learner` checkpointer takes a
-      `Recorder`, which burn-store does not implement). The decision contract is *calibrated*:
+      `Recorder`, which burn-store does not implement). The decision contract is _calibrated_:
       inference computes `sigmoid(logit / T)` with `calibration_temperature.txt` and classifies
       at `classification_threshold.txt`, both fit on validation in calibrated probability space.
       Uncertainty contract: calibrated distance-from-0.5 is the confidence number (strongest
@@ -248,7 +248,7 @@ Open items, in order:
       paired with per-chunk highlighting; the doc-vs-chunk-agreement signal was measured weakest
       and dropped. The `evaluate` subcommand (renamed from `check`) re-scores full/f16/Q8 on validation and folds
       `artifact_checks` into `results.json` — run it after every training run; adopting f16 or
-      Q8 as *the* shipped form is that eval-gated decision. **The inference swap is done**:
+      Q8 as _the_ shipped form is that eval-gated decision. **The inference swap is done**:
       `is-it-slop` embeds `model.f16.safetensors` (build.rs `MODEL_VERSION` 4.0.0) and runs it
       on Burn's Flex CPU backend — ort, TF-IDF, sprs, and `AggregationMethod` are gone; the
       network shares one definition via the `is-it-slop-model` crate and one text→grid path via
@@ -274,10 +274,10 @@ Open items, in order:
       latency/throughput on the Flex backend, and end-model quality via a fixed `--limit` run
       with a tolerance band.
 - [ ] **CutMix**: port after the splitting re-baseline lands, as its own arm. The design, settled
-      in review: chunk isolation makes spliced grids *clean* supervision for the chunk head (it
+      in review: chunk isolation makes spliced grids _clean_ supervision for the chunk head (it
       sees only its own chunk, so per-chunk labels from different source documents are exact);
       the distribution risk lands on the document head, bounded the way Python bounded it — only
-      ~15% of batches spliced, and the spliced document's target becomes *soft* (the fraction of
+      ~15% of batches spliced, and the spliced document's target becomes _soft_ (the fraction of
       AI chunks), which is the honest label for a mixed document. Porting needs `Batch` to carry
       chunk labels (and a soft document label) instead of deriving them, plus the splice in the
       batcher. Judge it by chunk-level quality — the dispersion signal and mixed-content behavior
@@ -290,7 +290,7 @@ Open items, in order:
       smaller models. It also opens the larger-embedding arm the campaign priced out — train big,
       quantize down. Practical cadence: `--limit` runs for iteration, full/larger runs scheduled
       long (overnight or weekend). One honest caveat: on Burn 0.21 quantization shrinks the
-      *artifact only* — there are no integer compute kernels, tensors dequantize for every op —
+      _artifact only_ — there are no integer compute kernels, tensors dequantize for every op —
       so expect no inference speedup from Q8 today (if anything a small slowdown); the win is
       size and memory.
 
@@ -319,6 +319,5 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 
 - Proper error types in the library interface.
 - Speed benchmarks on infrence.
-- text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is
-  detecting formatting rather than style? A control arm stripping markdown from all text would
-  answer that.
+- text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is detecting formatting rather than style? A control arm stripping markdown from all text wouldanswer that.
+- I have noticed one of the most pervasive tells of LLM-isms is that they love to make inanimate objects the subject of verbs. For example an llm says 'Your conversation has been moved to the background - enter opens it - esc returns to it - ctrl+c twice quits', where a human would have written 'enter to open, esc to return, ctrl+c twice to quit'. Is this something we could try and explicitly train on? You could call something like this the personification of abstract nouns, but not always strictly abstract. Often very frequent with technical nouns 'holiday has the rest'. Is this something we could do in our training?
