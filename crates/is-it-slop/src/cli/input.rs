@@ -67,8 +67,9 @@ pub enum DocumentId {
         /// 1-based position within the source: the line number for line framing, the record
         /// ordinal for JSON.
         index: usize,
-        /// The `id` field of a JSON record, if present.
-        id: Option<String>,
+        /// The `id` field of a JSON record, if present, kept as JSON so it passes through
+        /// unchanged.
+        id: Option<serde_json::Value>,
     },
 }
 
@@ -82,10 +83,23 @@ impl fmt::Display for DocumentId {
                     write!(f, "{}:", path.display())?;
                 }
                 match id {
-                    Some(id) => f.write_str(id),
+                    Some(serde_json::Value::String(id)) => f.write_str(id),
+                    Some(id) => write!(f, "{id}"),
                     None => write!(f, "{index}"),
                 }
             }
+        }
+    }
+}
+
+impl DocumentId {
+    /// The id for JSON output: a record's own id exactly as it was given, otherwise the
+    /// display label as a string.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Record { id: Some(id), .. } => id.clone(),
+            _ => serde_json::Value::String(self.to_string()),
         }
     }
 }
@@ -275,13 +289,7 @@ impl JsonRecord {
     fn into_document(self, source: Source, index: usize) -> Document {
         let (id, text) = match self {
             Self::Text(text) => (None, text),
-            Self::Object { id, text } => {
-                let id = id.map(|id| match id {
-                    serde_json::Value::String(s) => s,
-                    other => other.to_string(),
-                });
-                (id, text)
-            }
+            Self::Object { id, text } => (id, text),
         };
         Document {
             id: DocumentId::Record { source, index, id },
@@ -307,11 +315,11 @@ mod tests {
         input.documents().collect()
     }
 
-    fn record(index: usize, id: Option<&str>) -> DocumentId {
+    fn record(index: usize, id: Option<serde_json::Value>) -> DocumentId {
         DocumentId::Record {
             source: Source::Argument,
             index,
-            id: id.map(str::to_owned),
+            id,
         }
     }
 
@@ -364,13 +372,16 @@ mod tests {
             ids,
             vec![
                 record(1, None),
-                record(2, Some("x")),
-                record(3, Some("7")),
+                record(2, Some("x".into())),
+                record(3, Some(7.into())),
                 record(4, None),
                 record(5, None),
             ]
         );
         assert_eq!(docs[1].text, "with id");
+        assert_eq!(docs[2].id.to_string(), "7");
+        assert_eq!(docs[2].id.to_json(), serde_json::json!(7));
+        assert_eq!(docs[0].id.to_json(), serde_json::json!("1"));
     }
 
     #[test]
@@ -390,7 +401,7 @@ mod tests {
             .collect();
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].id, record(1, None));
-        assert_eq!(docs[1].id, record(2, Some("b")));
+        assert_eq!(docs[1].id, record(2, Some("b".into())));
         assert_eq!(docs[1].text, "two");
     }
 

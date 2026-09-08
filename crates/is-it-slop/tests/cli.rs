@@ -55,15 +55,19 @@ fn jsonl_ids_pass_through_to_jsonl_output() {
         &["-i", "jsonl", "--jsonl"],
         r#"{"id": "alpha", "text": "Some text to classify."}
 {"text": "A record without an id."}
+{"id": 7, "text": "A record with a numeric id."}
 "#,
     );
     let lines = stdout_lines(&output);
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    let first: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
-    let second: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
-    assert_eq!(first["id"], "alpha");
-    assert_eq!(first["status"], "ok");
-    assert_eq!(second["id"], "2");
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    let rows: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows[0]["id"], "alpha");
+    assert_eq!(rows[0]["status"], "ok");
+    assert_eq!(rows[1]["id"], "2");
+    assert_eq!(rows[2]["id"], 7, "numeric ids keep their type");
 }
 
 #[test]

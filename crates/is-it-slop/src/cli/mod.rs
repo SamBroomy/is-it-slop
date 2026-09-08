@@ -474,7 +474,7 @@ fn prediction_json(
         }).collect::<Vec<_>>(),
     });
     if let Some(id) = id {
-        value["id"] = serde_json::Value::String(id.to_string());
+        value["id"] = id.to_json();
     }
     value
 }
