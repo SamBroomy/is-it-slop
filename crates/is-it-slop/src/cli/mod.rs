@@ -40,7 +40,7 @@ const STYLE_HUMAN_LABEL: Style = Style::new().truecolor(0xFF, 0x8C, 0x00).bold()
 const STYLE_AI_BAR: Style = Style::new().cyan();
 const STYLE_HUMAN_BAR: Style = Style::new().truecolor(0xFF, 0x8C, 0x00);
 
-use crate::{Classification, Predictor, Threshold, UnifiedPrediction};
+use crate::{Classification, Predictor, Threshold, UnifiedPrediction, pipeline::PipelineError};
 
 pub mod input;
 #[cfg(not(feature = "self-update"))]
@@ -384,6 +384,10 @@ pub fn run(cli: &Cli) -> Result<RunOutcome> {
     let predictor = Predictor::default().with_threshold(cli.threshold);
 
     if input.is_multi() {
+        // predict_batch does not validate its items, and a blank document scores as confidently AI.
+        if let Some(blank) = documents.iter().find(|d| d.text.trim().is_empty()) {
+            anyhow::bail!("{}: {}", blank.id, PipelineError::EmptyInput);
+        }
         eprintln!("Processing {} texts...", documents.len());
         let texts: Vec<&str> = documents.iter().map(|d| d.text.as_str()).collect();
         let predictions = predictor.predict_batch(&texts)?;

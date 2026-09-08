@@ -111,6 +111,29 @@ fn single_file_has_no_prefix() {
 }
 
 #[test]
+fn blank_document_in_a_multi_file_run_fails_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty = dir.path().join("empty.txt");
+    let full = dir.path().join("full.txt");
+    std::fs::write(&empty, "  \n").unwrap();
+    std::fs::write(&full, "Some real text.").unwrap();
+
+    let output = run(
+        &[
+            "-f",
+            empty.to_str().unwrap(),
+            "-f",
+            full.to_str().unwrap(),
+            "--score",
+        ],
+        "",
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("empty.txt"), "{stderr}");
+}
+
+#[test]
 fn missing_file_fails_naming_the_path() {
     let output = run(&["-f", "/nonexistent/for-sure.txt"], "");
     assert!(!output.status.success());
