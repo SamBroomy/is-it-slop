@@ -4105,6 +4105,7 @@ name = "is-it-slop-model"
 version = "0.7.0-alpha.1"
 dependencies = [
  "burn",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4126,6 +4127,7 @@ dependencies = [
 name = "is-it-slop-training"
 version = "0.7.0-alpha.1"
 dependencies = [
+ "anyhow",
  "burn",
  "burn-store",
  "clap",
@@ -4136,7 +4138,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
 ]

@@ -19,23 +19,6 @@ use burn::tensor::{Int, Tensor};
 
 use crate::training::Batch;
 
-/// Failures loading or preparing data.
-#[derive(Debug, thiserror::Error)]
-pub enum DataError {
-    /// Filesystem failure.
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    /// Parquet reading failure.
-    #[error(transparent)]
-    Polars(#[from] polars::error::PolarsError),
-    /// Encoder artifact failure.
-    #[error(transparent)]
-    Encoder(#[from] EncoderError),
-    /// The data does not match the artifact contract.
-    #[error("{0}")]
-    Contract(String),
-}
-
 /// Stacks encoded documents into `[batch, max_chunks, chunk_size]` id tensors.
 #[derive(Debug, Clone)]
 pub struct SlopBatcher {

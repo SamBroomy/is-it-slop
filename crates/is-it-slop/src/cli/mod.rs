@@ -45,9 +45,9 @@ pub mod self_update;
 use input::{Document, DocumentId, Framing, Input, SourceError};
 use output::{ColorChoice, Detail, Item, OutputFormat, RunSummary, Scored, Sink, SinkOptions};
 
-use crate::{Predictor, Threshold, pipeline};
+use crate::{Predictor, Threshold, ThresholdError, pipeline};
 
-fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
+fn parse_threshold(s: &str) -> std::result::Result<Threshold, ThresholdError> {
     s.try_into()
 }
 

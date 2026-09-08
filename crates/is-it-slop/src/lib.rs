@@ -70,6 +70,17 @@ pub use pipeline::{Classification, Prediction, UnifiedPrediction};
 
 use crate::model::CLASSIFICATION_THRESHOLD;
 
+/// A value that is not a classification threshold.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum ThresholdError {
+    /// Outside `[0.0, 1.0]`.
+    #[error("threshold must be in [0.0, 1.0], got {0}")]
+    OutOfRange(f32),
+    /// Text that is not a number.
+    #[error("threshold is not a number: {0}")]
+    Parse(#[from] std::num::ParseFloatError),
+}
+
 /// A validated classification threshold in the range `[0.0, 1.0]`.
 ///
 /// Text with a predicted AI probability >= the threshold is classified as AI;
@@ -113,21 +124,17 @@ impl Threshold {
     /// Panics if `value` is not in the range `[0.0, 1.0]`.
     #[must_use]
     pub fn new(value: f32) -> Self {
-        assert!(
-            (0.0..=1.0).contains(&value),
-            "threshold must be in [0.0, 1.0], got {value}"
-        );
-        Self(value)
+        Self::try_new(value).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// Create a `Threshold`, returning `Err` if `value` is outside `[0.0, 1.0]`.
     ///
     /// Use this when the value comes from user input or configuration.
-    pub fn try_new(value: f32) -> Result<Self, String> {
+    pub fn try_new(value: f32) -> Result<Self, ThresholdError> {
         if (0.0..=1.0).contains(&value) {
             Ok(Self(value))
         } else {
-            Err(format!("threshold must be in [0.0, 1.0], got {value}"))
+            Err(ThresholdError::OutOfRange(value))
         }
     }
 
@@ -138,7 +145,7 @@ impl Threshold {
     }
 }
 impl TryFrom<f64> for Threshold {
-    type Error = String;
+    type Error = ThresholdError;
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
         Self::try_new(value as f32)
@@ -146,7 +153,7 @@ impl TryFrom<f64> for Threshold {
 }
 
 impl TryFrom<f32> for Threshold {
-    type Error = String;
+    type Error = ThresholdError;
 
     fn try_from(value: f32) -> Result<Self, Self::Error> {
         Self::try_new(value)
@@ -154,13 +161,10 @@ impl TryFrom<f32> for Threshold {
 }
 
 impl TryFrom<&str> for Threshold {
-    type Error = String;
+    type Error = ThresholdError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        value
-            .parse::<f32>()
-            .map_err(|e| format!("Failed to parse threshold from string: {e}"))
-            .and_then(Self::try_new)
+        Self::try_new(value.parse::<f32>()?)
     }
 }
 
@@ -426,7 +430,7 @@ mod tests {
         assert!(Threshold::try_new(-0.1).is_err());
         assert!(Threshold::try_new(1.1).is_err());
         let err = Threshold::try_new(-0.5).unwrap_err();
-        assert!(err.contains("threshold must be in [0.0, 1.0]"));
+        assert_eq!(err, ThresholdError::OutOfRange(-0.5));
     }
 
     #[test]

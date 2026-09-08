@@ -16,6 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use burn::config::Config;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::data::dataset::InMemDataset;
@@ -89,7 +90,7 @@ mod backend;
 /// `Autodiff` leaks until the OS kills it (EXPERIMENTS.md).
 type Inner = <backend::Selected as AutodiffBackend>::InnerBackend;
 
-fn main() {
+fn main() -> Result<()> {
     // Burn and CubeCL log per-iteration progress and autotune chatter at INFO; keep the console
     // for this crate's own reporting (RUST_LOG still overrides).
     tracing_subscriber::fmt()
@@ -102,15 +103,15 @@ fn main() {
 
     match Cli::parse().command {
         Command::Train(args) => {
-            launch::<backend::Selected>(&args, backend::NAME, &backend::device());
+            launch::<backend::Selected>(&args, backend::NAME, &backend::device())
         }
         Command::Evaluate(args) => evaluate::<Inner>(&args, &backend::device()),
     }
 }
 
-fn load(data_dir: &Path, limit: Option<usize>, name: &str) -> SplitData {
+fn load(data_dir: &Path, limit: Option<usize>, name: &str) -> Result<SplitData> {
     let mut split = read_split(&data_dir.join(format!("{name}.parquet")))
-        .unwrap_or_else(|e| panic!("reading the {name} split: {e}"));
+        .with_context(|| format!("reading the {name} split"))?;
     if let Some(limit) = limit
         && limit < split.len()
     {
@@ -122,7 +123,7 @@ fn load(data_dir: &Path, limit: Option<usize>, name: &str) -> SplitData {
             .collect();
         split.labels = (0..limit).map(|i| split.labels[i * len / limit]).collect();
     }
-    split
+    Ok(split)
 }
 
 /// Full-split model outputs over already-encoded documents, batched to bound memory: everything
@@ -281,21 +282,21 @@ fn uncertainty_signals(
 fn save_model_artifacts<B: burn::tensor::backend::Backend>(
     model: &HierarchicalSlopClassifier<B>,
     artifact_dir: &Path,
-) {
+) -> Result<()> {
     use burn_store::{BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
 
     let version = env!("CARGO_PKG_VERSION");
     let mut bpk = BurnpackStore::from_file(artifact_dir.join("model.bpk"))
         .metadata("preprocessing_version", version)
         .overwrite(true);
-    model.save_into(&mut bpk).expect("saving model.bpk");
+    model.save_into(&mut bpk).context("saving model.bpk")?;
 
     let mut full = SafetensorsStore::from_file(artifact_dir.join("model.safetensors"))
         .metadata("preprocessing_version", version)
         .overwrite(true);
     model
         .save_into(&mut full)
-        .expect("saving model.safetensors");
+        .context("saving model.safetensors")?;
 
     let mut half = SafetensorsStore::from_file(artifact_dir.join("model.f16.safetensors"))
         .metadata("preprocessing_version", version)
@@ -303,7 +304,8 @@ fn save_model_artifacts<B: burn::tensor::backend::Backend>(
         .overwrite(true);
     model
         .save_into(&mut half)
-        .expect("saving model.f16.safetensors");
+        .context("saving model.f16.safetensors")?;
+    Ok(())
 }
 
 /// The last epoch that wrote metric logs — the number of epochs actually run.
@@ -317,14 +319,15 @@ fn epochs_trained(artifact_dir: &Path) -> Option<usize> {
         .max()
 }
 
-fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Device) {
+fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Device) -> Result<()> {
     info!(backend, ?device, "starting");
 
-    let train_split = load(&args.data_dir, args.limit, "train");
-    let valid_split = load(&args.data_dir, args.limit, "validation");
+    let train_split = load(&args.data_dir, args.limit, "train")?;
+    let valid_split = load(&args.data_dir, args.limit, "validation")?;
 
     let vocabulary = Vocabulary::build(&train_split.texts, args.vocab_size);
-    std::fs::create_dir_all(&args.artifact_dir).expect("artifact dir");
+    std::fs::create_dir_all(&args.artifact_dir)
+        .with_context(|| format!("creating {}", args.artifact_dir.display()))?;
     // Clear the previous run's training outputs (as Burn's guide does) so the summary, metric
     // logs, and checkpoints describe this run only. Nothing resumes from old checkpoints, and the
     // model, vocabulary, and configs are re-saved below.
@@ -334,7 +337,7 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
     }
     vocabulary
         .save(&args.artifact_dir.join("token_vocabulary.safetensors"))
-        .expect("saving the vocabulary");
+        .context("saving the vocabulary")?;
     let encoder = DocumentEncoder::new(vocabulary);
     let batcher = SlopBatcher {
         max_chunks: encoder.max_chunks(),
@@ -372,18 +375,21 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
         .num_workers(2)
         .build(InMemDataset::new(encoded_valid.clone()));
 
-    let artifact_dir = args.artifact_dir.to_str().expect("utf-8 artifact dir");
+    let artifact_dir = args
+        .artifact_dir
+        .to_str()
+        .context("artifact dir is not UTF-8")?;
     config
         .save(format!("{artifact_dir}/training_config.json"))
-        .expect("saving config");
+        .context("saving training_config.json")?;
     model_config
         .save(format!("{artifact_dir}/model_config.json"))
-        .expect("saving config");
+        .context("saving model_config.json")?;
     std::fs::write(
         args.artifact_dir.join("encoder_config.json"),
-        serde_json::to_string_pretty(&encoder.bundle_config()).expect("serializing encoder config"),
+        serde_json::to_string_pretty(&encoder.bundle_config())?,
     )
-    .expect("saving encoder config");
+    .context("saving encoder_config.json")?;
 
     // Interactive runs keep Burn's TUI dashboard; redirected/nohup'd runs get one quiet
     // progress line per interval instead of the fallback renderer's per-iteration dump.
@@ -405,7 +411,7 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
     );
     let train_seconds = started.elapsed().as_secs_f64();
 
-    save_model_artifacts(&result.model.model, &args.artifact_dir);
+    save_model_artifacts(&result.model.model, &args.artifact_dir)?;
 
     // The parity-gate numbers: full-split AUC, the statistic the campaign tables report
     // (combo band: validation 0.9960-0.9961, test 0.9968). AUC is invariant under the monotone
@@ -414,7 +420,7 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
     let val = predictions(&result.model.model, &batcher, &encoded_valid, &inner_device);
     let val_auc = roc_auc(&val.labels, &val.logits);
     println!("validation AUC (full split): {val_auc:.6}");
-    let test_split = load(&args.data_dir, args.limit, "test");
+    let test_split = load(&args.data_dir, args.limit, "test")?;
     let encoded_test = encoder.encode_batch(&test_split.texts, &test_split.labels);
     let test = predictions(&result.model.model, &batcher, &encoded_test, &inner_device);
     println!(
@@ -440,12 +446,12 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
         args.artifact_dir.join("classification_threshold.txt"),
         thr_f1.to_string(),
     )
-    .expect("saving the threshold");
+    .context("saving classification_threshold.txt")?;
     std::fs::write(
         args.artifact_dir.join("calibration_temperature.txt"),
         temperature.to_string(),
     )
-    .expect("saving the temperature");
+    .context("saving calibration_temperature.txt")?;
 
     let results = RunResults {
         model_config: &model_config,
@@ -459,10 +465,11 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
     };
     std::fs::write(
         args.artifact_dir.join("results.json"),
-        serde_json::to_string_pretty(&results).expect("serializing results"),
+        serde_json::to_string_pretty(&results)?,
     )
-    .expect("saving results");
+    .context("saving results.json")?;
     println!("artifacts in {artifact_dir}; run the `evaluate` subcommand for the f16/Q8 costs");
+    Ok(())
 }
 
 // --------------------------------------------------------------------------------------------
@@ -505,27 +512,35 @@ impl<B: burn::tensor::backend::Backend> burn::module::ModuleMapper<B> for Matrix
     }
 }
 
-fn evaluate<B: burn::tensor::backend::Backend>(args: &EvaluateArgs, device: &B::Device) {
+fn evaluate<B: burn::tensor::backend::Backend>(
+    args: &EvaluateArgs,
+    device: &B::Device,
+) -> Result<()> {
     use burn::module::Quantizer;
     use burn::tensor::quantization::{Calibration, QuantScheme, QuantStore, QuantValue};
     use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
 
     let dir = &args.artifact_dir;
     let model_config = HierarchicalModelConfig::load(dir.join("model_config.json"))
-        .expect("model_config.json in the artifact dir");
-    let vocabulary =
-        Vocabulary::load(&dir.join("token_vocabulary.safetensors")).expect("bundle vocabulary");
+        .with_context(|| format!("loading model_config.json from {}", dir.display()))?;
+    model_config
+        .validate()
+        .context("model_config.json in the artifact dir")?;
+    let vocabulary = Vocabulary::load(&dir.join("token_vocabulary.safetensors"))
+        .context("loading the bundle vocabulary")?;
     let encoder = DocumentEncoder::new(vocabulary);
     let batcher = SlopBatcher {
         max_chunks: encoder.max_chunks(),
         chunk_size: encoder.chunk_size(),
     };
-    let valid = load(&args.data_dir, args.limit, "validation");
+    let valid = load(&args.data_dir, args.limit, "validation")?;
     let encoded = encoder.encode_batch(&valid.texts, &valid.labels);
 
     let mut model = model_config.init::<B>(device);
     let mut store = SafetensorsStore::from_file(dir.join("model.safetensors"));
-    model.load_from(&mut store).expect("loading the weights");
+    model
+        .load_from(&mut store)
+        .context("loading model.safetensors")?;
     let p = predictions(&model, &batcher, &encoded, device);
     let full = roc_auc(&p.labels, &p.logits);
 
@@ -534,7 +549,7 @@ fn evaluate<B: burn::tensor::backend::Backend>(args: &EvaluateArgs, device: &B::
         .with_from_adapter(HalfPrecisionAdapter::new());
     f16_model
         .load_from(&mut store)
-        .expect("loading the f16 weights");
+        .context("loading model.f16.safetensors")?;
     let p = predictions(&f16_model, &batcher, &encoded, device);
     let f16 = roc_auc(&p.labels, &p.logits);
 
@@ -565,11 +580,9 @@ fn evaluate<B: burn::tensor::backend::Backend>(args: &EvaluateArgs, device: &B::
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| serde_json::json!({}));
-    doc["artifact_checks"] = serde_json::to_value(&checks).expect("serializing checks");
-    std::fs::write(
-        &results_path,
-        serde_json::to_string_pretty(&doc).expect("serializing results"),
-    )
-    .expect("saving results");
+    doc["artifact_checks"] = serde_json::to_value(&checks)?;
+    std::fs::write(&results_path, serde_json::to_string_pretty(&doc)?)
+        .with_context(|| format!("saving {}", results_path.display()))?;
     println!("artifact_checks written to {}", results_path.display());
+    Ok(())
 }
