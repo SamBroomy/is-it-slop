@@ -45,6 +45,7 @@ mod tests {
             labelled: true,
             color: false,
             detail: Detail::Normal,
+            chunks: false,
         };
         let text = render(
             &mut Label::new(options),

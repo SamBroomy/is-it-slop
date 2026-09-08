@@ -22,6 +22,7 @@
 //! - [`predict`]: single text prediction
 //! - [`predict_batch`]: batch prediction for multiple texts, all or nothing
 //! - [`predict_each`]: batch prediction with a result per text
+//! - [`chunk_texts`]: the text behind each chunk prediction
 //!
 //! # Example
 //!
@@ -213,6 +214,29 @@ pub fn predict_batch(inputs: &[&str]) -> Result<Vec<UnifiedPrediction>> {
     predict_each(inputs).into_iter().collect()
 }
 
+/// The text of each chunk behind [`predict`]'s `chunk_predictions` for `input`, in order.
+///
+/// This is the cleaned text the model saw, cut at the same chunk boundaries and capped at
+/// [`MAX_WINDOWS_PER_DOCUMENT`], so it lines up index for index with the chunk predictions.
+///
+/// # Example
+///
+/// ```rust
+/// use is_it_slop::pipeline::{PipelineError, chunk_texts, predict};
+///
+/// let text = "Some text";
+/// let result = predict(text)?;
+/// let chunks = chunk_texts(text);
+/// assert_eq!(chunks.len(), result.chunk_predictions.len());
+/// # Ok::<(), PipelineError>(())
+/// ```
+#[must_use]
+pub fn chunk_texts(input: &str) -> Vec<String> {
+    let mut texts = ENCODER.chunk_texts(input);
+    texts.truncate(MAX_WINDOWS_PER_DOCUMENT * ENCODER.max_chunks());
+    texts
+}
+
 mod error {
     use thiserror::Error;
 
@@ -289,6 +313,25 @@ mod tests {
                 from_batch.chunk_predictions.len()
             );
         }
+    }
+
+    #[test]
+    fn chunk_texts_line_up_with_chunk_predictions() {
+        let long =
+            "Each sentence here adds a handful of tokens to the running document. ".repeat(120);
+        for text in ["Short text.", "  padded  ", long.as_str()] {
+            let chunks = chunk_texts(text);
+            let prediction = predict(text).expect("predict");
+            assert_eq!(
+                chunks.len(),
+                prediction.chunk_predictions.len(),
+                "{text:.40?}"
+            );
+        }
+        assert!(
+            chunk_texts(long.as_str()).len() > ENCODER.max_chunks(),
+            "spans windows"
+        );
     }
 
     #[test]

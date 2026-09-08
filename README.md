@@ -165,6 +165,9 @@ $ is-it-slop "Your text" --threshold 0.7
 $ is-it-slop "Your text" --verbose
 $ is-it-slop "Your text" --quiet
 
+# Pretty output only: every 192-token chunk with its (uncalibrated) AI score and text
+$ is-it-slop -f essay.txt --chunks
+
 # Colour: auto (default, honours NO_COLOR), always, never
 $ is-it-slop "Your text" --color never
 ```

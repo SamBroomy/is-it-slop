@@ -100,6 +100,9 @@ is-it-slop "Text" --verbose
 # Quiet: bar only, no metrics
 is-it-slop "Text" --quiet
 
+# Chunks: every 192-token chunk with its own score and text
+is-it-slop -f essay.txt --chunks
+
 # Read from stdin
 echo "Your text" | is-it-slop
 

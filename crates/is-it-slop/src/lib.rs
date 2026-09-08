@@ -265,6 +265,12 @@ impl Predictor {
         pipeline::predict_each(&as_strs(texts))
     }
 
+    /// The text behind each chunk prediction of [`Predictor::predict`] for `text`, in order.
+    #[must_use]
+    pub fn chunk_texts<T: AsRef<str>>(&self, text: T) -> Vec<String> {
+        pipeline::chunk_texts(text.as_ref())
+    }
+
     /// Classify a single text using the configured threshold.
     ///
     /// Returns `Classification::Human` or `Classification::AI`.
