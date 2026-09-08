@@ -556,6 +556,11 @@ test-rust:
     @echo "Testing main crate (integration tests)..."
     cargo test -p is-it-slop --test integration_test
 
+# Inference throughput by batch size and document length; IS_IT_SLOP_BENCH_CORPUS=<file> benches real lines
+[group('dev')]
+bench-inference:
+    cargo bench -p is-it-slop --bench inference
+
 # Test only Python packages
 [group('dev')]
 test-python: build-bindings
