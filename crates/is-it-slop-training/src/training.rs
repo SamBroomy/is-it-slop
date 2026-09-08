@@ -221,7 +221,7 @@ pub struct Batch<B: Backend> {
 }
 
 /// The classifier plus the loss weighting its steps need; this is the module the `Learner`
-/// trains and checkpoints.
+/// trains.
 #[derive(Module, Debug)]
 pub struct TrainableClassifier<B: Backend> {
     /// The network itself.
@@ -274,9 +274,17 @@ impl<B: Backend> InferenceStep for TrainableClassifier<B> {
 pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Vec<f32>) {
     let [n, _] = output.output.dims();
     let logits = output.output.clone().slice([0..n, 1..2]).reshape([n]);
+    // convert() first: on an f16/flex32 element backend the data arrives in that type.
     (
-        output.targets.clone().float().into_data().to_vec().unwrap(),
-        logits.into_data().to_vec().unwrap(),
+        output
+            .targets
+            .clone()
+            .float()
+            .into_data()
+            .convert::<f32>()
+            .to_vec()
+            .unwrap(),
+        logits.into_data().convert::<f32>().to_vec().unwrap(),
     )
 }
 
@@ -415,7 +423,7 @@ impl burn::train::renderer::MetricsRenderer for ThrottledRenderer {
 /// Run the frozen recipe on Burn's `Learner` harness.
 ///
 /// `renderer` overrides the default metrics dashboard (pass
-/// `None::<burn::train::renderer::CliMetricsRenderer>` to keep it); checkpoints, metric logs and
+/// `None::<burn::train::renderer::CliMetricsRenderer>` to keep it); metric logs and
 /// the summary land under `artifact_dir`.
 ///
 /// Three knowing deviations from the original Python loop, all from leaning on Burn's built-ins:
@@ -437,7 +445,6 @@ pub fn train<B: AutodiffBackend>(
     device: &B::Device,
     renderer: Option<impl burn::train::renderer::MetricsRenderer + 'static>,
 ) -> LearningResult<TrainableClassifier<B::InnerBackend>> {
-    use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
     use burn::train::metric::store::{Aggregate, Direction, Split};
     use burn::train::metric::{
         AccuracyMetric, AurocMetric, IterationSpeedMetric, LearningRateMetric, LossMetric,
@@ -467,8 +474,11 @@ pub fn train<B: AutodiffBackend>(
         },
     );
 
-    // Full precision checkpoints: a resumed or reloaded model must carry the trained weights,
-    // not an f16 rounding of them.
+    // No epoch checkpointer: nothing resumes from checkpoints yet (NEXT_RELEASE, "Resume a
+    // training run"), the returned model carries the final weights, and burn 0.21's
+    // AsyncCheckpointer races the fusion backend — a checkpointer-thread panic ("Should have
+    // handle for tensor") killed a full run at the next epoch's checkpoint hand-off
+    // (SendError abort). Checkpoints return with resume support, on a sync recorder.
     let mut training = SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_valid)
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
@@ -477,7 +487,6 @@ pub fn train<B: AutodiffBackend>(
         .metric_valid_numeric(AccuracyMetric::new())
         .metric_train_numeric(LearningRateMetric::new())
         .metric_train(IterationSpeedMetric::new())
-        .with_file_checkpointer(NamedMpkFileRecorder::<FullPrecisionSettings>::new())
         .early_stopping(early_stopping)
         .num_epochs(config.epochs)
         .summary();
@@ -491,10 +500,10 @@ pub fn train<B: AutodiffBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::backend::NdArray;
-    use burn::backend::ndarray::NdArrayDevice;
+    use burn::backend::Flex;
+    use burn::backend::flex::FlexDevice;
 
-    type B = NdArray;
+    type B = Flex;
 
     #[test]
     fn warmup_cosine_matches_pytorch_lambda_lr() {
@@ -529,7 +538,7 @@ mod tests {
         // Values computed with torch.nn.functional.binary_cross_entropy_with_logits and the
         // Python losses(): doc_loss 0.3936693668, chunk_loss 1.0513024330, total 0.7090600729
         // at chunk_loss_weight 0.3 with one masked-out chunk.
-        let device = NdArrayDevice::default();
+        let device = FlexDevice;
         let output = ModelOutput {
             doc_logits: Tensor::<B, 1>::from_floats([0.5, -1.0], &device),
             chunk_logits: Tensor::<B, 2>::from_floats([[0.2, -0.3], [1.5, 0.7]], &device),
@@ -549,7 +558,7 @@ mod tests {
     fn rank_gated_adamw_decays_matrices_only() {
         // One step with zero gradients isolates the decay term: the matrix must shrink by
         // lr * weight_decay, the vector must not move.
-        let device = NdArrayDevice::default();
+        let device = FlexDevice;
         let optim = RankGatedAdamW::new(0.5);
 
         let matrix = Tensor::<B, 2>::ones([2, 2], &device);
@@ -581,8 +590,8 @@ mod tests {
         use crate::data::{EncodedDocument, SlopBatcher};
         use crate::evaluation::roc_auc;
 
-        type AB = Autodiff<NdArray>;
-        let device = NdArrayDevice::default();
+        type AB = Autodiff<Flex>;
+        let device = FlexDevice;
         // Reduce sensitivity to parallel tests sharing the global RNG; `train` reseeds again but
         // model init happens before it.
         AB::seed(&device, 7);
@@ -656,7 +665,7 @@ mod tests {
 
         // Score the returned model on the validation set with the oracle-tested AUC.
         let valid_docs = make_docs(64, 1);
-        let batch: Batch<NdArray> = burn::data::dataloader::batcher::Batcher::batch(
+        let batch: Batch<Flex> = burn::data::dataloader::batcher::Batcher::batch(
             &SlopBatcher {
                 max_chunks: 2,
                 chunk_size: 8,
@@ -669,7 +678,7 @@ mod tests {
         let auc = roc_auc(&labels, &logits);
 
         // Diagnostics: train-split AUC of the returned model.
-        let train_batch: Batch<NdArray> = burn::data::dataloader::batcher::Batcher::batch(
+        let train_batch: Batch<Flex> = burn::data::dataloader::batcher::Batcher::batch(
             &SlopBatcher {
                 max_chunks: 2,
                 chunk_size: 8,
