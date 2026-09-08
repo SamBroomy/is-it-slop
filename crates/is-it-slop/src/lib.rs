@@ -64,6 +64,7 @@ pub mod pipeline;
 
 use std::{fmt, ops::Deref, result::Result};
 
+use is_it_slop_preprocessing::as_strs;
 pub use model::MODEL_VERSION;
 pub use pipeline::{Classification, Prediction, UnifiedPrediction};
 
@@ -243,41 +244,38 @@ impl Predictor {
     ///
     /// Fails if the slice is empty or any text is blank; see [`Predictor::predict_each`] for
     /// per-text results.
-    pub fn predict_batch<T: AsRef<str> + Sync>(
+    pub fn predict_batch<T: AsRef<str>>(
         &self,
         texts: &[T],
     ) -> pipeline::Result<Vec<UnifiedPrediction>> {
-        let strs: Vec<&str> = texts.iter().map(AsRef::as_ref).collect();
-        pipeline::predict_batch(&strs)
+        pipeline::predict_batch(&as_strs(texts))
     }
 
     /// Predict each text in one forward pass, with a result per text.
     ///
     /// A blank text fails on its own instead of failing the batch.
-    pub fn predict_each<T: AsRef<str> + Sync>(
+    pub fn predict_each<T: AsRef<str>>(
         &self,
         texts: &[T],
     ) -> Vec<pipeline::Result<UnifiedPrediction>> {
-        let strs: Vec<&str> = texts.iter().map(AsRef::as_ref).collect();
-        pipeline::predict_each(&strs)
+        pipeline::predict_each(&as_strs(texts))
     }
 
     /// Classify a single text using the configured threshold.
     ///
     /// Returns `Classification::Human` or `Classification::AI`.
     pub fn classify<T: AsRef<str>>(&self, text: T) -> pipeline::Result<Classification> {
-        self.predict(text)
-            .map(|pred| pred.classification(self.threshold))
+        pipeline::predict(text.as_ref()).map(|pred| pred.classification(self.threshold))
     }
 
     /// Classify multiple texts using the configured threshold.
     ///
     /// Returns a vector of classifications, one for each input text.
-    pub fn classify_batch<T: AsRef<str> + Sync>(
+    pub fn classify_batch<T: AsRef<str>>(
         &self,
         texts: &[T],
     ) -> pipeline::Result<Vec<Classification>> {
-        self.predict_batch(texts).map(|preds| {
+        pipeline::predict_batch(&as_strs(texts)).map(|preds| {
             preds
                 .into_iter()
                 .map(|pred| pred.classification(self.threshold))

@@ -1,6 +1,7 @@
 //! End-to-end tests of the `is-it-slop` binary: input handling, output formats, exit status.
 
 use std::{
+    fmt::Write as _,
     io::Write,
     process::{Command, Output, Stdio},
 };
@@ -240,7 +241,7 @@ fn results_keep_input_order_across_batches_with_errors_in_place() {
         } else {
             format!("Record number {i} has some ordinary text in it.")
         };
-        stdin.push_str(&format!("{{\"id\": {i}, \"text\": \"{text}\"}}\n"));
+        writeln!(stdin, "{{\"id\": {i}, \"text\": \"{text}\"}}").unwrap();
     }
     let output = run(&["-i", "jsonl", "-o", "jsonl"], &stdin);
     assert_eq!(

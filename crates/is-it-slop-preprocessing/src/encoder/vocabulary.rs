@@ -24,7 +24,7 @@ impl Vocabulary {
     /// Rank the top `vocab_size` tokens of a corpus by frequency.
     ///
     /// Derive the vocabulary from the training split only; deriving it from test would leak.
-    pub fn build<T: AsRef<str> + Sync>(texts: &[T], vocab_size: usize) -> Self {
+    pub fn build<T: AsRef<str>>(texts: &[T], vocab_size: usize) -> Self {
         Self::from_token_lists(&tokenize(texts), vocab_size)
     }
 
