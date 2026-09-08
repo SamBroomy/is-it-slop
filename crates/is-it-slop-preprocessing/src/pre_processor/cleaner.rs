@@ -377,10 +377,14 @@ impl TextCleaner {
     }
 
     /// Clean a batch of texts in parallel
-    pub fn clean_batch<T: AsRef<str> + Sync>(&self, texts: &[T]) -> Vec<String> {
+    pub fn clean_batch<T: AsRef<str>>(&self, texts: &[T]) -> Vec<String> {
+        self.clean_strs(&crate::as_strs(texts))
+    }
+
+    fn clean_strs(&self, texts: &[&str]) -> Vec<String> {
         texts
             .par_iter()
-            .map(|text| self.clean(text.as_ref()).to_string())
+            .map(|text| self.clean(text).to_string())
             .collect()
     }
 }

@@ -11,3 +11,11 @@
 
 pub mod encoder;
 pub mod pre_processor;
+
+/// Borrow any string slice as `&str`s.
+///
+/// Public batch functions accept `impl AsRef<str>` for ergonomics but do their work on `&[&str]`,
+/// so only this shell is monomorphised per caller type and the bodies compile once.
+pub fn as_strs<T: AsRef<str>>(texts: &[T]) -> Vec<&str> {
+    texts.iter().map(AsRef::as_ref).collect()
+}

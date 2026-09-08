@@ -22,7 +22,7 @@ const MIN_TEXTS_FOR_PARALLEL: usize = 1_000;
 const MIN_BYTES_FOR_PARALLEL: usize = 1_000_000;
 
 #[instrument(level = "debug", skip(texts), fields(num_texts = texts.len()))]
-fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
+fn tokenize_texts_par(texts: &[&str]) -> Vec<Vec<u32>> {
     debug!(num_texts = texts.len(), "Using parallel tokenization");
     let bpe = o200k_base();
 
@@ -40,10 +40,10 @@ fn tokenize_texts_par<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
 }
 
 #[instrument(level = "debug", skip(texts), fields(num_texts = texts.len()))]
-fn tokenize_texts<T: AsRef<str>>(texts: &[T]) -> Vec<Vec<u32>> {
+fn tokenize_texts(texts: &[&str]) -> Vec<Vec<u32>> {
     debug!(num_texts = texts.len(), "Using sequential tokenization");
     let bpe = o200k_base();
-    texts.iter().map(|text| bpe.encode(text.as_ref())).collect()
+    texts.iter().map(|text| bpe.encode(text)).collect()
 }
 
 /// Determine if parallel processing should be used based on workload characteristics.
@@ -55,7 +55,7 @@ fn tokenize_texts<T: AsRef<str>>(texts: &[T]) -> Vec<Vec<u32>> {
 /// This heuristic balances thread spawning overhead against tokenization work.
 /// Very small workloads (< 8 texts) never parallelize, regardless of size.
 #[inline]
-fn should_use_parallel<T: AsRef<str>>(texts: &[T]) -> bool {
+fn should_use_parallel(texts: &[&str]) -> bool {
     let num_texts = texts.len();
 
     // Never parallelize tiny workloads - thread overhead exceeds benefit
@@ -70,7 +70,7 @@ fn should_use_parallel<T: AsRef<str>>(texts: &[T]) -> bool {
     }
 
     // For medium-sized workloads, check total bytes
-    let total_bytes: usize = texts.iter().map(|s| s.as_ref().len()).sum();
+    let total_bytes: usize = texts.iter().map(|s| s.len()).sum();
     total_bytes >= MIN_BYTES_FOR_PARALLEL
 }
 /// Tokenize texts using bpe-openai `o200k_base` encoding.
@@ -82,8 +82,12 @@ fn should_use_parallel<T: AsRef<str>>(texts: &[T]) -> bool {
 ///
 /// # Returns
 /// Vector of token ID sequences, one per input text
+pub fn tokenize<T: AsRef<str>>(texts: &[T]) -> Vec<Vec<u32>> {
+    tokenize_strs(&crate::as_strs(texts))
+}
+
 #[instrument(level = "debug", skip(texts), fields(num_texts = texts.len(), use_parallel = should_use_parallel(texts)))]
-pub fn tokenize<T: AsRef<str> + Sync>(texts: &[T]) -> Vec<Vec<u32>> {
+fn tokenize_strs(texts: &[&str]) -> Vec<Vec<u32>> {
     if should_use_parallel(texts) {
         tokenize_texts_par(texts)
     } else {
@@ -123,7 +127,7 @@ mod tests {
         // Exactly at MIN_TEXTS_FOR_PARALLEL threshold should trigger parallel
         let texts: Vec<String> = (0..1000).map(|i| format!("Text {i}")).collect();
         assert!(
-            should_use_parallel(&texts),
+            should_use_parallel(&crate::as_strs(&texts)),
             "1000 texts should use parallel"
         );
 
@@ -139,7 +143,7 @@ mod tests {
 
         if total_bytes < MIN_BYTES_FOR_PARALLEL {
             assert!(
-                !should_use_parallel(&texts),
+                !should_use_parallel(&crate::as_strs(&texts)),
                 "999 small texts should use sequential"
             );
         }
@@ -190,7 +194,7 @@ mod tests {
         let total_bytes: usize = large_texts.iter().map(String::len).sum();
         assert!(total_bytes >= MIN_BYTES_FOR_PARALLEL);
         assert!(
-            should_use_parallel(&large_texts),
+            should_use_parallel(&crate::as_strs(&large_texts)),
             "500 texts with >= 1MB should parallelize"
         );
 

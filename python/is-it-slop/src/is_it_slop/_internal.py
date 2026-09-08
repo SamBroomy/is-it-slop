@@ -199,7 +199,7 @@ def is_this_slop_batch(texts: list[str], threshold: float | None = None) -> list
             in the same order as the input.
 
     Raises:
-        ValueError: If texts is empty or threshold is not in [0, 1].
+        ValueError: If texts is empty, any text is blank, or threshold is not in [0, 1].
 
     Examples:
         >>> texts = ["First text", "Second text", "Third text"]
@@ -263,7 +263,7 @@ def predict_batch(texts: list[str], threshold: float | None = None) -> list[Pred
         list[Prediction]: List of prediction results, one for each input text.
 
     Raises:
-        ValueError: If texts is empty or threshold is not in [0, 1].
+        ValueError: If texts is empty, any text is blank, or threshold is not in [0, 1].
 
     """  # noqa: DOC502
     return is_this_slop_batch(texts, threshold)

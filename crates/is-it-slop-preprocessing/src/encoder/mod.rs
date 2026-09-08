@@ -9,7 +9,10 @@ mod vocabulary;
 
 pub use vocabulary::{O200K_CEILING, Vocabulary};
 
-use crate::pre_processor::{text_cleaner_for_inference, tokenize};
+use crate::{
+    as_strs,
+    pre_processor::{text_cleaner_for_inference, tokenize},
+};
 
 /// Failures loading or validating encoder artifacts.
 #[derive(Debug, thiserror::Error)]
@@ -192,10 +195,10 @@ impl DocumentEncoder {
 
     /// Clean (per the encoder's mode), trim, and tokenize; tokenization parallelizes internally
     /// for large batches.
-    fn token_lists<T: AsRef<str> + Sync>(&self, texts: &[T]) -> Vec<Vec<u32>> {
+    fn token_lists(&self, texts: &[&str]) -> Vec<Vec<u32>> {
         match self.cleaning {
             TextCleaning::Off => {
-                let trimmed: Vec<&str> = texts.iter().map(|t| t.as_ref().trim()).collect();
+                let trimmed: Vec<&str> = texts.iter().map(|t| t.trim()).collect();
                 tokenize(&trimmed)
             }
             TextCleaning::Inference => {
@@ -211,11 +214,11 @@ impl DocumentEncoder {
     ///
     /// A document longer than the grid is truncated — this is the evaluation-side encoding,
     /// where one document must yield exactly one prediction.
-    pub fn encode_batch<T: AsRef<str> + Sync>(
-        &self,
-        texts: &[T],
-        labels: &[f32],
-    ) -> Vec<EncodedDocument> {
+    pub fn encode_batch<T: AsRef<str>>(&self, texts: &[T], labels: &[f32]) -> Vec<EncodedDocument> {
+        self.encode_strs(&as_strs(texts), labels)
+    }
+
+    fn encode_strs(&self, texts: &[&str], labels: &[f32]) -> Vec<EncodedDocument> {
         assert_eq!(texts.len(), labels.len());
         self.token_lists(texts)
             .iter()
@@ -237,11 +240,15 @@ impl DocumentEncoder {
     /// window-level analogue of [`Self::grid`]'s trailing-chunk rule. Evaluation must use
     /// [`Self::encode_batch`] instead: fragments would count as extra documents in split-level
     /// metrics.
-    pub fn encode_batch_split<T: AsRef<str> + Sync>(
+    pub fn encode_batch_split<T: AsRef<str>>(
         &self,
         texts: &[T],
         labels: &[f32],
     ) -> Vec<EncodedDocument> {
+        self.encode_split_strs(&as_strs(texts), labels)
+    }
+
+    fn encode_split_strs(&self, texts: &[&str], labels: &[f32]) -> Vec<EncodedDocument> {
         assert_eq!(texts.len(), labels.len());
         self.token_lists(texts)
             .iter()
@@ -261,7 +268,11 @@ impl DocumentEncoder {
     /// inference concatenates a document's windows into one `[windows * max_chunks, chunk_size]`
     /// grid and the model masks out padding chunks wherever they fall. This is the same window
     /// tiling as [`Self::encode_batch_split`], kept label-free and grouped per document.
-    pub fn encode_batch_windows<T: AsRef<str> + Sync>(&self, texts: &[T]) -> Vec<Vec<Vec<u16>>> {
+    pub fn encode_batch_windows<T: AsRef<str>>(&self, texts: &[T]) -> Vec<Vec<Vec<u16>>> {
+        self.encode_windows_strs(&as_strs(texts))
+    }
+
+    fn encode_windows_strs(&self, texts: &[&str]) -> Vec<Vec<Vec<u16>>> {
         self.token_lists(texts)
             .iter()
             .map(|tokens| self.split_grids(tokens))
