@@ -121,20 +121,17 @@ impl Vocabulary {
         let tensors = safetensors::SafeTensors::deserialize(bytes)?;
         let view = tensors.tensor("token_to_row")?;
         if view.dtype() != safetensors::Dtype::I32 || view.shape() != [O200K_CEILING] {
-            return Err(EncoderError::Contract(format!(
-                "token_to_row must be i32 [{O200K_CEILING}], got {:?} {:?}",
-                view.dtype(),
-                view.shape()
-            )));
+            return Err(EncoderError::LookupTableShape {
+                dtype: view.dtype(),
+                shape: view.shape().to_vec(),
+            });
         }
         let mut lut = Vec::with_capacity(O200K_CEILING);
         let mut max = 0i32;
         for chunk in view.data().as_chunks::<4>().0 {
             let value = i32::from_le_bytes(*chunk);
             if !(0..=i32::from(u16::MAX)).contains(&value) {
-                return Err(EncoderError::Contract(format!(
-                    "token_to_row value {value} outside the compact row range"
-                )));
+                return Err(EncoderError::RowOutOfRange(value));
             }
             max = max.max(value);
             lut.push(value as u16);
@@ -143,9 +140,7 @@ impl Vocabulary {
         // Same invariant `from_token_lists` asserts: the pad row (vocab_size + 1) must fit u16,
         // or `pad_id()` overflows.
         if u16::try_from(vocab_size + 2).is_err() {
-            return Err(EncoderError::Contract(format!(
-                "vocabulary of {vocab_size} rows no longer fits u16 with OOV and padding"
-            )));
+            return Err(EncoderError::VocabularyTooLarge(vocab_size));
         }
         Ok(Self { lut, vocab_size })
     }

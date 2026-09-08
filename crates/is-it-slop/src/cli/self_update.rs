@@ -6,6 +6,8 @@
 
 use std::process::{Command, ExitCode};
 
+use anyhow::{Context, Result, bail};
+
 const INSTALL_SCRIPT_URL: &str =
     "https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh";
 const GITHUB_API_LATEST: &str = "https://api.github.com/repos/SamBroomy/is-it-slop/releases/latest";
@@ -23,7 +25,7 @@ pub fn run_update() -> ExitCode {
     let latest_tag = match fetch_latest_tag() {
         Ok(tag) => tag,
         Err(e) => {
-            eprintln!("Failed to check for updates: {e}");
+            eprintln!("Failed to check for updates: {e:#}");
             eprintln!();
             eprintln!("You can manually upgrade by running:");
             eprintln!("  curl -fsSL {INSTALL_SCRIPT_URL} | sh");
@@ -69,19 +71,19 @@ pub fn run_update() -> ExitCode {
     }
 }
 
-fn fetch_latest_tag() -> Result<String, String> {
+fn fetch_latest_tag() -> Result<String> {
     let output = Command::new("curl")
         .args(["-fsSL", GITHUB_API_LATEST])
         .output()
-        .map_err(|e| format!("Failed to run curl: {e}"))?;
+        .context("Failed to run curl")?;
 
     if !output.status.success() {
         let code = output.status.code().unwrap_or(-1);
         if code == 403 {
-            return Err("GitHub API rate limit exceeded (try again later)".to_string());
+            bail!("GitHub API rate limit exceeded (try again later)");
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("GitHub API request failed ({code}): {stderr}"));
+        bail!("GitHub API request failed ({code}): {stderr}");
     }
 
     let response = String::from_utf8_lossy(&output.stdout);
@@ -89,7 +91,7 @@ fn fetch_latest_tag() -> Result<String, String> {
         .split("\"tag_name\":\"")
         .nth(1)
         .and_then(|s| s.split('"').next())
-        .ok_or_else(|| "Failed to parse GitHub API response".to_string())?;
+        .context("Failed to parse GitHub API response")?;
 
     Ok(tag.to_string())
 }

@@ -6,9 +6,8 @@
 
 use std::path::Path;
 
+use anyhow::{Context, Result, anyhow, ensure};
 use polars::prelude::*;
-
-use super::DataError;
 
 /// One split's documents.
 pub struct SplitData {
@@ -33,9 +32,11 @@ impl SplitData {
 }
 
 /// Read a split parquet (e.g. `data/3.0.0/train.parquet`).
-pub fn read_split(path: &Path) -> Result<SplitData, DataError> {
-    let file = std::fs::File::open(path)?;
-    let df = ParquetReader::new(file).finish()?;
+pub fn read_split(path: &Path) -> Result<SplitData> {
+    let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let df = ParquetReader::new(file)
+        .finish()
+        .with_context(|| format!("reading parquet {}", path.display()))?;
 
     // Null cells fail loudly: the released splits are fully populated, so a null means the file
     // is not what this loader thinks it is.
@@ -45,23 +46,22 @@ pub fn read_split(path: &Path) -> Result<SplitData, DataError> {
         .into_iter()
         .map(|t| t.map(str::to_owned))
         .collect::<Option<_>>()
-        .ok_or_else(|| DataError::Contract(format!("null text cell in {}", path.display())))?;
+        .ok_or_else(|| anyhow!("null text cell in {}", path.display()))?;
     let labels: Vec<f32> = df
         .column("label")?
         .cast(&DataType::Float32)?
         .f32()?
         .into_iter()
         .collect::<Option<_>>()
-        .ok_or_else(|| DataError::Contract(format!("null label cell in {}", path.display())))?;
+        .ok_or_else(|| anyhow!("null label cell in {}", path.display()))?;
 
-    if texts.len() != labels.len() || texts.is_empty() {
-        return Err(DataError::Contract(format!(
-            "split {} has {} texts and {} labels",
-            path.display(),
-            texts.len(),
-            labels.len()
-        )));
-    }
+    ensure!(
+        texts.len() == labels.len() && !texts.is_empty(),
+        "split {} has {} texts and {} labels",
+        path.display(),
+        texts.len(),
+        labels.len()
+    );
     tracing::info!(
         split = %path.display(),
         rows = texts.len(),

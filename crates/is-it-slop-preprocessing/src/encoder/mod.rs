@@ -26,9 +26,58 @@ pub enum EncoderError {
     /// `encoder_config.json` (de)serialization failure.
     #[error(transparent)]
     Config(#[from] serde_json::Error),
-    /// The artifact does not match the encoding contract.
-    #[error("{0}")]
-    Contract(String),
+    /// The bundle was encoded with a tokenizer this crate does not ship.
+    #[error("bundle tokenizer {0:?} is not o200k_base")]
+    UnsupportedTokenizer(String),
+    /// The bundle used overlapping chunks; this encoder cuts contiguous ones.
+    #[error("bundle overlap {0} is not 0; this encoder cuts contiguous chunks")]
+    UnsupportedOverlap(usize),
+    /// `token_vocabulary.safetensors` and `encoder_config.json` describe different vocabularies.
+    #[error("vocabulary {vocabulary} disagrees with encoder_config.json {config}")]
+    VocabularyMismatch {
+        /// What the lookup table holds.
+        vocabulary: VocabularyShape,
+        /// What the config claims.
+        config: VocabularyShape,
+    },
+    /// The lookup table tensor is not the `i32 [O200K_CEILING]` this crate writes.
+    #[error(
+        "token_to_row must be i32 [{}], got {dtype:?} {shape:?}",
+        O200K_CEILING
+    )]
+    LookupTableShape {
+        /// Element type found.
+        dtype: safetensors::Dtype,
+        /// Shape found.
+        shape: Vec<usize>,
+    },
+    /// A lookup table entry is not a compact row.
+    #[error("token_to_row value {0} outside the compact row range")]
+    RowOutOfRange(i32),
+    /// The vocabulary is too large for u16 rows once OOV and padding are added.
+    #[error("vocabulary of {0} rows no longer fits u16 with OOV and padding")]
+    VocabularyTooLarge(usize),
+}
+
+/// The three numbers that pin a vocabulary's row layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VocabularyShape {
+    /// Ranked token rows.
+    pub vocab_size: usize,
+    /// The row rare tokens collapse onto.
+    pub oov_id: u16,
+    /// The row the encoder pads with.
+    pub pad_id: u16,
+}
+
+impl std::fmt::Display for VocabularyShape {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "({} rows, oov {}, pad {})",
+            self.vocab_size, self.oov_id, self.pad_id
+        )
+    }
 }
 
 /// The bundle's `encoder_config.json`: everything inference needs to reproduce this encoding.
@@ -107,32 +156,27 @@ impl DocumentEncoder {
     pub fn from_bundle(vocab_bytes: &[u8], config_json: &str) -> Result<Self, EncoderError> {
         let config: EncoderBundleConfig = serde_json::from_str(config_json)?;
         if config.tokenizer != "o200k_base" {
-            return Err(EncoderError::Contract(format!(
-                "bundle tokenizer {:?} is not o200k_base",
-                config.tokenizer
-            )));
+            return Err(EncoderError::UnsupportedTokenizer(config.tokenizer));
         }
         if config.overlap != 0 {
-            return Err(EncoderError::Contract(format!(
-                "bundle overlap {} is not 0; this encoder cuts contiguous chunks",
-                config.overlap
-            )));
+            return Err(EncoderError::UnsupportedOverlap(config.overlap));
         }
         let vocabulary = Vocabulary::from_bytes(vocab_bytes)?;
-        if vocabulary.vocab_size() != config.vocab_size
-            || vocabulary.oov_id() != config.oov_id
-            || vocabulary.pad_id() != config.pad_id
-        {
-            return Err(EncoderError::Contract(format!(
-                "vocabulary ({} rows, oov {}, pad {}) disagrees with encoder_config.json \
-                 ({}, {}, {})",
-                vocabulary.vocab_size(),
-                vocabulary.oov_id(),
-                vocabulary.pad_id(),
-                config.vocab_size,
-                config.oov_id,
-                config.pad_id
-            )));
+        let found = VocabularyShape {
+            vocab_size: vocabulary.vocab_size(),
+            oov_id: vocabulary.oov_id(),
+            pad_id: vocabulary.pad_id(),
+        };
+        let claimed = VocabularyShape {
+            vocab_size: config.vocab_size,
+            oov_id: config.oov_id,
+            pad_id: config.pad_id,
+        };
+        if found != claimed {
+            return Err(EncoderError::VocabularyMismatch {
+                vocabulary: found,
+                config: claimed,
+            });
         }
         Ok(Self {
             vocabulary,

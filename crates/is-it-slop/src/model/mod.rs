@@ -76,6 +76,9 @@ static MODEL_CONFIG: &str = include_str!(concat!(
 pub static MODEL: LazyLock<HierarchicalSlopClassifier<Backend>> = LazyLock::new(|| {
     let config: HierarchicalModelConfig =
         serde_json::from_str(MODEL_CONFIG).expect("embedded model_config.json parses");
+    config
+        .validate()
+        .expect("embedded model_config.json satisfies the model contract");
     let mut model = config.init::<Backend>(&FlexDevice);
     let mut store = SafetensorsStore::from_bytes(Some(WEIGHTS_BYTES.to_vec()))
         .with_from_adapter(HalfPrecisionAdapter::new());

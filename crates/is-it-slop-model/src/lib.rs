@@ -43,6 +43,19 @@ use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Distribution, Int, Tensor};
 
+/// A configuration the network cannot be built from.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ModelConfigError {
+    /// The trunk groups adjacent tokens, so a chunk must hold a whole number of groups.
+    #[error("chunk_size {chunk_size} is not a positive multiple of group {group}")]
+    ChunkSizeNotGrouped {
+        /// Tokens per chunk.
+        chunk_size: usize,
+        /// Tokens per trunk position.
+        group: usize,
+    },
+}
+
 /// Everything that changes the trained network's shape.
 ///
 /// Defaults are the configuration the hyperparameter campaign froze (EXPERIMENTS.md,
@@ -101,14 +114,27 @@ impl HierarchicalModelConfig {
         self.chunk_size / self.group
     }
 
+    /// Check the shape constraints a configuration read from a bundle may violate.
+    pub fn validate(&self) -> Result<(), ModelConfigError> {
+        if self.group == 0 || !self.chunk_size.is_multiple_of(self.group) {
+            return Err(ModelConfigError::ChunkSizeNotGrouped {
+                chunk_size: self.chunk_size,
+                group: self.group,
+            });
+        }
+        Ok(())
+    }
+
     /// Initialize the model on the given device.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration fails [`Self::validate`]; validate first when the
+    /// configuration comes from a file.
     pub fn init<B: Backend>(&self, device: &B::Device) -> HierarchicalSlopClassifier<B> {
-        assert!(
-            self.chunk_size.is_multiple_of(self.group),
-            "chunk_size {} not divisible by group {}",
-            self.chunk_size,
-            self.group
-        );
+        if let Err(e) = self.validate() {
+            panic!("{e}");
+        }
         HierarchicalSlopClassifier {
             embed: EmbeddingConfig::new(self.n_embeddings(), self.embed_dim).init(device),
             spatial_dropout: SpatialDropout1d {
