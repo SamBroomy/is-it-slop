@@ -45,7 +45,7 @@ pub mod self_update;
 use input::{Document, DocumentId, Framing, Input, SourceError};
 use output::{ColorChoice, Detail, Item, OutputFormat, RunSummary, Scored, Sink, SinkOptions};
 
-use crate::{Predictor, Threshold};
+use crate::{Predictor, Threshold, pipeline};
 
 fn parse_threshold(s: &str) -> std::result::Result<Threshold, String> {
     s.try_into()
@@ -309,13 +309,17 @@ struct Run<'a> {
 impl Run<'_> {
     fn score_pending(&mut self) -> Result<()> {
         let texts: Vec<&str> = self.pending.iter().map(|d| d.text.as_str()).collect();
-        let results = self.predictor.predict_each(&texts);
-        for (document, result) in std::mem::take(&mut self.pending).into_iter().zip(results) {
+        let results = pipeline::predict_each(&texts);
+        // Swapped out so the buffer keeps its capacity across batches.
+        let mut batch = std::mem::take(&mut self.pending);
+        for (document, result) in batch.iter().zip(results) {
             let item = result
                 .map(|prediction| Scored::new(prediction, self.predictor.threshold()))
                 .map_err(Into::into);
             self.emit(&document.id, &item)?;
         }
+        batch.clear();
+        self.pending = batch;
         Ok(())
     }
 
