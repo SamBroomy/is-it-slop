@@ -95,7 +95,10 @@ stub-model = []
 jni = ["dep:jni", "serde"]
 
 
-all-testable = ["cli"] # add other features here, but NOT python
+# The feature set CI builds, tests and docs with. `--all-features` is never a valid build of this
+# crate: `python` links as an extension module, the backends are mutually exclusive platform choices,
+# and `vulkan` needs the Vulkan SDK on macOS.
+all-testable = ["cli"]
 
 [package.metadata.docs.rs]
 features = ["stub-model"]

@@ -547,14 +547,7 @@ test: test-rust test-python
 # Test only Rust crates (without Python bindings for speed)
 [group('dev')]
 test-rust:
-    @echo "Testing preprocessing crate (unit tests)..."
-    cargo test --lib -p is-it-slop-preprocessing
-    @echo ""
-    @echo "Testing main crate (unit tests)..."
-    cargo test --lib -p is-it-slop --all-features
-    @echo ""
-    @echo "Testing main crate (integration tests)..."
-    cargo test -p is-it-slop --test integration_test
+    cargo test --workspace --features all-testable
 
 # Inference throughput by concurrency window and document length on the CPU backend;
 # IS_IT_SLOP_BENCH_CORPUS=<jsonl> benches other text
@@ -594,10 +587,10 @@ pre-release:
     cargo clippy -p is-it-slop-preprocessing --all-targets -- -D warnings
     cargo clippy -p is-it-slop --no-default-features --features cli --all-targets -- -D warnings
     cargo test -p is-it-slop-preprocessing --lib
-    cargo test -p is-it-slop --lib --all-features
+    cargo test -p is-it-slop --lib --features all-testable
     cargo test -p is-it-slop --doc --no-default-features --features cli
     cargo test -p is-it-slop-preprocessing --doc
-    cargo doc --workspace --no-deps --all-features
+    cargo doc --workspace --no-deps --features all-testable
     cargo package -p is-it-slop-preprocessing --no-verify --allow-dirty
     cargo package -p is-it-slop-model --no-verify --allow-dirty
     @echo "✅ All checks passed!"
@@ -617,7 +610,7 @@ cargo-machete:
 [group('ci')]
 [group('lint')]
 cargo-docs:
-    cargo doc --all-features --workspace --no-deps
+    cargo doc --workspace --no-deps --features all-testable
 
 # Cargo audit
 [group('ci')]

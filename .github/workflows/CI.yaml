@@ -38,7 +38,7 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets --workspace --features all-testable --locked
       - name: Run docs build
-        run: cargo doc --all-features --workspace --no-deps
+        run: cargo doc --workspace --no-deps --features all-testable
 
   python-test:
     runs-on: ubuntu-latest

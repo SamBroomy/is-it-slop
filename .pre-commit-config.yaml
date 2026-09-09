@@ -118,7 +118,7 @@ repos:
       - id: cargo-doc
         name: cargo doc
         description: Check documentation builds
-        entry: cargo doc --all-features --workspace --no-deps
+        entry: cargo doc --workspace --no-deps --features all-testable
         language: system
         files: '(\.rs$|Cargo\.toml$|Cargo\.lock$)'
         types: [rust, toml]
