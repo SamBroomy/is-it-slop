@@ -404,8 +404,11 @@ four of the GPU policy's 64-document passes).
 
 **Next.** (1) Runtime GPU probe with CPU fallback before any accelerated binary ships. (2) An x86
 Linux measurement of Flex vs ndarray, and of a discrete GPU's crossover, before revisiting any default.
-(3) A GPU build may want a larger CLI window than 256. (4) burn 0.22.0-pre.3: check whether the
-pre-release moves any of these numbers.
+(3) A GPU build may want a larger CLI window than 256. (4) burn 0.22.0-pre.3 is not a bump: the
+pre-release removes the backend type parameter from tensors and modules (`Tensor<const D, K>`,
+`Linear` with no `<B>`) and dispatches backends at runtime, so the model, training and inference
+crates all need porting (21 errors in `is-it-slop-model` alone). Worth doing when 0.22 releases, not
+least because runtime dispatch is the natural home for item (1); until then the numbers above stand.
 
 ## Versioning
 
