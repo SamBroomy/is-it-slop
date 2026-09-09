@@ -321,9 +321,10 @@ training-batch requirement, not a property of the weights.
 | 8           | 7.7 ms        | 7.45 ms          |
 | 12          | 14.1 ms       | 11.2 ms          |
 
-**One document per forward, documents concurrent** (`pipeline::predict_each` is a rayon `par_iter`,
-order preserved; library-level, so Python and Kotlin callers get it too). Documents per second on the
-real corpus, by how many documents `predict_each` is handed at once:
+**One document per forward, documents concurrent** (on CPU backends `pipeline::predict_each` runs
+one forward per document on rayon's pool, order preserved; library-level, so Python and Kotlin callers
+get it too). Documents per second on the real corpus, by how many documents `predict_each` is handed
+at once:
 
 | Documents per call | Original (padded batch) | Real chunks only | Plus concurrency |
 | ------------------ | ----------------------- | ---------------- | ---------------- |
@@ -331,13 +332,34 @@ real corpus, by how many documents `predict_each` is handed at once:
 | 32                 | 79                      | 117              | 2273             |
 | 128                | 81                      | 105              | 3416             |
 
-**Open.** The CLI's `BATCH_SIZE = 32` is now just the concurrency window per pass (bounds memory and
-how long output waits); 64 and 128 measured faster and a window of a few times the core count is the
-likely default. On an accelerator the trade-off should invert: launch overhead dominates small
-tensors and the device parallelises within a forward, so length-bucketed batches with a memory cap
-would beat one-document forwards, and rayon across forwards would only serialise on the device queue.
-That needs a `wgpu`/Metal backend feature and the same bench run under both strategies before a
-backend-dependent policy is chosen.
+**Backends and the scheduling split.** The backend is a cargo feature on `is-it-slop` (Flex by
+default; `cpu` and `ndarray` as other CPU backends; `metal`, `wgpu`, `vulkan`, `webgpu`, `cuda`,
+`rocm` as accelerators, which set `cfg(accelerated)`). `pipeline::Strategy { docs_per_forward,
+concurrent }` is the scheduling policy, `predict_each_with` takes one explicitly, and the compiled
+backend's default lives in `pipeline/cpu.rs` or `pipeline/accelerated.rs`. The `strategy` bench group
+sweeps both axes; documents per second over the real corpus:
+
+| Documents per pass | Flex, sequential | Flex, concurrent | Metal, sequential | Metal, concurrent |
+| ------------------ | ---------------- | ---------------- | ----------------- | ----------------- |
+| 1                  | 409              | 3265             | 158               | 192               |
+| 16                 | 338              | 735              | 2167              | 2176              |
+| 32                 | 265              | 400              | 3591              | 3728              |
+| 64                 | 178              | 208              | 3822              | 3926              |
+| 128                | 108              | 106              | 3097              | 3092              |
+
+The two backends want opposite policies. A Metal pass costs ~6 ms of launch and sync whether it holds
+1 chunk or 12, passes serialise on the device queue, and past 64 documents the padding to the longest
+document in a pass outweighs the saved launches. Defaults: CPU one document per pass, concurrent; GPU
+64 per pass, sequential. On this small model an Apple M-series GPU (3.8k docs/s) only edges the
+15-core CPU (3.3k docs/s). Golden parity holds at 1e-5 on Flex, Metal and wgpu. Only Flex runs in CI;
+Metal and wgpu were run locally (`just bench-inference-gpu`, `just test-inference-gpu`); `webgpu`,
+`cpu`, `ndarray`, `cuda` and `rocm` are compile-checked only; `vulkan` needs the Vulkan SDK to build
+on macOS.
+
+**Open.** The CLI's `BATCH_SIZE = 32` is the documents handed to the predictor per pass. Sweeping it
+over 512 real documents on Flex gave 2143 / 2664 / 3021 / 3375 / 3464 docs/s at 32 / 64 / 128 / 256 /
+512, so 256 is the knee (97% of the plateau, ~85 ms to first output); on a GPU it also has to be at
+least the 64-document pass to reach the sweep's optimum. Left at 32 pending a decision.
 
 ## Versioning
 
@@ -364,7 +386,7 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 
 - ~~Proper error types in the library interface.~~ **Done**: thiserror enums with structured variants
   in the model, preprocessing and inference crates; anyhow with context in the training binary.
-- ~~Speed benchmarks on inference.~~ **Done**: see "Inference performance"; the accelerator question
-  there is what remains.
+- ~~Speed benchmarks on inference.~~ **Done**: see "Inference performance", including the CPU vs GPU
+  scheduling sweep; only the `BATCH_SIZE` default remains open.
 - text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is detecting formatting rather than style? A control arm stripping markdown from all text wouldanswer that.
 - I have noticed one of the most pervasive tells of LLM-isms is that they love to make inanimate objects the subject of verbs. For example an llm says 'Your conversation has been moved to the background - enter opens it - esc returns to it - ctrl+c twice quits', where a human would have written 'enter to open, esc to return, ctrl+c twice to quit'. Is this something we could try and explicitly train on? You could call something like this the personification of abstract nouns, but not always strictly abstract. Often very frequent with technical nouns 'holiday has the rest'. Is this something we could do in our training?
