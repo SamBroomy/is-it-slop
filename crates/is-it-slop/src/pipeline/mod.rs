@@ -14,8 +14,9 @@
 //! 3. **Calibration**: document probability = `sigmoid(doc_logit / T)`; the shipped
 //!    classification threshold was fitted on these calibrated probabilities
 //!
-//! Long documents are *not* truncated: the chunk axis is dynamic, so every full window of the
-//! document goes through the same forward pass (up to [`MAX_WINDOWS_PER_DOCUMENT`]).
+//! Long documents are *not* truncated: the chunk axis is dynamic, so every chunk of the
+//! document goes through the same forward pass (up to [`MAX_CHUNKS_PER_DOCUMENT`]), and a
+//! document is padded only to its own last chunk.
 //!
 //! # Public API
 //!
@@ -52,41 +53,39 @@ pub use prediction::{ChunkInfo, ConfidenceMetrics, Prediction, UnifiedPrediction
 
 use crate::model::{Backend, CALIBRATION_TEMPERATURE, ENCODER, MODEL};
 
-/// Cap on `max_chunks`-sized windows per document (~49k tokens at the shipped encoding).
+/// Cap on chunks per document (~49k tokens at the shipped encoding).
 ///
-/// The chunk axis is dynamic but batch memory grows with the longest document, so extremely
-/// long inputs are judged on their first ~49k tokens.
-pub const MAX_WINDOWS_PER_DOCUMENT: usize = 32;
+/// The chunk axis is dynamic but memory grows with the longest document, so extremely long
+/// inputs are judged on their first ~49k tokens.
+pub const MAX_CHUNKS_PER_DOCUMENT: usize = 256;
 
 /// Run the model over already-validated texts, one forward pass for the whole batch.
 fn infer(texts: &[&str]) -> Vec<UnifiedPrediction> {
     let chunk_size = ENCODER.chunk_size();
-    let window_chunks = ENCODER.max_chunks();
     let pad = ENCODER.vocabulary().pad_id();
 
-    let mut window_grids = ENCODER.encode_batch_windows(texts);
-    for windows in &mut window_grids {
-        windows.truncate(MAX_WINDOWS_PER_DOCUMENT);
+    let mut docs = ENCODER.encode_batch_chunks(texts);
+    for ids in &mut docs {
+        ids.truncate(MAX_CHUNKS_PER_DOCUMENT * chunk_size);
     }
 
-    let batch = window_grids.len();
-    let max_chunks = window_grids
+    let batch = docs.len();
+    let max_chunks = docs
         .iter()
-        .map(|w| w.len() * window_chunks)
+        .map(|ids| ids.len() / chunk_size)
         .max()
-        .expect("at least one text")
-        .max(1);
+        .expect("at least one text");
 
-    // One rectangular id block; documents shorter than the widest one are padded with pad-id
-    // chunks, which the model masks out of every pooling step.
+    // One rectangular id block sized to the longest document; shorter documents are padded
+    // with pad-id chunks, which the model masks out of every pooling step.
     let mut ids = vec![i64::from(pad); batch * max_chunks * chunk_size];
-    for (doc, windows) in window_grids.iter().enumerate() {
-        let doc_offset = doc * max_chunks * chunk_size;
-        for (w, grid) in windows.iter().enumerate() {
-            let start = doc_offset + w * window_chunks * chunk_size;
-            for (slot, &id) in ids[start..start + grid.len()].iter_mut().zip(grid) {
-                *slot = i64::from(id);
-            }
+    for (doc, chunk_ids) in docs.iter().enumerate() {
+        let start = doc * max_chunks * chunk_size;
+        for (slot, &id) in ids[start..start + chunk_ids.len()]
+            .iter_mut()
+            .zip(chunk_ids)
+        {
+            *slot = i64::from(id);
         }
     }
 
@@ -217,7 +216,7 @@ pub fn predict_batch(inputs: &[&str]) -> Result<Vec<UnifiedPrediction>> {
 /// The text of each chunk behind [`predict`]'s `chunk_predictions` for `input`, in order.
 ///
 /// This is the cleaned text the model saw, cut at the same chunk boundaries and capped at
-/// [`MAX_WINDOWS_PER_DOCUMENT`], so it lines up index for index with the chunk predictions.
+/// [`MAX_CHUNKS_PER_DOCUMENT`], so it lines up index for index with the chunk predictions.
 ///
 /// # Example
 ///
@@ -233,7 +232,7 @@ pub fn predict_batch(inputs: &[&str]) -> Result<Vec<UnifiedPrediction>> {
 #[must_use]
 pub fn chunk_texts(input: &str) -> Vec<String> {
     let mut texts = ENCODER.chunk_texts(input);
-    texts.truncate(MAX_WINDOWS_PER_DOCUMENT * ENCODER.max_chunks());
+    texts.truncate(MAX_CHUNKS_PER_DOCUMENT);
     texts
 }
 
