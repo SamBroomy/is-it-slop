@@ -268,8 +268,8 @@ impl DocumentEncoder {
 
     /// The text of each chunk the model scores for `text`, in order.
     ///
-    /// Same cleaning, tokenization and chunking as [`Self::encode_batch_windows`], so the k-th
-    /// string is what the k-th real chunk of the grid holds. Text a tail rule drops is absent;
+    /// Same cleaning, tokenization and chunking as [`Self::encode_batch_chunks`], so the k-th
+    /// string is what the k-th chunk holds. Text a tail rule drops is absent;
     /// a document that tokenizes to nothing yields one empty chunk, matching the model's
     /// always-real first slot. Chunk boundaries fall between tokens, so they are snapped forward
     /// to the next character boundary when a token straddles one.
@@ -351,22 +351,35 @@ impl DocumentEncoder {
             .collect()
     }
 
-    /// Encode a batch for inference: each document's full token stream as its
-    /// `max_chunks * chunk_size` window grids, nothing truncated.
+    /// Encode a batch for inference: each document's real chunks, row-major
+    /// `[chunks, chunk_size]`, with only the last chunk padded.
     ///
     /// The model's chunk axis is dynamic — `max_chunks` is a training budget, not a limit — so
-    /// inference concatenates a document's windows into one `[windows * max_chunks, chunk_size]`
-    /// grid and the model masks out padding chunks wherever they fall. This is the same window
-    /// tiling as [`Self::encode_batch_split`], kept label-free and grouped per document.
-    pub fn encode_batch_windows<T: AsRef<str>>(&self, texts: &[T]) -> Vec<Vec<Vec<u16>>> {
-        self.encode_windows_strs(&as_strs(texts))
+    /// inference hands it exactly the chunks the document fills (always at least one) and pays
+    /// for no padding rows. The chunks are the same ones [`Self::encode_batch_split`]'s window
+    /// tiling produces, minus the padding that made every window `max_chunks` tall.
+    pub fn encode_batch_chunks<T: AsRef<str>>(&self, texts: &[T]) -> Vec<Vec<u16>> {
+        self.encode_chunks_strs(&as_strs(texts))
     }
 
-    fn encode_windows_strs(&self, texts: &[&str]) -> Vec<Vec<Vec<u16>>> {
+    fn encode_chunks_strs(&self, texts: &[&str]) -> Vec<Vec<u16>> {
         self.token_lists(texts)
             .iter()
-            .map(|tokens| self.split_grids(tokens))
+            .map(|tokens| self.chunk_ids(tokens))
             .collect()
+    }
+
+    /// Every real chunk of the tokens, `chunk_size` ids each, the last padded.
+    fn chunk_ids(&self, tokens: &[u32]) -> Vec<u16> {
+        let cs = self.chunk_size;
+        let ranges: Vec<Range<usize>> = self.chunk_ranges(tokens.len()).collect();
+        let mut out = vec![self.vocabulary.pad_id(); ranges.len() * cs];
+        for (k, chunk) in ranges.into_iter().enumerate() {
+            for (slot, &token) in out[k * cs..].iter_mut().zip(&tokens[chunk]) {
+                *slot = self.vocabulary.row(token);
+            }
+        }
+        out
     }
 
     /// One grid per `max_chunks * chunk_size` window of the tokens; see
@@ -550,16 +563,35 @@ mod tests {
         assert_eq!(got[2], 3);
     }
 
-    /// Chunks the model would score for `text`: rows with any real token, at least one.
+    /// Chunks the model would score for `text`.
     fn real_chunks(enc: &DocumentEncoder, text: &str) -> usize {
+        enc.encode_batch_chunks(&[text]).remove(0).len() / enc.chunk_size()
+    }
+
+    #[test]
+    fn chunk_ids_are_the_window_grids_without_their_padding_rows() {
+        // The training tiling pads every window to max_chunks rows; inference keeps just the real
+        // rows. Both must agree on which tokens land in which chunk, including the tail rules.
+        let enc = encoder(4, 3);
         let pad = enc.vocabulary().pad_id();
-        enc.encode_batch_windows(&[text])
-            .remove(0)
-            .iter()
-            .flat_map(|grid| grid.chunks(enc.chunk_size()))
-            .filter(|chunk| chunk.iter().any(|&r| r != pad))
-            .count()
-            .max(1)
+        for n in [0usize, 1, 3, 4, 5, 12, 13, 24, 25, 30, 100] {
+            let tokens: Vec<u32> = (0..n as u32).map(|i| i % 6).collect();
+            let from_windows: Vec<u16> = enc
+                .split_grids(&tokens)
+                .iter()
+                .flat_map(|grid| grid.chunks(4))
+                .filter(|row| row.iter().any(|&r| r != pad))
+                .flatten()
+                .copied()
+                .collect();
+            let chunk_ids = enc.chunk_ids(&tokens);
+            if n == 0 {
+                assert_eq!(chunk_ids, vec![pad; 4], "empty text is one pad chunk");
+            } else {
+                assert_eq!(chunk_ids, from_windows, "{n} tokens");
+            }
+            assert_eq!(chunk_ids.len() % 4, 0);
+        }
     }
 
     #[test]
