@@ -281,8 +281,9 @@ fn is_broken_pipe(error: &anyhow::Error) -> bool {
 
 /// Documents handed to the predictor per pass; the backend's [`pipeline::Strategy`] decides how
 /// a pass is spread over forwards and threads. Bounds memory and how much output waits on the
-/// model at once.
-const BATCH_SIZE: usize = 32;
+/// model at once. 256 is the knee of the window sweep on the CPU backend (97% of the plateau,
+/// ~85 ms to first output) and holds four of the GPU backend's 64-document passes.
+pub const BATCH_SIZE: usize = 256;
 
 /// Stream documents through the model in batches, handing each result to the sink in input
 /// order as soon as its batch is scored.
