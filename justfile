@@ -556,10 +556,21 @@ test-rust:
     @echo "Testing main crate (integration tests)..."
     cargo test -p is-it-slop --test integration_test
 
-# Inference throughput by batch size and document length; IS_IT_SLOP_BENCH_CORPUS=<file> benches real lines
+# Inference throughput by concurrency window and document length on the CPU backend;
+# IS_IT_SLOP_BENCH_CORPUS=<jsonl> benches other text
 [group('dev')]
 bench-inference:
     cargo bench -p is-it-slop --bench inference
+
+# The same bench on a GPU backend (`metal` for Apple GPUs, `wgpu` for anything wgpu drives)
+[group('dev')]
+bench-inference-gpu backend="metal":
+    cargo bench -p is-it-slop --bench inference --features {{backend}}
+
+# Run the inference crate's tests on a GPU backend (the golden parity test is the one that matters)
+[group('dev')]
+test-inference-gpu backend="metal":
+    cargo test -p is-it-slop --features {{backend}}
 
 # Test only Python packages
 [group('dev')]

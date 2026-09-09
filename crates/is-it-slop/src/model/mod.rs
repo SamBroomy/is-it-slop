@@ -16,24 +16,46 @@
 //!
 //! # Global Statics
 //!
-//! - [`MODEL`]: the classifier on the CPU backend (immutable after initialization)
+//! - [`MODEL`]: the classifier on the compiled [`Backend`] (immutable after initialization)
 //! - [`ENCODER`]: the document encoder reconstructing the bundle's exact text→grid encoding
 
 use std::sync::LazyLock;
 
-use burn::backend::Flex;
-use burn::backend::flex::FlexDevice;
 use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
 use is_it_slop_model::{HierarchicalModelConfig, HierarchicalSlopClassifier};
 use is_it_slop_preprocessing::encoder::DocumentEncoder;
 
 include!(concat!(env!("OUT_DIR"), "/threshold.rs"));
 
-/// The inference backend: Flex, burn's pure-Rust CPU backend.
+/// The inference backend, chosen at compile time by cargo feature: `metal` (Apple GPUs via
+/// wgpu's MSL path), else `wgpu` (any GPU wgpu drives), else Flex, burn's pure-Rust CPU backend.
+/// `metal` implies `wgpu` in burn, so the chain prefers the more specific one.
 ///
 /// Inference must run on a non-autodiff backend — forward passes on an autodiff backend
 /// accumulate graph state and leak.
-pub type Backend = Flex;
+#[cfg(feature = "metal")]
+pub type Backend = burn::backend::Metal;
+/// See the `metal` definition.
+#[cfg(all(feature = "wgpu", not(feature = "metal")))]
+pub type Backend = burn::backend::Wgpu;
+/// See the `metal` definition.
+#[cfg(not(any(feature = "wgpu", feature = "metal")))]
+pub type Backend = burn::backend::Flex;
+
+/// The compiled backend's name, for logs and benchmark labels.
+pub const BACKEND: &str = if cfg!(feature = "metal") {
+    "metal"
+} else if cfg!(feature = "wgpu") {
+    "wgpu"
+} else {
+    "flex"
+};
+
+/// The device every forward runs on: the backend's default (the CPU, or the first GPU).
+#[must_use]
+pub fn device() -> burn::tensor::Device<Backend> {
+    burn::tensor::Device::<Backend>::default()
+}
 
 /// Current model version
 ///
@@ -79,7 +101,7 @@ pub static MODEL: LazyLock<HierarchicalSlopClassifier<Backend>> = LazyLock::new(
     config
         .validate()
         .expect("embedded model_config.json satisfies the model contract");
-    let mut model = config.init::<Backend>(&FlexDevice);
+    let mut model = config.init::<Backend>(&device());
     let mut store = SafetensorsStore::from_bytes(Some(WEIGHTS_BYTES.to_vec()))
         .with_from_adapter(HalfPrecisionAdapter::new());
     model

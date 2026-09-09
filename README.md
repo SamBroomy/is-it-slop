@@ -194,6 +194,9 @@ let result = predictor.predict("Your text here")?;
 println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
 ```
 
+Inference runs on Burn's pure-Rust CPU backend by default. The `metal` (Apple GPUs) and `wgpu`
+(any GPU wgpu drives) cargo features move it to the GPU; the CLI takes the same features.
+
 ### Android
 
 Download `is-it-slop-aarch64-linux-android.aar` from the [latest release](https://github.com/SamBroomy/is-it-slop/releases/latest)

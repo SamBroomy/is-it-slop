@@ -192,6 +192,12 @@ fn shipped_model_reproduces_the_golden_outputs() {
     let path = fixture_path();
 
     if std::env::var_os("IS_IT_SLOP_UPDATE_GOLDEN").is_some() {
+        // The CPU backend is the reference numerics; a GPU build must not re-record the truth.
+        assert_eq!(
+            is_it_slop::model::BACKEND,
+            "flex",
+            "regenerate the golden on the Flex backend only"
+        );
         let golden = record(&predictor);
         std::fs::write(&path, serde_json::to_string_pretty(&golden).unwrap()).unwrap();
         eprintln!("wrote {} cases to {}", golden.cases.len(), path.display());
