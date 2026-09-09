@@ -333,33 +333,65 @@ at once:
 | 128                | 81                      | 105              | 3416             |
 
 **Backends and the scheduling split.** The backend is a cargo feature on `is-it-slop` (Flex by
-default; `cpu` and `ndarray` as other CPU backends; `metal`, `wgpu`, `vulkan`, `webgpu`, `cuda`,
-`rocm` as accelerators, which set `cfg(accelerated)`). `pipeline::Strategy { docs_per_forward,
-concurrent }` is the scheduling policy, `predict_each_with` takes one explicitly, and the compiled
-backend's default lives in `pipeline/cpu.rs` or `pipeline/accelerated.rs`. The `strategy` bench group
-sweeps both axes; documents per second over the real corpus:
+default; `ndarray`, `accelerate` (ndarray + Apple's BLAS, macOS only), `apple-amx` and `cpu`
+(burn-cpu) as other CPU backends; `metal`, `wgpu`, `vulkan`, `webgpu`, `cuda`, `rocm` as
+accelerators, which set `cfg(accelerated)`). `pipeline::Strategy { docs_per_forward, concurrent }` is
+the scheduling policy, `predict_each_with` takes one explicitly, and the compiled backend's default
+lives in `pipeline/cpu.rs` or `pipeline/accelerated.rs`. Golden parity holds at 1e-5 on every backend
+run. Only Flex runs in CI. Run locally on an Apple M-series machine (15 logical cores) over 512 real
+documents: flex, flex + AMX, ndarray, ndarray + Accelerate, wgpu, metal, webgpu. `cuda` and `rocm`
+compile only; `vulkan` needs the Vulkan SDK to build on macOS; `cpu` (burn-cpu) aborts with a stack
+overflow on its first forward.
 
-| Documents per pass | Flex, sequential | Flex, concurrent | Metal, sequential | Metal, concurrent |
-| ------------------ | ---------------- | ---------------- | ----------------- | ----------------- |
-| 1                  | 409              | 3265             | 158               | 192               |
-| 16                 | 338              | 735              | 2167              | 2176              |
-| 32                 | 265              | 400              | 3591              | 3728              |
-| 64                 | 178              | 208              | 3822              | 3926              |
-| 128                | 108              | 106              | 3097              | 3092              |
+The `strategy` bench group sweeps documents per pass against concurrent passes; documents per second:
 
-The two backends want opposite policies. A Metal pass costs ~6 ms of launch and sync whether it holds
-1 chunk or 12, passes serialise on the device queue, and past 64 documents the padding to the longest
-document in a pass outweighs the saved launches. Defaults: CPU one document per pass, concurrent; GPU
-64 per pass, sequential. On this small model an Apple M-series GPU (3.8k docs/s) only edges the
-15-core CPU (3.3k docs/s). Golden parity holds at 1e-5 on Flex, Metal and wgpu. Only Flex runs in CI;
-Metal and wgpu were run locally (`just bench-inference-gpu`, `just test-inference-gpu`); `webgpu`,
-`cpu`, `ndarray`, `cuda` and `rocm` are compile-checked only; `vulkan` needs the Vulkan SDK to build
-on macOS.
+| Docs per pass | Flex seq | Flex par | ndarray par | Accelerate par | wgpu seq | wgpu par | Metal seq | Metal par | webgpu seq |
+| ------------- | -------- | -------- | ----------- | -------------- | -------- | -------- | --------- | --------- | ---------- |
+| 1             | 368      | 3424     | 4107        | 5102           | 145      | 194      | 172       | 215       | 129        |
+| 4             | 366      | 2667     | 3285        | 4223           | 613      | 671      | 720       | 740       | 467        |
+| 16            | 342      | 1308     | 1676        | 2215           | 2419     | 2120     | 2465      | 2315      | 2111       |
+| 32            | 310      | 815      | 1035        | 1364           | 3569     | 2256     | 4294      | 2574      | 3262       |
+| 64            | 250      | 441      | 560         | 752            | 3932     | 2508     | 4882      | 3533      | 3790       |
+| 128           | 175      | 230      | 297         | 402            | 3320     | 3067     | 4639      | 4255      | 3343       |
+| 256           | 107      | 118      | 153         | 211            | 2212     | 2209     | 3125      | 1626      | 2282       |
+| 512           | 60       | 58       | 72          | 109            | 1329     | 1331     | 1723      | 1881      | 1345       |
 
-**Open.** The CLI's `BATCH_SIZE = 32` is the documents handed to the predictor per pass. Sweeping it
-over 512 real documents on Flex gave 2143 / 2664 / 3021 / 3375 / 3464 docs/s at 32 / 64 / 128 / 256 /
-512, so 256 is the knee (97% of the plateau, ~85 ms to first output); on a GPU it also has to be at
-least the 64-document pass to reach the sweep's optimum. Left at 32 pending a decision.
+The two families want opposite policies, conclusively. Every CPU backend is best at one document per
+pass with passes concurrent, and batching degrades monotonically. Every GPU backend is best at 64
+documents per pass run sequentially: a pass costs 6-8 ms of launch and sync whether it holds 1 chunk or
+16, passes serialise on the device queue so concurrency costs 25-40% at 32-64 per pass, and past 64
+the padding to the longest document in a pass outweighs the saved launches. Those are the two
+defaults. AMX made no difference to Flex; Accelerate's BLAS made ndarray 49% faster than Flex.
+
+The `input_size` group is the latency a caller with N documents in hand sees, in ms, each backend
+on its own default policy:
+
+| N   | Flex  | ndarray | Accelerate | wgpu  | Metal | webgpu |
+| --- | ----- | ------- | ---------- | ----- | ----- | ------ |
+| 1   | 3.6   | 2.7     | 2.0        | 7.4   | 6.1   | 7.9    |
+| 8   | 9.0   | 7.1     | 5.6        | 12.2  | 8.9   | 14.2   |
+| 32  | 16.0  | 12.7    | 10.2       | 18.1  | 14.4  | 19.9   |
+| 64  | 26.2  | 22.1    | 16.8       | 30.9  | 22.9  | 30.0   |
+| 128 | 52.3  | 42.9    | 34.7       | 62.2  | 45.6  | 61.6   |
+| 256 | 85.2  | 67.3    | 55.9       | 84.0  | 65.3  | 86.5   |
+| 512 | 165.7 | 130.1   | 106.8      | 131.9 | 103.7 | 135.2  |
+
+On this machine the GPU is not the faster device: ndarray + Accelerate beats Metal at every call size,
+and Flex beats Metal below ~256 documents. A single document costs 6 ms on Metal against 2 ms on
+Accelerate. The GPU's only win is over Flex at 512 documents (+25%), and Metal's CLI window sweep kept
+climbing (3949 docs/s at 256, 5004 at 512) because length sorting works better with more documents
+per window.
+
+**Decided.** The CLI's `BATCH_SIZE` is 256 (window sweep on Flex: 2143 / 2664 / 3021 / 3375 / 3464
+docs/s at 32 / 64 / 128 / 256 / 512, so 256 is 97% of the plateau at ~85 ms to first output, and holds
+four of the GPU policy's 64-document passes).
+
+**Next.** (1) Hybrid routing in accelerated builds: keep the compiled CPU backend's model alongside the
+GPU model, send `predict` and small `predict_each` calls to the CPU and large ones to the GPU. The
+launch-overhead argument holds on any GPU, so the routing is robust; only the crossover (~256 documents
+here) is hardware-specific and should be a constant of the accelerated policy. (2) Whether ndarray
+(with Accelerate on macOS) should replace Flex as the CPU default needs an x86 Linux measurement first.
+(3) A GPU build may want a larger CLI window than 256.
 
 ## Versioning
 
@@ -387,6 +419,7 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 - ~~Proper error types in the library interface.~~ **Done**: thiserror enums with structured variants
   in the model, preprocessing and inference crates; anyhow with context in the training binary.
 - ~~Speed benchmarks on inference.~~ **Done**: see "Inference performance", including the CPU vs GPU
-  scheduling sweep; only the `BATCH_SIZE` default remains open.
+  scheduling sweep across seven backends; `BATCH_SIZE` is decided (256). Hybrid CPU/GPU routing is the
+  open follow-up.
 - text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is detecting formatting rather than style? A control arm stripping markdown from all text wouldanswer that.
 - I have noticed one of the most pervasive tells of LLM-isms is that they love to make inanimate objects the subject of verbs. For example an llm says 'Your conversation has been moved to the background - enter opens it - esc returns to it - ctrl+c twice quits', where a human would have written 'enter to open, esc to return, ctrl+c twice to quit'. Is this something we could try and explicitly train on? You could call something like this the personification of abstract nouns, but not always strictly abstract. Often very frequent with technical nouns 'holiday has the rest'. Is this something we could do in our training?
