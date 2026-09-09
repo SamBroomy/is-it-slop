@@ -1,12 +1,15 @@
-//! Inference throughput against batch size and document length.
+//! Inference throughput on the compiled backend; group names carry the backend so logs compare.
 //!
-//! Batch size is how many documents `predict_each` scores concurrently, one forward each, so the
-//! `batch_size` group measures how throughput scales with the cores available; `document_length`
-//! measures one forward's cost against its chunk count. The corpus is a fixed random sample of the
-//! released test split (`corpus.jsonl`, 128 documents, both labels, lengths from a sentence to
-//! about fifteen chunks; window sizes above the corpus size are skipped, so the 256 and 512 points
-//! need a larger corpus). Point `IS_IT_SLOP_BENCH_CORPUS` at another JSONL file with a `text`
-//! field per line to measure different text.
+//! - `window`: documents per second when `predict_each` (the backend's default `Strategy`) is
+//!   handed the corpus in windows of N documents, the way the CLI streams. Windows above the
+//!   corpus size are skipped, so the 256 and 512 points need a larger corpus.
+//! - `strategy`: documents per second over the whole corpus for each `Strategy`, sweeping documents
+//!   per forward pass against concurrent passes. This is where a backend's default comes from.
+//! - `document_length`: one forward's cost against the document's chunk count.
+//!
+//! The corpus is a fixed random sample of the released test split (`corpus.jsonl`, 128 documents,
+//! both labels, lengths from a sentence to about fifteen chunks). Point `IS_IT_SLOP_BENCH_CORPUS`
+//! at another JSONL file with a `text` field per line to measure different text.
 //!
 //! Under `cargo test` (no `--bench` flag) the corpus shrinks so every group runs once as a smoke
 //! test.
@@ -16,8 +19,11 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use is_it_slop::Predictor;
+use is_it_slop::model::BACKEND;
+use is_it_slop::pipeline::Strategy;
 
-const BATCH_SIZES: [usize; 9] = [1, 4, 8, 16, 32, 64, 128, 256, 512];
+const WINDOWS: [usize; 9] = [1, 4, 8, 16, 32, 64, 128, 256, 512];
+const DOCS_PER_FORWARD: [usize; 6] = [1, 4, 16, 32, 64, 128];
 
 /// Chunk counts the `document_length` group looks for; each is served by the corpus document
 /// whose real chunk count is nearest.
@@ -57,24 +63,29 @@ fn corpus(full: bool) -> Vec<String> {
     docs
 }
 
-fn warmed_predictor() -> Predictor {
+fn full_run() -> bool {
+    std::env::args().any(|a| a == "--bench")
+}
+
+/// The model loaded and every corpus shape already seen once: GPU backends autotune per tensor
+/// shape, so a single warm-up prediction would leave the first sample of each shape paying for it.
+fn warmed(corpus: &[String]) -> Predictor {
     let predictor = Predictor::new();
-    // Force the lazily loaded model and encoder out of the first sample.
-    predictor.predict("warm up").expect("warm-up prediction");
+    black_box(predictor.predict_each(corpus));
+    black_box(predictor.predict_each_with(corpus, Strategy::new(usize::MAX, false)));
     predictor
 }
 
-fn batch_size(c: &mut Criterion) {
-    let full = std::env::args().any(|a| a == "--bench");
-    let predictor = warmed_predictor();
-    let corpus = corpus(full);
+fn window(c: &mut Criterion) {
+    let corpus = corpus(full_run());
+    let predictor = warmed(&corpus);
 
-    let mut group = c.benchmark_group("batch_size");
+    let mut group = c.benchmark_group(format!("{BACKEND}/window"));
     group
         .sample_size(10)
         .warm_up_time(Duration::from_secs(1))
         .throughput(Throughput::Elements(corpus.len() as u64));
-    for &size in BATCH_SIZES.iter().filter(|&&size| size <= corpus.len()) {
+    for &size in WINDOWS.iter().filter(|&&size| size <= corpus.len()) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             b.iter(|| {
                 for batch in corpus.chunks(size) {
@@ -86,10 +97,37 @@ fn batch_size(c: &mut Criterion) {
     group.finish();
 }
 
+fn strategy(c: &mut Criterion) {
+    let corpus = corpus(full_run());
+    let predictor = warmed(&corpus);
+
+    let mut group = c.benchmark_group(format!("{BACKEND}/strategy"));
+    group
+        .sample_size(10)
+        .warm_up_time(Duration::from_secs(1))
+        .throughput(Throughput::Elements(corpus.len() as u64));
+    for &docs in DOCS_PER_FORWARD
+        .iter()
+        .filter(|&&docs| docs <= corpus.len())
+    {
+        for concurrent in [false, true] {
+            let strategy = Strategy::new(docs, concurrent);
+            let id = format!("{docs}x{}", if concurrent { "par" } else { "seq" });
+            group.bench_with_input(
+                BenchmarkId::from_parameter(id),
+                &strategy,
+                |b, &strategy| {
+                    b.iter(|| black_box(predictor.predict_each_with(&corpus, strategy)));
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
 fn document_length(c: &mut Criterion) {
-    let full = std::env::args().any(|a| a == "--bench");
-    let predictor = warmed_predictor();
-    let corpus = corpus(full);
+    let corpus = corpus(full_run());
+    let predictor = warmed(&corpus);
     let chunk_counts: Vec<usize> = corpus
         .iter()
         .map(|text| predictor.chunk_texts(text).len())
@@ -110,7 +148,7 @@ fn document_length(c: &mut Criterion) {
     picked.sort_by_key(|&(chunks, _)| chunks);
     picked.dedup_by_key(|&mut (chunks, _)| chunks);
 
-    let mut group = c.benchmark_group("document_length");
+    let mut group = c.benchmark_group(format!("{BACKEND}/document_length"));
     group.sample_size(10).warm_up_time(Duration::from_secs(1));
     for (chunks, text) in picked {
         group.bench_with_input(BenchmarkId::new("chunks", chunks), text, |b, text| {
@@ -120,5 +158,5 @@ fn document_length(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, batch_size, document_length);
+criterion_group!(benches, window, strategy, document_length);
 criterion_main!(benches);

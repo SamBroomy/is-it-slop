@@ -265,6 +265,16 @@ impl Predictor {
         pipeline::predict_each(&as_strs(texts))
     }
 
+    /// [`Predictor::predict_each`] under an explicit scheduling [`pipeline::Strategy`].
+    #[must_use]
+    pub fn predict_each_with<T: AsRef<str>>(
+        &self,
+        texts: &[T],
+        strategy: pipeline::Strategy,
+    ) -> Vec<pipeline::Result<UnifiedPrediction>> {
+        pipeline::predict_each_with(&as_strs(texts), strategy)
+    }
+
     /// The text behind each chunk prediction of [`Predictor::predict`] for `text`, in order.
     #[must_use]
     pub fn chunk_texts<T: AsRef<str>>(&self, text: T) -> Vec<String> {

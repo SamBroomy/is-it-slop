@@ -27,26 +27,77 @@ use is_it_slop_preprocessing::encoder::DocumentEncoder;
 
 include!(concat!(env!("OUT_DIR"), "/threshold.rs"));
 
-/// The inference backend, chosen at compile time by cargo feature: `metal` (Apple GPUs via
-/// wgpu's MSL path), else `wgpu` (any GPU wgpu drives), else Flex, burn's pure-Rust CPU backend.
-/// `metal` implies `wgpu` in burn, so the chain prefers the more specific one.
+/// The inference backend, chosen at compile time by cargo feature, in order of precedence:
+/// `cuda`, `rocm`, `metal`, `vulkan`, `webgpu`, `wgpu` (accelerators; the wgpu family implies
+/// `wgpu`, so the more specific one wins), then `cpu` (burn-cpu), `ndarray`, and finally Flex,
+/// burn's pure-Rust CPU backend, when no feature is set.
 ///
 /// Inference must run on a non-autodiff backend — forward passes on an autodiff backend
 /// accumulate graph state and leak.
-#[cfg(feature = "metal")]
+#[cfg(feature = "cuda")]
+pub type Backend = burn::backend::Cuda;
+/// See the `cuda` definition.
+#[cfg(all(feature = "rocm", not(feature = "cuda")))]
+pub type Backend = burn::backend::Rocm;
+/// See the `cuda` definition.
+#[cfg(all(feature = "metal", not(any(feature = "cuda", feature = "rocm"))))]
 pub type Backend = burn::backend::Metal;
-/// See the `metal` definition.
-#[cfg(all(feature = "wgpu", not(feature = "metal")))]
+/// See the `cuda` definition.
+#[cfg(all(
+    feature = "vulkan",
+    not(any(feature = "cuda", feature = "rocm", feature = "metal"))
+))]
+pub type Backend = burn::backend::Vulkan;
+/// See the `cuda` definition.
+#[cfg(all(
+    feature = "webgpu",
+    not(any(
+        feature = "cuda",
+        feature = "rocm",
+        feature = "metal",
+        feature = "vulkan"
+    ))
+))]
+pub type Backend = burn::backend::WebGpu;
+/// See the `cuda` definition.
+#[cfg(all(
+    feature = "wgpu",
+    not(any(
+        feature = "cuda",
+        feature = "rocm",
+        feature = "metal",
+        feature = "vulkan",
+        feature = "webgpu"
+    ))
+))]
 pub type Backend = burn::backend::Wgpu;
-/// See the `metal` definition.
-#[cfg(not(any(feature = "wgpu", feature = "metal")))]
+/// See the `cuda` definition.
+#[cfg(all(feature = "cpu", not(accelerated)))]
+pub type Backend = burn::backend::Cpu;
+/// See the `cuda` definition.
+#[cfg(all(feature = "ndarray", not(any(accelerated, feature = "cpu"))))]
+pub type Backend = burn::backend::NdArray;
+/// See the `cuda` definition.
+#[cfg(not(any(accelerated, feature = "cpu", feature = "ndarray")))]
 pub type Backend = burn::backend::Flex;
 
-/// The compiled backend's name, for logs and benchmark labels.
-pub const BACKEND: &str = if cfg!(feature = "metal") {
+/// The compiled backend's name, for logs and benchmark labels; same precedence as [`Backend`].
+pub const BACKEND: &str = if cfg!(feature = "cuda") {
+    "cuda"
+} else if cfg!(feature = "rocm") {
+    "rocm"
+} else if cfg!(feature = "metal") {
     "metal"
+} else if cfg!(feature = "vulkan") {
+    "vulkan"
+} else if cfg!(feature = "webgpu") {
+    "webgpu"
 } else if cfg!(feature = "wgpu") {
     "wgpu"
+} else if cfg!(feature = "cpu") {
+    "cpu"
+} else if cfg!(feature = "ndarray") {
+    "ndarray"
 } else {
     "flex"
 };
