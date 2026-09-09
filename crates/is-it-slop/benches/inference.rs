@@ -4,7 +4,8 @@
 //! `batch_size` group measures how throughput scales with the cores available; `document_length`
 //! measures one forward's cost against its chunk count. The corpus is a fixed random sample of the
 //! released test split (`corpus.jsonl`, 128 documents, both labels, lengths from a sentence to
-//! about fifteen chunks). Point `IS_IT_SLOP_BENCH_CORPUS` at another JSONL file with a `text`
+//! about fifteen chunks; window sizes above the corpus size are skipped, so the 256 and 512 points
+//! need a larger corpus). Point `IS_IT_SLOP_BENCH_CORPUS` at another JSONL file with a `text`
 //! field per line to measure different text.
 //!
 //! Under `cargo test` (no `--bench` flag) the corpus shrinks so every group runs once as a smoke
@@ -16,7 +17,7 @@ use std::time::Duration;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use is_it_slop::Predictor;
 
-const BATCH_SIZES: [usize; 7] = [1, 4, 8, 16, 32, 64, 128];
+const BATCH_SIZES: [usize; 9] = [1, 4, 8, 16, 32, 64, 128, 256, 512];
 
 /// Chunk counts the `document_length` group looks for; each is served by the corpus document
 /// whose real chunk count is nearest.

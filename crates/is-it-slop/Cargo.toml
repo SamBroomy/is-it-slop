@@ -69,6 +69,10 @@ cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors", "dep:supports-color"
 serde = ["dep:serde"]
 # Enable self-update for standalone binaries (not package manager installs).
 self-update = []
+# GPU backends (default is Flex, the pure-Rust CPU backend). `metal` implies `wgpu` in burn and
+# takes precedence; see `model::Backend`. Not exercised in CI.
+wgpu = ["burn/wgpu"]
+metal = ["burn/metal"]
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
 

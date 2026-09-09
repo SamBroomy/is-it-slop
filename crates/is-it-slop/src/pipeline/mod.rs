@@ -52,7 +52,7 @@ pub use error::{PipelineError, Result};
 pub use prediction::{ChunkInfo, ConfidenceMetrics, Prediction, UnifiedPrediction};
 use rayon::prelude::*;
 
-use crate::model::{Backend, CALIBRATION_TEMPERATURE, ENCODER, MODEL};
+use crate::model::{Backend, CALIBRATION_TEMPERATURE, ENCODER, MODEL, device};
 
 /// Cap on chunks per document (~49k tokens at the shipped encoding).
 ///
@@ -62,8 +62,8 @@ pub const MAX_CHUNKS_PER_DOCUMENT: usize = 256;
 
 /// Run the model over one already-validated text.
 ///
-/// One document per forward: a forward's cost is linear in chunk slots and gains nothing from
-/// a batch dimension on the CPU backend, so batching documents together would only add padding.
+/// One document per forward: on the CPU backend a forward's cost is linear in chunk slots and
+/// gains nothing from a batch dimension, so batching documents together would only add padding.
 /// Concurrency across documents lives in [`predict_each`].
 fn infer(text: &str) -> UnifiedPrediction {
     let chunk_size = ENCODER.chunk_size();
@@ -72,8 +72,7 @@ fn infer(text: &str) -> UnifiedPrediction {
     let chunks = ids.len() / chunk_size;
     let ids: Vec<i64> = ids.into_iter().map(i64::from).collect();
 
-    let device = burn::backend::flex::FlexDevice;
-    let ids = Tensor::<Backend, 1, Int>::from_ints(ids.as_slice(), &device)
+    let ids = Tensor::<Backend, 1, Int>::from_ints(ids.as_slice(), &device())
         .reshape([1, chunks, chunk_size]);
 
     let output = MODEL.forward(ids);
@@ -86,7 +85,14 @@ fn infer(text: &str) -> UnifiedPrediction {
         .into_data()
         .to_vec()
         .expect("chunk probabilities");
-    let chunk_mask: Vec<bool> = output.chunk_mask.into_data().to_vec().expect("chunk mask");
+    // Read the mask through int: GPU backends store bools as bytes, which `to_vec::<bool>` rejects.
+    let chunk_mask: Vec<bool> = output
+        .chunk_mask
+        .int()
+        .into_data()
+        .iter::<i64>()
+        .map(|real| real != 0)
+        .collect();
     let real_chunk_probs: Vec<f32> = chunk_probs
         .iter()
         .zip(&chunk_mask)
