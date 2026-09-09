@@ -1,10 +1,11 @@
 //! Inference throughput against batch size and document length.
 //!
-//! Batching trades forward-pass count against padding: every document in a batch is padded to the
-//! longest one, so the sweet spot depends on how mixed the lengths are. The corpus is a fixed
-//! random sample of the released test split (`corpus.jsonl`, 128 documents, both labels, lengths
-//! from a sentence to about fifteen chunks). Point `IS_IT_SLOP_BENCH_CORPUS` at another JSONL file
-//! with a `text` field per line to measure different text.
+//! Batch size is how many documents `predict_each` scores concurrently, one forward each, so the
+//! `batch_size` group measures how throughput scales with the cores available; `document_length`
+//! measures one forward's cost against its chunk count. The corpus is a fixed random sample of the
+//! released test split (`corpus.jsonl`, 128 documents, both labels, lengths from a sentence to
+//! about fifteen chunks). Point `IS_IT_SLOP_BENCH_CORPUS` at another JSONL file with a `text`
+//! field per line to measure different text.
 //!
 //! Under `cargo test` (no `--bench` flag) the corpus shrinks so every group runs once as a smoke
 //! test.

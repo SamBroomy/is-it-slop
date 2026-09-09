@@ -279,8 +279,8 @@ fn is_broken_pipe(error: &anyhow::Error) -> bool {
         .is_some_and(|e| e.kind() == io::ErrorKind::BrokenPipe)
 }
 
-/// Documents per forward pass. The batch is padded to its longest document, so this bounds
-/// memory and how much output waits on the model at once.
+/// Documents scored concurrently per pass (one forward each, on rayon's pool). Bounds memory
+/// and how much output waits on the model at once.
 const BATCH_SIZE: usize = 32;
 
 /// Stream documents through the model in batches, handing each result to the sink in input

@@ -8,9 +8,9 @@
 //! 1. **Encoding**: clean (universal rules), tokenize with tiktoken `o200k_base`, map tokens
 //!    through the bundle vocabulary, and tile into 192-token chunks — the exact encoding the
 //!    model was trained with, reconstructed from the shipped bundle
-//! 2. **Forward pass**: one Burn forward over `[batch, chunks, 192]`; the network's document
-//!    head aggregates the chunks (learned end to end — nothing outside the model recombines
-//!    chunk scores)
+//! 2. **Forward pass**: one Burn forward over `[1, chunks, 192]` per document, documents in a
+//!    batch running concurrently; the network's document head aggregates the chunks (learned
+//!    end to end — nothing outside the model recombines chunk scores)
 //! 3. **Calibration**: document probability = `sigmoid(doc_logit / T)`; the shipped
 //!    classification threshold was fitted on these calibrated probabilities
 //!
@@ -50,74 +50,49 @@ use burn::tensor::{Int, Tensor};
 pub use classification::Classification;
 pub use error::{PipelineError, Result};
 pub use prediction::{ChunkInfo, ConfidenceMetrics, Prediction, UnifiedPrediction};
+use rayon::prelude::*;
 
 use crate::model::{Backend, CALIBRATION_TEMPERATURE, ENCODER, MODEL};
 
 /// Cap on chunks per document (~49k tokens at the shipped encoding).
 ///
-/// The chunk axis is dynamic but memory grows with the longest document, so extremely long
-/// inputs are judged on their first ~49k tokens.
+/// The chunk axis is dynamic but memory grows with document length, so extremely long inputs
+/// are judged on their first ~49k tokens.
 pub const MAX_CHUNKS_PER_DOCUMENT: usize = 256;
 
-/// Run the model over already-validated texts, one forward pass for the whole batch.
-fn infer(texts: &[&str]) -> Vec<UnifiedPrediction> {
+/// Run the model over one already-validated text.
+///
+/// One document per forward: a forward's cost is linear in chunk slots and gains nothing from
+/// a batch dimension on the CPU backend, so batching documents together would only add padding.
+/// Concurrency across documents lives in [`predict_each`].
+fn infer(text: &str) -> UnifiedPrediction {
     let chunk_size = ENCODER.chunk_size();
-    let pad = ENCODER.vocabulary().pad_id();
-
-    let mut docs = ENCODER.encode_batch_chunks(texts);
-    for ids in &mut docs {
-        ids.truncate(MAX_CHUNKS_PER_DOCUMENT * chunk_size);
-    }
-
-    let batch = docs.len();
-    let max_chunks = docs
-        .iter()
-        .map(|ids| ids.len() / chunk_size)
-        .max()
-        .expect("at least one text");
-
-    // One rectangular id block sized to the longest document; shorter documents are padded
-    // with pad-id chunks, which the model masks out of every pooling step.
-    let mut ids = vec![i64::from(pad); batch * max_chunks * chunk_size];
-    for (doc, chunk_ids) in docs.iter().enumerate() {
-        let start = doc * max_chunks * chunk_size;
-        for (slot, &id) in ids[start..start + chunk_ids.len()]
-            .iter_mut()
-            .zip(chunk_ids)
-        {
-            *slot = i64::from(id);
-        }
-    }
+    let mut ids = ENCODER.encode_batch_chunks(&[text]).remove(0);
+    ids.truncate(MAX_CHUNKS_PER_DOCUMENT * chunk_size);
+    let chunks = ids.len() / chunk_size;
+    let ids: Vec<i64> = ids.into_iter().map(i64::from).collect();
 
     let device = burn::backend::flex::FlexDevice;
     let ids = Tensor::<Backend, 1, Int>::from_ints(ids.as_slice(), &device)
-        .reshape([batch, max_chunks, chunk_size]);
+        .reshape([1, chunks, chunk_size]);
 
     let output = MODEL.forward(ids);
 
-    let doc_probs: Vec<f32> = sigmoid(output.doc_logits / f64::from(CALIBRATION_TEMPERATURE))
+    let doc_prob = sigmoid(output.doc_logits / f64::from(CALIBRATION_TEMPERATURE))
         .into_data()
-        .to_vec()
-        .expect("document probabilities");
+        .to_vec::<f32>()
+        .expect("document probability")[0];
     let chunk_probs: Vec<f32> = sigmoid(output.chunk_logits)
         .into_data()
         .to_vec()
         .expect("chunk probabilities");
     let chunk_mask: Vec<bool> = output.chunk_mask.into_data().to_vec().expect("chunk mask");
-
-    doc_probs
+    let real_chunk_probs: Vec<f32> = chunk_probs
         .iter()
-        .enumerate()
-        .map(|(doc, &p)| {
-            let row = doc * max_chunks..(doc + 1) * max_chunks;
-            let real_chunk_probs: Vec<f32> = chunk_probs[row.clone()]
-                .iter()
-                .zip(&chunk_mask[row])
-                .filter_map(|(&prob, &real)| real.then_some(prob))
-                .collect();
-            UnifiedPrediction::new(p, &real_chunk_probs)
-        })
-        .collect()
+        .zip(&chunk_mask)
+        .filter_map(|(&prob, &real)| real.then_some(prob))
+        .collect();
+    UnifiedPrediction::new(doc_prob, &real_chunk_probs)
 }
 
 /// Predict classification for a single text.
@@ -140,15 +115,14 @@ pub fn predict(input: &str) -> Result<UnifiedPrediction> {
     if input.trim().is_empty() {
         return Err(PipelineError::EmptyInput);
     }
-    let mut results = infer(&[input]);
-    Ok(results.remove(0))
+    Ok(infer(input))
 }
 
-/// Predict each text, running one forward pass over all the valid ones.
+/// Predict each text, scoring the texts concurrently on rayon's global pool.
 ///
-/// A blank text fails on its own with [`PipelineError::EmptyInput`] rather than failing the
-/// batch, so callers processing a stream can report it in place. An empty slice yields an
-/// empty vector.
+/// Results come back in input order. A blank text fails on its own with
+/// [`PipelineError::EmptyInput`] rather than failing the batch, so callers processing a stream
+/// can report it in place. An empty slice yields an empty vector.
 ///
 /// # Example
 ///
@@ -162,29 +136,19 @@ pub fn predict(input: &str) -> Result<UnifiedPrediction> {
 /// ```
 #[must_use]
 pub fn predict_each(inputs: &[&str]) -> Vec<Result<UnifiedPrediction>> {
-    let is_blank = |text: &&str| text.trim().is_empty();
-    let valid: Vec<&str> = inputs.iter().copied().filter(|t| !is_blank(t)).collect();
-    let mut predictions = if valid.is_empty() {
-        Vec::new()
-    } else {
-        infer(&valid)
-    }
-    .into_iter();
     inputs
-        .iter()
+        .par_iter()
         .map(|text| {
-            if is_blank(text) {
+            if text.trim().is_empty() {
                 Err(PipelineError::EmptyInput)
             } else {
-                Ok(predictions
-                    .next()
-                    .expect("one prediction per non-blank input"))
+                Ok(infer(text))
             }
         })
         .collect()
 }
 
-/// Predict classifications for multiple texts in one forward pass.
+/// Predict classifications for multiple texts, concurrently, all or nothing.
 ///
 /// Fails with [`PipelineError::EmptyInput`] if the slice is empty or any text is blank; use
 /// [`predict_each`] for per-text results.
@@ -294,8 +258,7 @@ mod tests {
 
     #[test]
     fn test_batch_matches_single() {
-        // The rectangular batch pads shorter documents with pad chunks; masking must make the
-        // batched result identical to running each text alone.
+        // The concurrent batch path and the single path must agree exactly.
         let long = "This sentence repeats to span multiple chunks of the encoding. ".repeat(80);
         let texts = ["Short text.", long.as_str()];
 

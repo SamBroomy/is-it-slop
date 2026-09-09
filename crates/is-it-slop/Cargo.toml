@@ -25,6 +25,7 @@ is-it-slop-preprocessing = { workspace = true }
 
 burn = { workspace = true, features = ["std", "flex"] }
 burn-store = { workspace = true }
+rayon = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

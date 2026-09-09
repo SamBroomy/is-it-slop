@@ -4146,6 +4146,7 @@ dependencies = [
  "jni",
  "owo-colors",
  "pyo3",
+ "rayon",
  "serde",
  "serde_json",
  "supports-color",
