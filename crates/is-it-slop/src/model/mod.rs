@@ -96,8 +96,12 @@ pub const BACKEND: &str = if cfg!(feature = "cuda") {
     "wgpu"
 } else if cfg!(feature = "cpu") {
     "cpu"
+} else if cfg!(feature = "accelerate") {
+    "ndarray-accelerate"
 } else if cfg!(feature = "ndarray") {
     "ndarray"
+} else if cfg!(feature = "apple-amx") {
+    "flex-amx"
 } else {
     "flex"
 };

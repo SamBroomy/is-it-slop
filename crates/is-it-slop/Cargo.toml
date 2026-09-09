@@ -83,6 +83,9 @@ cuda = ["burn/cuda"]
 rocm = ["burn/rocm"]
 cpu = ["burn/cpu"]
 ndarray = ["burn/ndarray"]
+# CPU variants: Apple Accelerate BLAS under ndarray; Apple AMX kernels under Flex.
+accelerate = ["ndarray", "burn/accelerate"]
+apple-amx = ["burn/apple-amx"]
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
 
