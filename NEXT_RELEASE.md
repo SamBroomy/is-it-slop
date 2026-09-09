@@ -103,7 +103,9 @@ These change the artifact, so deciding them after release means a breaking chang
 
 - [ ] **Does the graph emit chunk-level output?** It currently emits only the document probability —
       `DocumentOnly` wraps the chunk head away. Exposing "this passage looks generated" as a product
-      feature requires exporting both tensors. Decide now.
+      feature requires exporting both tensors. Decide now. _Burn path: the model's forward already
+      returns chunk logits and the CLI's `--chunks` view consumes them, so the question is now
+      whether that is part of the contract, not whether it is possible._
 - [ ] **Is `encoder_config.json` sufficient for Rust to reconstruct encoding exactly?** It currently
       carries preprocessing version, tokenizer, chunk size, min_fill, overlap, vocab size, oov and
       pad ids. Anything missing is a silent skew source.
@@ -253,7 +255,8 @@ Open items, in order:
       on Burn's Flex CPU backend — ort, TF-IDF, sprs, and `AggregationMethod` are gone; the
       network shares one definition via the `is-it-slop-model` crate and one text→grid path via
       `is-it-slop-preprocessing::encoder`. Long documents are no longer truncated at inference
-      (dynamic chunk axis, capped at 32 windows ≈ 49k tokens) — a deliberate behavior change to
+      (dynamic chunk axis, capped at 256 chunks ≈ 49k tokens, each document padded only to its own
+      last chunk — see "Inference performance") — a deliberate behavior change to
       quantify on the full run's long-doc band, since T and the threshold were fit at the 8-chunk
       eval encoding. Still optional: shrinking the vocabulary LUT from i32 to u16
       (~800KB -> ~400KB, breaking).
@@ -294,6 +297,48 @@ Open items, in order:
       so expect no inference speedup from Q8 today (if anything a small slowdown); the win is
       size and memory.
 
+## Inference performance
+
+Measured with `just bench-inference` (`crates/is-it-slop/benches/inference.rs`) on a fixed 128-document
+sample of the test split (`benches/corpus.jsonl`), Flex CPU backend, Apple Silicon with 15 logical cores.
+Outputs are pinned by the golden parity test (`crates/is-it-slop/tests/inference_golden.rs`: 12 real
+documents from 1 to 33 chunks at tolerance 1e-5, regenerated only with `IS_IT_SLOP_UPDATE_GOLDEN=1`
+when the model artifacts change), so every change below reproduced the previous outputs exactly.
+
+**What the profile showed.** A forward's cost is linear in chunk slots, and one Flex forward runs on a
+single thread. So (a) padding rows are paid for in full even though the model masks them, and (b) the
+batch dimension buys no parallelism: batching documents into one forward only adds padding to the
+longest document in the batch, while independent forwards on several threads scale with cores.
+
+**Padding to the real chunk count** (`DocumentEncoder::encode_batch_chunks`). Inference previously
+reused the training tiling: whole 8-chunk windows, each padded to 8 rows, so a 1-chunk document ran
+as 8 slots. Now only the last chunk is padded to 192 tokens. Training is unchanged; the tiling is a
+training-batch requirement, not a property of the weights.
+
+| Real chunks | Whole windows | Real chunks only |
+| ----------- | ------------- | ---------------- |
+| 1           | 6.1 ms        | 0.77 ms          |
+| 8           | 7.7 ms        | 7.45 ms          |
+| 12          | 14.1 ms       | 11.2 ms          |
+
+**One document per forward, documents concurrent** (`pipeline::predict_each` is a rayon `par_iter`,
+order preserved; library-level, so Python and Kotlin callers get it too). Documents per second on the
+real corpus, by how many documents `predict_each` is handed at once:
+
+| Documents per call | Original (padded batch) | Real chunks only | Plus concurrency |
+| ------------------ | ----------------------- | ---------------- | ---------------- |
+| 1                  | 147                     | 399              | 372              |
+| 32                 | 79                      | 117              | 2273             |
+| 128                | 81                      | 105              | 3416             |
+
+**Open.** The CLI's `BATCH_SIZE = 32` is now just the concurrency window per pass (bounds memory and
+how long output waits); 64 and 128 measured faster and a window of a few times the core count is the
+likely default. On an accelerator the trade-off should invert: launch overhead dominates small
+tensors and the device parallelises within a forward, so length-bucketed batches with a memory cap
+would beat one-document forwards, and rayon across forwards would only serialise on the device queue.
+That needs a `wgpu`/Metal backend feature and the same bench run under both strategies before a
+backend-dependent policy is chosen.
+
 ## Versioning
 
 Model artifacts **3.0.0 -> 4.0.0** — breaking: different files, different input shape, no vectorizer.
@@ -317,7 +362,9 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
   the 2000+-token tail (0.9984 -> 0.9992 on 3.2% of docs) at 2.7x train cost. k=32 has nothing left
   to win. Ship k=8 unless the long tail matters to the product.
 
-- Proper error types in the library interface.
-- Speed benchmarks on infrence.
+- ~~Proper error types in the library interface.~~ **Done**: thiserror enums with structured variants
+  in the model, preprocessing and inference crates; anyhow with context in the training binary.
+- ~~Speed benchmarks on inference.~~ **Done**: see "Inference performance"; the accelerator question
+  there is what remains.
 - text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is detecting formatting rather than style? A control arm stripping markdown from all text wouldanswer that.
 - I have noticed one of the most pervasive tells of LLM-isms is that they love to make inanimate objects the subject of verbs. For example an llm says 'Your conversation has been moved to the background - enter opens it - esc returns to it - ctrl+c twice quits', where a human would have written 'enter to open, esc to return, ctrl+c twice to quit'. Is this something we could try and explicitly train on? You could call something like this the personification of abstract nouns, but not always strictly abstract. Often very frequent with technical nouns 'holiday has the rest'. Is this something we could do in our training?
