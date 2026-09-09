@@ -1,11 +1,12 @@
 //! How a batch of documents is spread over forward passes and threads.
 //!
-//! The two knobs trade against each other differently per backend, which is why the default lives
+//! The two knobs trade against each other differently per backend, which is why the defaults live
 //! in the backend module (`cpu` or `accelerated`) and the bench sweeps both.
 
 use rayon::prelude::*;
 
-use super::{MAX_CHUNKS_PER_DOCUMENT, UnifiedPrediction, forward};
+use super::forward::Forward;
+use super::{MAX_CHUNKS_PER_DOCUMENT, UnifiedPrediction};
 use crate::model::ENCODER;
 
 /// How many documents share a forward pass, and whether passes run concurrently.
@@ -36,14 +37,14 @@ impl Strategy {
 }
 
 impl Default for Strategy {
-    /// The compiled backend's policy.
+    /// The compiled primary backend's policy.
     fn default() -> Self {
         super::backend::STRATEGY
     }
 }
 
-/// Score non-blank texts under `strategy`, results in input order.
-pub fn run(texts: &[&str], strategy: Strategy) -> Vec<UnifiedPrediction> {
+/// Score non-blank texts under `strategy`, one `forward` per group, results in input order.
+pub fn run(texts: &[&str], strategy: Strategy, forward: Forward) -> Vec<UnifiedPrediction> {
     let chunk_size = ENCODER.chunk_size();
     let mut docs = ENCODER.encode_batch_chunks(texts);
     for doc in &mut docs {
@@ -58,7 +59,7 @@ pub fn run(texts: &[&str], strategy: Strategy) -> Vec<UnifiedPrediction> {
     let groups: Vec<&[usize]> = order.chunks(strategy.docs_per_forward).collect();
     let score = |group: &[usize]| {
         let batch: Vec<&[u16]> = group.iter().map(|&i| docs[i].as_slice()).collect();
-        forward::run(&batch)
+        forward(&batch)
     };
     let scored: Vec<Vec<UnifiedPrediction>> = if strategy.concurrent {
         groups.par_iter().map(|group| score(group)).collect()

@@ -1,17 +1,36 @@
 //! One forward pass over a group of encoded documents.
 
 use burn::tensor::activation::sigmoid;
+use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
+use is_it_slop_model::HierarchicalSlopClassifier;
 
 use super::UnifiedPrediction;
-use crate::model::{Backend, CALIBRATION_TEMPERATURE, ENCODER, MODEL, device};
+use crate::model::{CALIBRATION_TEMPERATURE, ENCODER, MODEL, device};
 
-/// Score a group of documents in one forward pass.
+/// A function that scores one group of documents; see [`run`] for the contract.
+pub type Forward = fn(&[&[u16]]) -> Vec<UnifiedPrediction>;
+
+/// Score a group of documents in one forward pass on the primary backend.
 ///
 /// Each document is its chunk ids, row-major `[chunks, chunk_size]`, already capped. The group
 /// is padded to its longest member with pad-id chunks, which the model masks out of every
 /// pooling step, so a document's result does not depend on what it was grouped with.
 pub fn run(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
+    run_with(&MODEL, &device(), docs)
+}
+
+/// [`run`] on the CPU backend's copy of the model.
+#[cfg(accelerated)]
+pub fn run_on_cpu(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
+    run_with(&crate::model::CPU_MODEL, &crate::model::cpu_device(), docs)
+}
+
+fn run_with<B: Backend>(
+    model: &HierarchicalSlopClassifier<B>,
+    device: &B::Device,
+    docs: &[&[u16]],
+) -> Vec<UnifiedPrediction> {
     let chunk_size = ENCODER.chunk_size();
     let pad = ENCODER.vocabulary().pad_id();
     let batch = docs.len();
@@ -33,10 +52,10 @@ pub fn run(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
             *slot = i64::from(id);
         }
     }
-    let ids = Tensor::<Backend, 1, Int>::from_ints(ids.as_slice(), &device())
+    let ids = Tensor::<B, 1, Int>::from_ints(ids.as_slice(), device)
         .reshape([batch, max_chunks, chunk_size]);
 
-    let output = MODEL.forward(ids);
+    let output = model.forward(ids);
 
     let doc_probs: Vec<f32> = sigmoid(output.doc_logits / f64::from(CALIBRATION_TEMPERATURE))
         .into_data()

@@ -75,6 +75,8 @@ fn full_run() -> bool {
 /// shape, so a single warm-up prediction would leave the first sample of each shape paying for it.
 fn warmed(corpus: &[String]) -> Predictor {
     let predictor = Predictor::new();
+    // Small and large calls, so an accelerated build loads both its models.
+    black_box(predictor.predict_each(&corpus[..1]));
     black_box(predictor.predict_each(corpus));
     black_box(predictor.predict_each_with(corpus, Strategy::new(usize::MAX, false)));
     predictor
