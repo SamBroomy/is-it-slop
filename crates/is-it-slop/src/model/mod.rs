@@ -172,7 +172,7 @@ pub static MODEL: LazyLock<HierarchicalSlopClassifier<Backend>> = LazyLock::new(
 /// The same classifier on the [`CpuBackend`], for the calls too small to be worth a GPU pass.
 /// Loaded on first such call, so a build that only ever batches never pays for it.
 #[cfg(accelerated)]
-pub static CPU_MODEL: LazyLock<HierarchicalSlopClassifier<CpuBackend>> =
+pub(crate) static CPU_MODEL: LazyLock<HierarchicalSlopClassifier<CpuBackend>> =
     LazyLock::new(|| load(&cpu_device()));
 
 /// The embedded config and weights on `device`.

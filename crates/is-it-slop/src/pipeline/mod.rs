@@ -10,8 +10,9 @@
 //!    model was trained with, reconstructed from the shipped bundle
 //! 2. **Forward pass**: Burn forwards over `[docs, chunks, 192]`, spread over passes and threads
 //!    by the compiled backend's [`Strategy`] (one document per pass, concurrent, on the CPU;
-//!    many per pass, sequential, on a GPU); the network's document head aggregates the chunks
-//!    (learned end to end — nothing outside the model recombines chunk scores)
+//!    many per pass, sequential, on a GPU, with calls too small to be worth a GPU launch routed
+//!    to a CPU copy of the model); the network's document head aggregates the chunks (learned
+//!    end to end — nothing outside the model recombines chunk scores)
 //! 3. **Calibration**: document probability = `sigmoid(doc_logit / T)`; the shipped
 //!    classification threshold was fitted on these calibrated probabilities
 //!
