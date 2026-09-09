@@ -23,6 +23,11 @@ pub fn run(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
 
     let mut ids = vec![i64::from(pad); batch * max_chunks * chunk_size];
     for (row, doc) in docs.iter().enumerate() {
+        debug_assert_eq!(
+            doc.len() % chunk_size,
+            0,
+            "a document's ids are whole chunks"
+        );
         let start = row * max_chunks * chunk_size;
         for (slot, &id) in ids[start..start + doc.len()].iter_mut().zip(*doc) {
             *slot = i64::from(id);

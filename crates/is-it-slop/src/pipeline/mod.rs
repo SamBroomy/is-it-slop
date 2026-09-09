@@ -309,6 +309,17 @@ mod tests {
                             got.chunk_predictions.len(),
                             "{strategy:?} text {i}"
                         );
+                        for (k, (w, g)) in want
+                            .chunk_predictions
+                            .iter()
+                            .zip(&got.chunk_predictions)
+                            .enumerate()
+                        {
+                            assert!(
+                                (w.ai_probability() - g.ai_probability()).abs() < 1e-5,
+                                "{strategy:?} text {i} chunk {k}"
+                            );
+                        }
                     }
                     other => panic!("{strategy:?} text {i}: {other:?}"),
                 }

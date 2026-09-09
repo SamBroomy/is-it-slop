@@ -9,7 +9,10 @@ use super::{MAX_CHUNKS_PER_DOCUMENT, UnifiedPrediction, forward};
 use crate::model::ENCODER;
 
 /// How many documents share a forward pass, and whether passes run concurrently.
+///
+/// Built with [`Strategy::new`], which enforces at least one document per pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Strategy {
     /// Documents per forward pass; a pass is padded to its longest document.
     pub docs_per_forward: usize,
