@@ -47,8 +47,7 @@ fn with_predictor<T>(f: impl FnOnce(&Predictor) -> Result<T, PipelineError>) -> 
 
 fn return_string(env: &mut JNIEnv<'_>, output: &str) -> jstring {
     env.new_string(output)
-        .map(|s| s.into_raw())
-        .unwrap_or(std::ptr::null_mut())
+        .map_or(std::ptr::null_mut(), JString::into_raw)
 }
 
 fn error_json(msg: &str) -> String {
@@ -57,7 +56,7 @@ fn error_json(msg: &str) -> String {
 
 fn read_input<'a>(env: &mut JNIEnv<'a>, text: &JString<'a>) -> Result<String, String> {
     env.get_string(text)
-        .map(|s| s.into())
+        .map(Into::into)
         .map_err(|e| format!("Failed to read input: {e}"))
 }
 
@@ -165,7 +164,7 @@ pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_classifyBatch<'local>
 
         let labels: Vec<String> = with_predictor(|p| {
             let classes = p.classify_batch(&texts)?;
-            Ok(classes.iter().map(|c| c.to_string()).collect())
+            Ok(classes.iter().map(ToString::to_string).collect())
         })?;
 
         serde_json::to_string(&labels).map_err(|e| format!("Serialization error: {e}"))
@@ -184,10 +183,10 @@ pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_setThreshold(
     _class: JClass<'_>,
     value: jfloat,
 ) {
-    if let Ok(threshold) = Threshold::try_new(value) {
-        if let Ok(mut guard) = predictor_mutex().lock() {
-            *guard = Predictor::new().with_threshold(threshold);
-        }
+    if let Ok(threshold) = Threshold::try_new(value)
+        && let Ok(mut guard) = predictor_mutex().lock()
+    {
+        *guard = Predictor::new().with_threshold(threshold);
     }
 }
 
@@ -199,8 +198,7 @@ pub unsafe extern "system" fn Java_ai_isitlop_SlopDetector_getThreshold(
 ) -> jfloat {
     predictor_mutex()
         .lock()
-        .map(|guard| *guard.threshold())
-        .unwrap_or(0.5)
+        .map_or(0.5, |guard| *guard.threshold())
 }
 
 /// Get the model version string (e.g. `"4.0.0"`).

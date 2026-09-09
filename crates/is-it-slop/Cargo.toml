@@ -98,7 +98,7 @@ jni = ["dep:jni", "serde"]
 # The feature set CI builds, tests and docs with. `--all-features` is never a valid build of this
 # crate: `python` links as an extension module, the backends are mutually exclusive platform choices,
 # and `vulkan` needs the Vulkan SDK on macOS.
-all-testable = ["cli"]
+all-testable = ["cli", "jni", "self-update"]
 
 [package.metadata.docs.rs]
 features = ["stub-model"]
