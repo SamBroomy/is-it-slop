@@ -17,21 +17,22 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use burn::config::Config;
-use burn::data::dataloader::DataLoaderBuilder;
-use burn::data::dataset::InMemDataset;
-use burn::module::Module;
-use burn::tensor::backend::AutodiffBackend;
+use burn::{
+    config::Config,
+    data::{dataloader::DataLoaderBuilder, dataset::InMemDataset},
+    module::Module,
+    tensor::backend::AutodiffBackend,
+};
 use clap::{Parser, Subcommand};
-use is_it_slop_training::data::{
-    DocumentEncoder, EncodedDocument, SlopBatcher, SplitData, Vocabulary, read_split,
+use is_it_slop_training::{
+    data::{DocumentEncoder, EncodedDocument, SlopBatcher, SplitData, Vocabulary, read_split},
+    evaluation::{
+        ThresholdMetrics, confidence_ranking_auc, fit_temperature, roc_auc, score,
+        threshold_at_best_f1, threshold_at_precision,
+    },
+    model::{HierarchicalModelConfig, HierarchicalSlopClassifier},
+    training::{Batch, TrainingConfig, train},
 };
-use is_it_slop_training::evaluation::{
-    ThresholdMetrics, confidence_ranking_auc, fit_temperature, roc_auc, score,
-    threshold_at_best_f1, threshold_at_precision,
-};
-use is_it_slop_training::model::{HierarchicalModelConfig, HierarchicalSlopClassifier};
-use is_it_slop_training::training::{Batch, TrainingConfig, train};
 use tracing::info;
 
 /// Train the slop classifier and inspect the resulting bundle.
@@ -144,8 +145,7 @@ fn predictions<B: burn::tensor::backend::Backend>(
     encoded: &[EncodedDocument],
     device: &B::Device,
 ) -> SplitPredictions {
-    use burn::data::dataloader::batcher::Batcher;
-    use burn::tensor::activation::sigmoid;
+    use burn::{data::dataloader::batcher::Batcher, tensor::activation::sigmoid};
 
     let mut out = SplitPredictions {
         labels: Vec::with_capacity(encoded.len()),
@@ -516,8 +516,10 @@ fn evaluate<B: burn::tensor::backend::Backend>(
     args: &EvaluateArgs,
     device: &B::Device,
 ) -> Result<()> {
-    use burn::module::Quantizer;
-    use burn::tensor::quantization::{Calibration, QuantScheme, QuantStore, QuantValue};
+    use burn::{
+        module::Quantizer,
+        tensor::quantization::{Calibration, QuantScheme, QuantStore, QuantValue},
+    };
     use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
 
     let dir = &args.artifact_dir;

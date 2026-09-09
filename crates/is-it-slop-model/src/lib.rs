@@ -7,25 +7,25 @@
 //!
 //! Input is `[batch, chunks, chunk_size]` compact token ids from the data layer (the vocabulary
 //! already mapped rare tokens to the OOV row and padding to the pad row). The forward pass, with
-//! the code split between [`HierarchicalSlopClassifier::encode_chunks`] (stages 1-4) and
+//! the code split between `HierarchicalSlopClassifier::encode_chunks` (stages 1-4) and
 //! [`HierarchicalSlopClassifier::forward`] (stages 5-6):
 //!
-//! 1. **Embed**: look up each token's row, `[B*C, chunk_size, embed_dim]`. Pad positions are
-//!    zeroed and spatial dropout drops whole embedding channels (training only).
+//! 1. **Embed**: look up each token's row, `[B*C, chunk_size, embed_dim]`. Pad positions are zeroed
+//!    and spatial dropout drops whole embedding channels (training only).
 //! 2. **Group**: reshape so every `group` adjacent tokens become one position carrying their
 //!    concatenated embeddings, `[B*C, chunk_size/group, group*embed_dim]` — the trunk's first
-//!    linear layer therefore sees local token n-grams, which is why an explicit n-gram
-//!    vocabulary is not needed.
-//! 3. **Trunk**: a two-layer MLP over every group position, shared across all chunks and
-//!    positions — more chunks cost compute, never parameters.
-//! 4. **Chunk pooling**: masked max over the group positions gives one vector per chunk
-//!    (padding is filled with `-inf` first so it can never win the max), then `LayerNorm`.
-//! 5. **Chunk head**: one logit per chunk — the training-time auxiliary signal; each chunk
-//!    inherits its document's label, noisy but measurably useful.
-//! 6. **Document head**: two pooled views of the chunk vectors concatenated — attention
-//!    (which chunks matter) and masked max (one decisive chunk suffices) — then a linear head.
-//!    This *is* the chunk aggregation, learned end to end; nothing outside the network combines
-//!    chunk scores into the document verdict.
+//!    linear layer therefore sees local token n-grams, which is why an explicit n-gram vocabulary
+//!    is not needed.
+//! 3. **Trunk**: a two-layer MLP over every group position, shared across all chunks and positions
+//!    — more chunks cost compute, never parameters.
+//! 4. **Chunk pooling**: masked max over the group positions gives one vector per chunk (padding is
+//!    filled with `-inf` first so it can never win the max), then `LayerNorm`.
+//! 5. **Chunk head**: one logit per chunk — the training-time auxiliary signal; each chunk inherits
+//!    its document's label, noisy but measurably useful.
+//! 6. **Document head**: two pooled views of the chunk vectors concatenated — attention (which
+//!    chunks matter) and masked max (one decisive chunk suffices) — then a linear head. This *is*
+//!    the chunk aggregation, learned end to end; nothing outside the network combines chunk scores
+//!    into the document verdict.
 //!
 //! Outputs are raw logits: `sigmoid` gives the AI probability, and the decision threshold is a
 //! bundle artifact fitted after training, never part of the network. The chunk axis is dynamic —
@@ -33,15 +33,15 @@
 //! and both document pools are masked reductions. Padding is masked out of every pooling step: a
 //! global max over mostly-pad positions would otherwise let padding decide the representation.
 
-use burn::config::Config;
-use burn::module::Module;
-use burn::nn::{
-    Dropout, DropoutConfig, Embedding, EmbeddingConfig, Gelu, LayerNorm, LayerNormConfig, Linear,
-    LinearConfig,
+use burn::{
+    config::Config,
+    module::Module,
+    nn::{
+        Dropout, DropoutConfig, Embedding, EmbeddingConfig, Gelu, LayerNorm, LayerNormConfig,
+        Linear, LinearConfig,
+    },
+    tensor::{Distribution, Int, Tensor, activation::softmax, backend::Backend},
 };
-use burn::tensor::activation::softmax;
-use burn::tensor::backend::Backend;
-use burn::tensor::{Distribution, Int, Tensor};
 
 /// A configuration the network cannot be built from.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -341,9 +341,9 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
 
 #[cfg(test)]
 mod tests {
+    use burn::backend::{Flex, flex::FlexDevice};
+
     use super::*;
-    use burn::backend::Flex;
-    use burn::backend::flex::FlexDevice;
 
     type B = Flex;
 

@@ -3,8 +3,7 @@
 //! Folding ids modulo a bound would make two *common* tokens share one embedding row at random;
 //! ranking by frequency confines collisions to the rare tail, which all shares a single OOV row.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use super::EncoderError;
 use crate::pre_processor::tokenize;

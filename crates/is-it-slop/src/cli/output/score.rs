@@ -41,8 +41,7 @@ impl Sink for Score {
 #[cfg(test)]
 mod tests {
     use super::{super::tests::*, *};
-    use crate::cli::input::Source;
-    use crate::cli::output::Detail;
+    use crate::cli::{input::Source, output::Detail};
 
     #[test]
     fn four_decimal_scores() {

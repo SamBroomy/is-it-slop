@@ -10,8 +10,7 @@
 
 use std::path::PathBuf;
 
-use is_it_slop::pipeline::Strategy;
-use is_it_slop::{Prediction, Predictor, UnifiedPrediction};
+use is_it_slop::{Prediction, Predictor, UnifiedPrediction, pipeline::Strategy};
 use is_it_slop_preprocessing::pre_processor::tokenize;
 
 const TOLERANCE: f32 = 1e-5;

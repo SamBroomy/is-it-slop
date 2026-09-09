@@ -8,14 +8,14 @@
 
 mod splits;
 
+use burn::{
+    data::dataloader::batcher::Batcher,
+    tensor::{Int, Tensor, backend::Backend},
+};
 pub use is_it_slop_preprocessing::encoder::{
     DocumentEncoder, EncodedDocument, EncoderBundleConfig, EncoderError, O200K_CEILING, Vocabulary,
 };
 pub use splits::{SplitData, read_split};
-
-use burn::data::dataloader::batcher::Batcher;
-use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor};
 
 use crate::training::Batch;
 

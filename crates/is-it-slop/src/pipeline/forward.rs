@@ -1,8 +1,6 @@
 //! One forward pass over a group of encoded documents.
 
-use burn::tensor::activation::sigmoid;
-use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor};
+use burn::tensor::{Int, Tensor, activation::sigmoid, backend::Backend};
 use is_it_slop_model::HierarchicalSlopClassifier;
 
 use super::UnifiedPrediction;

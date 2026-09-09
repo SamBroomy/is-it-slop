@@ -6,15 +6,15 @@
 //! # Pipeline Flow
 //!
 //! 1. **Encoding**: clean (universal rules), tokenize with tiktoken `o200k_base`, map tokens
-//!    through the bundle vocabulary, and tile into 192-token chunks — the exact encoding the
-//!    model was trained with, reconstructed from the shipped bundle
-//! 2. **Forward pass**: Burn forwards over `[docs, chunks, 192]`, spread over passes and threads
-//!    by the compiled backend's [`Strategy`] (one document per pass, concurrent, on the CPU;
-//!    many per pass, sequential, on a GPU, with calls too small to be worth a GPU launch routed
-//!    to a CPU copy of the model); the network's document head aggregates the chunks (learned
-//!    end to end — nothing outside the model recombines chunk scores)
-//! 3. **Calibration**: document probability = `sigmoid(doc_logit / T)`; the shipped
-//!    classification threshold was fitted on these calibrated probabilities
+//!    through the bundle vocabulary, and tile into 192-token chunks — the exact encoding the model
+//!    was trained with, reconstructed from the shipped bundle
+//! 2. **Forward pass**: Burn forwards over `[docs, chunks, 192]`, spread over passes and threads by
+//!    the compiled backend's [`Strategy`] (one document per pass, concurrent, on the CPU; many per
+//!    pass, sequential, on a GPU, with calls too small to be worth a GPU launch routed to a CPU
+//!    copy of the model); the network's document head aggregates the chunks (learned end to end —
+//!    nothing outside the model recombines chunk scores)
+//! 3. **Calibration**: document probability = `sigmoid(doc_logit / T)`; the shipped classification
+//!    threshold was fitted on these calibrated probabilities
 //!
 //! Long documents are *not* truncated: the chunk axis is dynamic, so every chunk of the
 //! document goes through the same forward pass (up to [`MAX_CHUNKS_PER_DOCUMENT`]), and a
@@ -57,10 +57,9 @@ mod accelerated;
 mod cpu;
 #[cfg(accelerated)]
 use accelerated as backend;
+pub use classification::Classification;
 #[cfg(not(accelerated))]
 use cpu as backend;
-
-pub use classification::Classification;
 pub use error::{PipelineError, Result};
 pub use prediction::{ChunkInfo, ConfidenceMetrics, Prediction, UnifiedPrediction};
 pub use schedule::Strategy;

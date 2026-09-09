@@ -1,12 +1,13 @@
-//! Scheduling on an accelerator backend (`cfg(accelerated)`: cuda, rocm, metal, vulkan, webgpu, wgpu).
+//! Scheduling on an accelerator backend (`cfg(accelerated)`: cuda, rocm, metal, vulkan, webgpu,
+//! wgpu).
 //!
 //! A GPU pass costs a near-constant launch and sync overhead (6-8 ms on Apple silicon, whether the
-//! document has 1 chunk or 16) plus very little per chunk, and passes serialise on the device queue.
-//! So many documents per pass amortise the overhead, concurrency across passes only contends (25-40%
-//! slower at 32-64 per pass on 512 documents), and length-sorted grouping (see `schedule`) keeps the
-//! padding batching adds small. The `strategy` sweep in `just bench-inference-gpu` over the real
-//! corpus put the knee at 64 per pass: 1 / 16 / 32 / 64 / 128 gave 172 / 2465 / 4294 / 4882 / 4639
-//! docs/s on Metal, with the same shape on wgpu and webgpu.
+//! document has 1 chunk or 16) plus very little per chunk, and passes serialise on the device
+//! queue. So many documents per pass amortise the overhead, concurrency across passes only contends
+//! (25-40% slower at 32-64 per pass on 512 documents), and length-sorted grouping (see `schedule`)
+//! keeps the padding batching adds small. The `strategy` sweep in `just bench-inference-gpu` over
+//! the real corpus put the knee at 64 per pass: 1 / 16 / 32 / 64 / 128 gave 172 / 2465 / 4294 /
+//! 4882 / 4639 docs/s on Metal, with the same shape on wgpu and webgpu.
 //!
 //! The launch cost also means a small call is faster on the CPU, so calls below [`CPU_UP_TO`] run
 //! on the CPU copy of the model under the CPU policy. Where the crossover sits depends on which CPU

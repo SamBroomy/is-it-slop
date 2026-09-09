@@ -7,15 +7,15 @@
 //! (`STEP_BENCH_WARMUP`/`STEP_BENCH_ITERS` override, `STEP_BENCH_ONLY` picks one):
 //!
 //! - `fwd`: train-mode forward + loss, synced per iteration via `loss.into_scalar()`. Broken in
-//!   Burn 0.21: a forward-only loop under `Autodiff` leaks until macOS SIGKILLs the process
-//!   (~130 iterations), so run this one alone and short if at all.
-//! - `fwd_inner`: inference-mode forward on the inner backend (no autodiff, dropout off) —
-//!   compare against a torch `eval()` + `no_grad()` forward.
+//!   Burn 0.21: a forward-only loop under `Autodiff` leaks until macOS SIGKILLs the process (~130
+//!   iterations), so run this one alone and short if at all.
+//! - `fwd_inner`: inference-mode forward on the inner backend (no autodiff, dropout off) — compare
+//!   against a torch `eval()` + `no_grad()` forward.
 //! - `fwd_bwd`: forward + backward, no optimizer step.
 //! - `step`: forward + backward + optimizer step, same scalar-loss sync — the Python train loop's
 //!   shape exactly (`loss.item()` every step).
-//! - `step+pull`: `step` plus pulling logits and targets to host each iteration — an upper bound
-//!   on the `ItemLazy` sync the Learner's metric pipeline performs per step.
+//! - `step+pull`: `step` plus pulling logits and targets to host each iteration — an upper bound on
+//!   the `ItemLazy` sync the Learner's metric pipeline performs per step.
 //! - `step+h2d`: `step` but rebuilding the ids tensor from host data each iteration — adds the
 //!   host-to-device transfer the dataloader path pays (not the CPU-side batch assembly, which
 //!   workers overlap).
@@ -29,15 +29,20 @@
 #[path = "../src/backend.rs"]
 mod backend;
 
-use std::hint::black_box;
-use std::time::Instant;
+use std::{hint::black_box, time::Instant};
 
-use burn::module::AutodiffModule;
-use burn::optim::{GradientsParams, Optimizer};
-use burn::tensor::backend::{AutodiffBackend, Backend};
-use burn::tensor::{Int, Tensor, TensorData};
-use is_it_slop_training::model::HierarchicalModelConfig;
-use is_it_slop_training::training::{Batch, RankGatedAdamW, TrainableClassifier, TrainingConfig};
+use burn::{
+    module::AutodiffModule,
+    optim::{GradientsParams, Optimizer},
+    tensor::{
+        Int, Tensor, TensorData,
+        backend::{AutodiffBackend, Backend},
+    },
+};
+use is_it_slop_training::{
+    model::HierarchicalModelConfig,
+    training::{Batch, RankGatedAdamW, TrainableClassifier, TrainingConfig},
+};
 
 fn env_count(name: &str, default: usize) -> usize {
     std::env::var(name).map_or(default, |v| {

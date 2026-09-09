@@ -36,8 +36,7 @@ impl Sink for Label {
 #[cfg(test)]
 mod tests {
     use super::{super::tests::*, *};
-    use crate::cli::input::Source;
-    use crate::cli::output::Detail;
+    use crate::cli::{input::Source, output::Detail};
 
     #[test]
     fn one_label_per_line_with_id_only_when_labelled() {

@@ -9,15 +9,15 @@
 //! - **Vocabulary** (`token_vocabulary.safetensors`): raw token id → compact embedding row
 //! - **Encoder config** (`encoder_config.json`): chunking and vocabulary parameters
 //! - **Model config** (`model_config.json`): network shape
-//! - **Decision contract**: [`CLASSIFICATION_THRESHOLD`] and [`CALIBRATION_TEMPERATURE`],
-//!   baked into `threshold.rs` by the build script
+//! - **Decision contract**: [`CLASSIFICATION_THRESHOLD`] and [`CALIBRATION_TEMPERATURE`], baked
+//!   into `threshold.rs` by the build script
 //!
 //! All artifacts are downloaded from GitHub releases during build if not present locally.
 //!
 //! # Global Statics
 //!
-//! - [`MODEL`]: the classifier on the primary [`Backend`] (immutable after initialization), and
-//!   in accelerated builds `CPU_MODEL`, the same weights on the [`CpuBackend`]
+//! - [`MODEL`]: the classifier on the primary [`Backend`] (immutable after initialization), and in
+//!   accelerated builds `CPU_MODEL`, the same weights on the [`CpuBackend`]
 //! - [`ENCODER`]: the document encoder reconstructing the bundle's exact text→grid encoding
 
 use std::sync::LazyLock;

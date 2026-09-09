@@ -9,14 +9,17 @@
 
 use std::sync::Arc;
 
-use burn::config::Config;
-use burn::lr_scheduler::LrScheduler;
-use burn::module::{AutodiffModule, Module};
-use burn::optim::adaptor::OptimizerAdaptor;
-use burn::optim::{AdamW, AdamWConfig, AdamWState, SimpleOptimizer};
-use burn::tensor::backend::{AutodiffBackend, Backend};
-use burn::tensor::{Int, Tensor};
-use burn::train::{ClassificationOutput, InferenceStep, LearningResult, TrainOutput, TrainStep};
+use burn::{
+    config::Config,
+    lr_scheduler::LrScheduler,
+    module::{AutodiffModule, Module},
+    optim::{AdamW, AdamWConfig, AdamWState, SimpleOptimizer, adaptor::OptimizerAdaptor},
+    tensor::{
+        Int, Tensor,
+        backend::{AutodiffBackend, Backend},
+    },
+    train::{ClassificationOutput, InferenceStep, LearningResult, TrainOutput, TrainStep},
+};
 
 use crate::model::{HierarchicalSlopClassifier, ModelOutput};
 
@@ -29,8 +32,8 @@ pub struct TrainingConfig {
     /// Peak learning rate, reached after one epoch of linear warmup.
     #[config(default = 1e-3)]
     pub lr: f64,
-    /// `AdamW` decay, applied to matrices only — decaying biases and `LayerNorm` parameters is a known
-    /// way to make `AdamW` look spuriously bad.
+    /// `AdamW` decay, applied to matrices only — decaying biases and `LayerNorm` parameters is a
+    /// known way to make `AdamW` look spuriously bad.
     #[config(default = 0.01)]
     pub weight_decay: f32,
     /// Epoch budget; the cosine horizon. The 45-epoch arm confirmed 30 is not undertrained.
@@ -296,7 +299,7 @@ pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Ve
 ///
 /// Burn's fallback `CliMetricsRenderer` (chosen whenever stdout is not a terminal) debug-prints
 /// the full progress struct **every iteration**; this prints one compact line per
-/// [`Self::INTERVAL`] instead. Per-epoch metrics still land in the artifact dir's metric logs
+/// `INTERVAL` instead. Per-epoch metrics still land in the artifact dir's metric logs
 /// and the end-of-run summary.
 pub struct ThrottledRenderer {
     last_print: Option<std::time::Instant>,
@@ -307,7 +310,7 @@ impl ThrottledRenderer {
     /// Seconds between progress lines.
     const INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
-    /// Create a renderer that prints its first line immediately, then every [`Self::INTERVAL`].
+    /// Create a renderer that prints its first line immediately, then every `INTERVAL`.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -445,12 +448,12 @@ pub fn train<B: AutodiffBackend>(
     device: &B::Device,
     renderer: Option<impl burn::train::renderer::MetricsRenderer + 'static>,
 ) -> LearningResult<TrainableClassifier<B::InnerBackend>> {
-    use burn::train::metric::store::{Aggregate, Direction, Split};
-    use burn::train::metric::{
-        AccuracyMetric, AurocMetric, IterationSpeedMetric, LearningRateMetric, LossMetric,
-    };
     use burn::train::{
         Learner, MetricEarlyStoppingStrategy, StoppingCondition, SupervisedTraining,
+        metric::{
+            AccuracyMetric, AurocMetric, IterationSpeedMetric, LearningRateMetric, LossMetric,
+            store::{Aggregate, Direction, Split},
+        },
     };
 
     B::seed(device, config.seed);
@@ -499,9 +502,9 @@ pub fn train<B: AutodiffBackend>(
 
 #[cfg(test)]
 mod tests {
+    use burn::backend::{Flex, flex::FlexDevice};
+
     use super::*;
-    use burn::backend::Flex;
-    use burn::backend::flex::FlexDevice;
 
     type B = Flex;
 
@@ -582,13 +585,16 @@ mod tests {
 
     #[test]
     fn learner_pipeline_learns_a_toy_rule() {
-        use burn::backend::Autodiff;
-        use burn::data::dataloader::DataLoaderBuilder;
-        use burn::data::dataset::InMemDataset;
-        use burn::train::renderer::CliMetricsRenderer;
+        use burn::{
+            backend::Autodiff,
+            data::{dataloader::DataLoaderBuilder, dataset::InMemDataset},
+            train::renderer::CliMetricsRenderer,
+        };
 
-        use crate::data::{EncodedDocument, SlopBatcher};
-        use crate::evaluation::roc_auc;
+        use crate::{
+            data::{EncodedDocument, SlopBatcher},
+            evaluation::roc_auc,
+        };
 
         type AB = Autodiff<Flex>;
         let device = FlexDevice;

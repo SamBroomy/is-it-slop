@@ -1,8 +1,8 @@
 //! Inference throughput on the compiled backend; group names carry the backend so logs compare.
 //!
 //! - `window`: documents per second when `predict_each` (the backend's default `Strategy`) is
-//!   handed the corpus in windows of N documents, the way the CLI streams. Windows above the
-//!   corpus size are skipped, so the 256 and 512 points need a larger corpus.
+//!   handed the corpus in windows of N documents, the way the CLI streams. Windows above the corpus
+//!   size are skipped, so the 256 and 512 points need a larger corpus.
 //! - `strategy`: documents per second over the whole corpus for each `Strategy`, sweeping documents
 //!   per forward pass against concurrent passes. This is where a backend's default comes from.
 //! - `input_size`: wall time of one `predict_each` call over the first N documents (the latency a
@@ -16,13 +16,10 @@
 //! Under `cargo test` (no `--bench` flag) the corpus shrinks so every group runs once as a smoke
 //! test.
 
-use std::hint::black_box;
-use std::time::Duration;
+use std::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use is_it_slop::Predictor;
-use is_it_slop::model::BACKEND;
-use is_it_slop::pipeline::Strategy;
+use is_it_slop::{Predictor, model::BACKEND, pipeline::Strategy};
 
 const WINDOWS: [usize; 9] = [1, 4, 8, 16, 32, 64, 128, 256, 512];
 const DOCS_PER_FORWARD: [usize; 8] = [1, 4, 16, 32, 64, 128, 256, 512];

@@ -8,8 +8,7 @@
 //! scaling this recipe overflows to NaN from epoch 1 (measured on a full-data Metal run). Burn's
 //! `flex32` relaxed element is the untried middle ground if training throughput ever matters.
 
-use burn::backend::Autodiff;
-use burn::tensor::Device;
+use burn::{backend::Autodiff, tensor::Device};
 
 #[cfg(feature = "metal")]
 mod selected {

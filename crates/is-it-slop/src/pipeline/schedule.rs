@@ -5,8 +5,7 @@
 
 use rayon::prelude::*;
 
-use super::forward::Forward;
-use super::{MAX_CHUNKS_PER_DOCUMENT, UnifiedPrediction};
+use super::{MAX_CHUNKS_PER_DOCUMENT, UnifiedPrediction, forward::Forward};
 use crate::model::ENCODER;
 
 /// How many documents share a forward pass, and whether passes run concurrently.
