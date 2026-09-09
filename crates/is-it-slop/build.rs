@@ -226,7 +226,19 @@ fn read_float_artifact(path: &Path, name: &str, default: f32) -> f32 {
     )
 }
 
+/// The backend features that run on an accelerator rather than the CPU; `cfg(accelerated)` is set
+/// when any is enabled so the scheduling policy has one switch (see `pipeline::Strategy`).
+const ACCELERATED_FEATURES: [&str; 6] = ["CUDA", "ROCM", "METAL", "VULKAN", "WEBGPU", "WGPU"];
+
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(accelerated)");
+    if ACCELERATED_FEATURES
+        .iter()
+        .any(|feature| env::var_os(format!("CARGO_FEATURE_{feature}")).is_some())
+    {
+        println!("cargo:rustc-cfg=accelerated");
+    }
+
     // Allow override for testing new model versions
     let model_version = env::var("MODEL_VERSION").unwrap_or_else(|_| MODEL_VERSION.to_string());
 

@@ -8,9 +8,10 @@
 //! 1. **Encoding**: clean (universal rules), tokenize with tiktoken `o200k_base`, map tokens
 //!    through the bundle vocabulary, and tile into 192-token chunks — the exact encoding the
 //!    model was trained with, reconstructed from the shipped bundle
-//! 2. **Forward pass**: one Burn forward over `[1, chunks, 192]` per document, documents in a
-//!    batch running concurrently; the network's document head aggregates the chunks (learned
-//!    end to end — nothing outside the model recombines chunk scores)
+//! 2. **Forward pass**: Burn forwards over `[docs, chunks, 192]`, spread over passes and threads
+//!    by the compiled backend's [`Strategy`] (one document per pass, concurrent, on the CPU;
+//!    many per pass, sequential, on a GPU); the network's document head aggregates the chunks
+//!    (learned end to end — nothing outside the model recombines chunk scores)
 //! 3. **Calibration**: document probability = `sigmoid(doc_logit / T)`; the shipped
 //!    classification threshold was fitted on these calibrated probabilities
 //!
@@ -23,6 +24,7 @@
 //! - [`predict`]: single text prediction
 //! - [`predict_batch`]: batch prediction for multiple texts, all or nothing
 //! - [`predict_each`]: batch prediction with a result per text
+//! - [`predict_each_with`]: the same under an explicit scheduling [`Strategy`]
 //! - [`chunk_texts`]: the text behind each chunk prediction
 //!
 //! # Example
@@ -43,63 +45,32 @@
 //! ```
 
 mod classification;
+mod forward;
 mod prediction;
+mod schedule;
 
-use burn::tensor::activation::sigmoid;
-use burn::tensor::{Int, Tensor};
+// `accelerated` is set by build.rs when any GPU backend feature is on.
+#[cfg(accelerated)]
+mod accelerated;
+#[cfg(accelerated)]
+use accelerated as backend;
+#[cfg(not(accelerated))]
+mod cpu;
+#[cfg(not(accelerated))]
+use cpu as backend;
+
 pub use classification::Classification;
 pub use error::{PipelineError, Result};
 pub use prediction::{ChunkInfo, ConfidenceMetrics, Prediction, UnifiedPrediction};
-use rayon::prelude::*;
+pub use schedule::Strategy;
 
-use crate::model::{Backend, CALIBRATION_TEMPERATURE, ENCODER, MODEL, device};
+use crate::model::ENCODER;
 
 /// Cap on chunks per document (~49k tokens at the shipped encoding).
 ///
 /// The chunk axis is dynamic but memory grows with document length, so extremely long inputs
 /// are judged on their first ~49k tokens.
 pub const MAX_CHUNKS_PER_DOCUMENT: usize = 256;
-
-/// Run the model over one already-validated text.
-///
-/// One document per forward: on the CPU backend a forward's cost is linear in chunk slots and
-/// gains nothing from a batch dimension, so batching documents together would only add padding.
-/// Concurrency across documents lives in [`predict_each`].
-fn infer(text: &str) -> UnifiedPrediction {
-    let chunk_size = ENCODER.chunk_size();
-    let mut ids = ENCODER.encode_batch_chunks(&[text]).remove(0);
-    ids.truncate(MAX_CHUNKS_PER_DOCUMENT * chunk_size);
-    let chunks = ids.len() / chunk_size;
-    let ids: Vec<i64> = ids.into_iter().map(i64::from).collect();
-
-    let ids = Tensor::<Backend, 1, Int>::from_ints(ids.as_slice(), &device())
-        .reshape([1, chunks, chunk_size]);
-
-    let output = MODEL.forward(ids);
-
-    let doc_prob = sigmoid(output.doc_logits / f64::from(CALIBRATION_TEMPERATURE))
-        .into_data()
-        .to_vec::<f32>()
-        .expect("document probability")[0];
-    let chunk_probs: Vec<f32> = sigmoid(output.chunk_logits)
-        .into_data()
-        .to_vec()
-        .expect("chunk probabilities");
-    // Read the mask through int: GPU backends store bools as bytes, which `to_vec::<bool>` rejects.
-    let chunk_mask: Vec<bool> = output
-        .chunk_mask
-        .int()
-        .into_data()
-        .iter::<i64>()
-        .map(|real| real != 0)
-        .collect();
-    let real_chunk_probs: Vec<f32> = chunk_probs
-        .iter()
-        .zip(&chunk_mask)
-        .filter_map(|(&prob, &real)| real.then_some(prob))
-        .collect();
-    UnifiedPrediction::new(doc_prob, &real_chunk_probs)
-}
 
 /// Predict classification for a single text.
 ///
@@ -121,10 +92,10 @@ pub fn predict(input: &str) -> Result<UnifiedPrediction> {
     if input.trim().is_empty() {
         return Err(PipelineError::EmptyInput);
     }
-    Ok(infer(input))
+    Ok(schedule::run(&[input], Strategy::SEQUENTIAL).remove(0))
 }
 
-/// Predict each text, scoring the texts concurrently on rayon's global pool.
+/// Predict each text under the compiled backend's [`Strategy`].
 ///
 /// Results come back in input order. A blank text fails on its own with
 /// [`PipelineError::EmptyInput`] rather than failing the batch, so callers processing a stream
@@ -142,19 +113,37 @@ pub fn predict(input: &str) -> Result<UnifiedPrediction> {
 /// ```
 #[must_use]
 pub fn predict_each(inputs: &[&str]) -> Vec<Result<UnifiedPrediction>> {
+    predict_each_with(inputs, Strategy::default())
+}
+
+/// [`predict_each`] with an explicit [`Strategy`], for tuning to particular hardware.
+///
+/// Every strategy yields the same predictions; only the time taken differs.
+#[must_use]
+pub fn predict_each_with(inputs: &[&str], strategy: Strategy) -> Vec<Result<UnifiedPrediction>> {
+    let is_blank = |text: &&str| text.trim().is_empty();
+    let valid: Vec<&str> = inputs.iter().copied().filter(|t| !is_blank(t)).collect();
+    let mut predictions = if valid.is_empty() {
+        Vec::new()
+    } else {
+        schedule::run(&valid, strategy)
+    }
+    .into_iter();
     inputs
-        .par_iter()
+        .iter()
         .map(|text| {
-            if text.trim().is_empty() {
+            if is_blank(text) {
                 Err(PipelineError::EmptyInput)
             } else {
-                Ok(infer(text))
+                Ok(predictions
+                    .next()
+                    .expect("one prediction per non-blank input"))
             }
         })
         .collect()
 }
 
-/// Predict classifications for multiple texts, concurrently, all or nothing.
+/// Predict classifications for multiple texts, all or nothing.
 ///
 /// Fails with [`PipelineError::EmptyInput`] if the slice is empty or any text is blank; use
 /// [`predict_each`] for per-text results.
@@ -280,6 +269,61 @@ mod tests {
                 alone.chunk_predictions.len(),
                 from_batch.chunk_predictions.len()
             );
+        }
+    }
+
+    #[test]
+    fn every_strategy_gives_the_single_document_answer() {
+        // Grouped passes pad documents to the longest in their group and may reorder them by
+        // length; the results must still be the single-document ones, in input order.
+        let long =
+            "Grouping puts this long document next to short ones in a padded pass. ".repeat(60);
+        let texts = [
+            "Short one.",
+            long.as_str(),
+            "   ",
+            "Another short document of a different length entirely.",
+            "Mid-length text that spans a little more than the shortest ones do here.",
+        ];
+        let alone: Vec<_> = texts.iter().map(|t| predict(t).ok()).collect();
+        for strategy in [
+            Strategy::SEQUENTIAL,
+            Strategy::new(1, true),
+            Strategy::new(2, false),
+            Strategy::new(3, true),
+            Strategy::new(usize::MAX, false),
+        ] {
+            let grouped = predict_each_with(&texts, strategy);
+            for (i, (want, got)) in alone.iter().zip(&grouped).enumerate() {
+                match (want, got) {
+                    (None, Err(PipelineError::EmptyInput)) => {}
+                    (Some(want), Ok(got)) => {
+                        assert!(
+                            (want.prediction.ai_probability() - got.prediction.ai_probability())
+                                .abs()
+                                < 1e-5,
+                            "{strategy:?} text {i}"
+                        );
+                        assert_eq!(
+                            want.chunk_predictions.len(),
+                            got.chunk_predictions.len(),
+                            "{strategy:?} text {i}"
+                        );
+                        for (k, (w, g)) in want
+                            .chunk_predictions
+                            .iter()
+                            .zip(&got.chunk_predictions)
+                            .enumerate()
+                        {
+                            assert!(
+                                (w.ai_probability() - g.ai_probability()).abs() < 1e-5,
+                                "{strategy:?} text {i} chunk {k}"
+                            );
+                        }
+                    }
+                    other => panic!("{strategy:?} text {i}: {other:?}"),
+                }
+            }
         }
     }
 

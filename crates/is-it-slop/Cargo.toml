@@ -69,10 +69,20 @@ cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors", "dep:supports-color"
 serde = ["dep:serde"]
 # Enable self-update for standalone binaries (not package manager installs).
 self-update = []
-# GPU backends (default is Flex, the pure-Rust CPU backend). `metal` implies `wgpu` in burn and
-# takes precedence; see `model::Backend`. Not exercised in CI.
+# Inference backends. Default is Flex, burn's pure-Rust CPU backend; `cpu` (burn-cpu, the CubeCL CPU
+# runtime) and `ndarray` are the other CPU choices; the rest are accelerators and switch the
+# scheduling policy (see `pipeline::Strategy`). Only Flex is exercised in CI; `metal` and `wgpu`
+# have been run locally, the others only compile-checked. Precedence when several are enabled:
+# cuda, rocm, metal, vulkan, webgpu, wgpu, cpu, ndarray, flex. `metal` implies `wgpu` in burn and
+# `vulkan`/`webgpu` do too; see `model::Backend`.
 wgpu = ["burn/wgpu"]
 metal = ["burn/metal"]
+vulkan = ["burn/vulkan"]
+webgpu = ["burn/webgpu"]
+cuda = ["burn/cuda"]
+rocm = ["burn/rocm"]
+cpu = ["burn/cpu"]
+ndarray = ["burn/ndarray"]
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
 
