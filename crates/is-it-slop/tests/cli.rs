@@ -6,6 +6,8 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
+use is_it_slop::cli::BATCH_SIZE;
+
 fn run(args: &[&str], stdin: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_is-it-slop"))
         .args(args)
@@ -233,10 +235,12 @@ fn verbose_and_quiet_only_apply_to_pretty() {
 
 #[test]
 fn results_keep_input_order_across_batches_with_errors_in_place() {
-    // 70 records span three batches of 32; record 35 is blank and must fail in place.
+    // The records span three passes; the blank one sits inside the second and must fail in place.
+    let total = 2 * BATCH_SIZE + 6;
+    let blank = BATCH_SIZE + 3;
     let mut stdin = String::new();
-    for i in 1..=70 {
-        let text = if i == 35 {
+    for i in 1..=total {
+        let text = if i == blank {
             String::new()
         } else {
             format!("Record number {i} has some ordinary text in it.")
@@ -253,10 +257,10 @@ fn results_keep_input_order_across_batches_with_errors_in_place() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(rows.len(), 70);
+    assert_eq!(rows.len(), total);
     for (i, row) in rows.iter().enumerate() {
         assert_eq!(row["id"], i as u64 + 1, "row {i} out of order: {row}");
-        let expected = if i + 1 == 35 { "error" } else { "ok" };
+        let expected = if i + 1 == blank { "error" } else { "ok" };
         assert_eq!(row["status"], expected, "row {i}: {row}");
     }
 }
@@ -279,8 +283,8 @@ fn a_full_batch_is_written_before_stdin_closes() {
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
 
-    // Exactly one batch, and the pipe stays open so a collect-everything loop would never print.
-    for i in 1..=32 {
+    // Exactly one pass, and the pipe stays open so a collect-everything loop would never print.
+    for i in 1..=BATCH_SIZE {
         writeln!(stdin, "Line {i} of text that is still waiting for more.").unwrap();
     }
     stdin.flush().unwrap();

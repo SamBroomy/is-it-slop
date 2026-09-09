@@ -83,6 +83,10 @@ cuda = ["burn/cuda"]
 rocm = ["burn/rocm"]
 cpu = ["burn/cpu"]
 ndarray = ["burn/ndarray"]
+# CPU variants. `accelerate` links the macOS Accelerate framework unconditionally, so it fails to
+# link on any other OS; `apple-amx` is a no-op off aarch64. Both were run locally on Apple silicon.
+accelerate = ["ndarray", "burn/accelerate"]
+apple-amx = ["burn/apple-amx"]
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
 

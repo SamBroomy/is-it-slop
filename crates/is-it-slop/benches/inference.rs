@@ -5,6 +5,8 @@
 //!   corpus size are skipped, so the 256 and 512 points need a larger corpus.
 //! - `strategy`: documents per second over the whole corpus for each `Strategy`, sweeping documents
 //!   per forward pass against concurrent passes. This is where a backend's default comes from.
+//! - `input_size`: wall time of one `predict_each` call over the first N documents (the latency a
+//!   caller with N documents sees, and where CPU and GPU builds cross over).
 //! - `document_length`: one forward's cost against the document's chunk count.
 //!
 //! The corpus is a fixed random sample of the released test split (`corpus.jsonl`, 128 documents,
@@ -23,7 +25,9 @@ use is_it_slop::model::BACKEND;
 use is_it_slop::pipeline::Strategy;
 
 const WINDOWS: [usize; 9] = [1, 4, 8, 16, 32, 64, 128, 256, 512];
-const DOCS_PER_FORWARD: [usize; 6] = [1, 4, 16, 32, 64, 128];
+const DOCS_PER_FORWARD: [usize; 8] = [1, 4, 16, 32, 64, 128, 256, 512];
+/// Call sizes for the `input_size` group.
+const INPUT_SIZES: [usize; 10] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 
 /// Chunk counts the `document_length` group looks for; each is served by the corpus document
 /// whose real chunk count is nearest.
@@ -97,6 +101,24 @@ fn window(c: &mut Criterion) {
     group.finish();
 }
 
+/// Wall time of one `predict_each` call over the first N documents under the backend's default
+/// `Strategy`: the latency curve a caller with N documents in hand sees, and where a CPU and a GPU
+/// build cross over.
+fn input_size(c: &mut Criterion) {
+    let corpus = corpus(full_run());
+    let predictor = warmed(&corpus);
+
+    let mut group = c.benchmark_group(format!("{BACKEND}/input_size"));
+    group.sample_size(10).warm_up_time(Duration::from_secs(1));
+    for &n in INPUT_SIZES.iter().filter(|&&n| n <= corpus.len()) {
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            b.iter(|| black_box(predictor.predict_each(&corpus[..n])));
+        });
+    }
+    group.finish();
+}
+
 fn strategy(c: &mut Criterion) {
     let corpus = corpus(full_run());
     let predictor = warmed(&corpus);
@@ -158,5 +180,5 @@ fn document_length(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, window, strategy, document_length);
+criterion_group!(benches, window, input_size, strategy, document_length);
 criterion_main!(benches);
