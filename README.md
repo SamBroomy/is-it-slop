@@ -25,7 +25,7 @@
 
 ## Features
 
-- **Fast**: Rust-based multi-threaded preprocessing and batched ONNX Runtime inference
+- **Fast**: Rust-based multi-threaded preprocessing and inference, one document per forward pass and documents scored concurrently
 - **Small**: ~11.4 MB of model artifacts, no GPU or transformers needed
 - **Portable**: Single ~60 MB binary with embedded model and no Python runtime required
 - **Accurate**: 95.6% accuracy on holdout test set (F1 0.958, MCC 0.912)
