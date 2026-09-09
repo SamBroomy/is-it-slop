@@ -194,8 +194,10 @@ let result = predictor.predict("Your text here")?;
 println!("AI probability: {:.2}%", result.prediction.ai_probability() * 100.0);
 ```
 
-Inference runs on Burn's pure-Rust CPU backend by default. The `metal` (Apple GPUs) and `wgpu`
-(any GPU wgpu drives) cargo features move it to the GPU; the CLI takes the same features.
+Inference runs on Burn's pure-Rust CPU backend by default. The `metal` (Apple GPUs), `wgpu` (any
+GPU wgpu drives), `vulkan`, `cuda` and `rocm` cargo features add a GPU; a GPU build still keeps the
+CPU model and uses it for small calls, where a GPU pass's launch cost dominates. `ndarray`, and
+`accelerate` on macOS, are alternative CPU backends. The CLI takes the same features.
 
 ### Android
 

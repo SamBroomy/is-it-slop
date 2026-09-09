@@ -69,12 +69,13 @@ cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors", "dep:supports-color"
 serde = ["dep:serde"]
 # Enable self-update for standalone binaries (not package manager installs).
 self-update = []
-# Inference backends. Default is Flex, burn's pure-Rust CPU backend; `cpu` (burn-cpu, the CubeCL CPU
-# runtime) and `ndarray` are the other CPU choices; the rest are accelerators and switch the
-# scheduling policy (see `pipeline::Strategy`). Only Flex is exercised in CI; `metal` and `wgpu`
-# have been run locally, the others only compile-checked. Precedence when several are enabled:
-# cuda, rocm, metal, vulkan, webgpu, wgpu, cpu, ndarray, flex. `metal` implies `wgpu` in burn and
-# `vulkan`/`webgpu` do too; see `model::Backend`.
+# Inference backends. The primary backend is chosen by precedence: cuda, rocm, metal, vulkan, webgpu,
+# wgpu (accelerators, which set `cfg(accelerated)` and batch documents per pass), then the CPU
+# backend: cpu (burn-cpu), ndarray (which `accelerate` implies), else Flex, burn's pure-Rust CPU
+# backend. An accelerated build also keeps the CPU backend's model and routes small calls to it. Only
+# Flex runs in CI; flex, ndarray, accelerate, apple-amx, wgpu, metal and webgpu have been run locally;
+# cuda and rocm only compile-checked; vulkan needs the Vulkan SDK on macOS; cpu (burn-cpu) currently
+# aborts on its first forward. `metal`, `vulkan` and `webgpu` imply `wgpu` in burn; see `model::Backend`.
 wgpu = ["burn/wgpu"]
 metal = ["burn/metal"]
 vulkan = ["burn/vulkan"]

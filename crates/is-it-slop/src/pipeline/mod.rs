@@ -49,13 +49,13 @@ mod forward;
 mod prediction;
 mod schedule;
 
-// `accelerated` is set by build.rs when any GPU backend feature is on.
+// `accelerated` is set by build.rs when any GPU backend feature is on. The CPU policy module is
+// always present: an accelerated build routes small calls through it.
 #[cfg(accelerated)]
 mod accelerated;
+mod cpu;
 #[cfg(accelerated)]
 use accelerated as backend;
-#[cfg(not(accelerated))]
-mod cpu;
 #[cfg(not(accelerated))]
 use cpu as backend;
 
@@ -92,14 +92,16 @@ pub fn predict(input: &str) -> Result<UnifiedPrediction> {
     if input.trim().is_empty() {
         return Err(PipelineError::EmptyInput);
     }
-    Ok(schedule::run(&[input], Strategy::SEQUENTIAL).remove(0))
+    Ok(backend::infer_each(&[input]).remove(0))
 }
 
-/// Predict each text under the compiled backend's [`Strategy`].
+/// Predict each text under the compiled backend's policy.
 ///
 /// Results come back in input order. A blank text fails on its own with
 /// [`PipelineError::EmptyInput`] rather than failing the batch, so callers processing a stream
-/// can report it in place. An empty slice yields an empty vector.
+/// can report it in place. An empty slice yields an empty vector. On a CPU build every call runs
+/// one document per forward pass, passes concurrent; an accelerated build does the same on the CPU
+/// for small calls and batches large ones onto the GPU (see [`Strategy`]).
 ///
 /// # Example
 ///
@@ -113,20 +115,30 @@ pub fn predict(input: &str) -> Result<UnifiedPrediction> {
 /// ```
 #[must_use]
 pub fn predict_each(inputs: &[&str]) -> Vec<Result<UnifiedPrediction>> {
-    predict_each_with(inputs, Strategy::default())
+    each_valid(inputs, backend::infer_each)
 }
 
-/// [`predict_each`] with an explicit [`Strategy`], for tuning to particular hardware.
+/// [`predict_each`] with an explicit [`Strategy`] on the primary backend, for tuning to
+/// particular hardware; an accelerated build's CPU routing does not apply here.
 ///
 /// Every strategy yields the same predictions; only the time taken differs.
 #[must_use]
 pub fn predict_each_with(inputs: &[&str], strategy: Strategy) -> Vec<Result<UnifiedPrediction>> {
+    each_valid(inputs, |valid| schedule::run(valid, strategy, forward::run))
+}
+
+/// Score the non-blank inputs with `infer` and put the results, and the blanks' errors, back in
+/// input order.
+fn each_valid(
+    inputs: &[&str],
+    infer: impl FnOnce(&[&str]) -> Vec<UnifiedPrediction>,
+) -> Vec<Result<UnifiedPrediction>> {
     let is_blank = |text: &&str| text.trim().is_empty();
     let valid: Vec<&str> = inputs.iter().copied().filter(|t| !is_blank(t)).collect();
     let mut predictions = if valid.is_empty() {
         Vec::new()
     } else {
-        schedule::run(&valid, strategy)
+        infer(&valid)
     }
     .into_iter();
     inputs
