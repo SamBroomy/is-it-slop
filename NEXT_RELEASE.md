@@ -107,8 +107,10 @@ These change the artifact, so deciding them after release means a breaking chang
 - [ ] **Is `encoder_config.json` sufficient for Rust to reconstruct encoding exactly?** It currently
       carries preprocessing version, tokenizer, chunk size, min_fill, overlap, vocab size, oov and
       pad ids. Anything missing is a silent skew source.
-- [ ] **Does the Rust loader refuse a bundle whose `preprocessing_version` it does not match?**
-      Failing loudly beats loading fine and being quietly worse.
+- [x] **Does the Rust loader refuse a bundle whose `preprocessing_version` it does not match?**
+      Done: `DocumentEncoder::from_bundle` refuses a bundle whose version is not semver-compatible
+      with the preprocessing crate (same major; same minor while the major is 0), so a bundle
+      survives patch releases and fails loudly across a breaking one.
 
 ## Phase 4 — aligning the repo
 

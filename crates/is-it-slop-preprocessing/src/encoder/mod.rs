@@ -7,9 +7,9 @@
 
 mod vocabulary;
 
-pub use vocabulary::{O200K_CEILING, Vocabulary};
-
 use std::{borrow::Cow, ops::Range};
+
+pub use vocabulary::{O200K_CEILING, Vocabulary};
 
 use crate::{
     as_strs,
@@ -28,6 +28,15 @@ pub enum EncoderError {
     /// `encoder_config.json` (de)serialization failure.
     #[error(transparent)]
     Config(#[from] serde_json::Error),
+    /// The bundle was produced by a preprocessing crate this one is not semver-compatible with, so
+    /// its encoding cannot be assumed identical.
+    #[error("bundle preprocessing_version {bundle} is not compatible with this crate's {current}")]
+    IncompatibleVersion {
+        /// What the bundle records.
+        bundle: String,
+        /// This crate's version.
+        current: String,
+    },
     /// The bundle was encoded with a tokenizer this crate does not ship.
     #[error("bundle tokenizer {0:?} is not o200k_base")]
     UnsupportedTokenizer(String),
@@ -155,8 +164,18 @@ impl DocumentEncoder {
 
     /// Reconstruct the encoder a bundle shipped: the exact grid shape and vocabulary the model
     /// was trained with, with inference cleaning on for raw user input.
+    ///
+    /// Refuses a bundle whose `preprocessing_version` is not semver-compatible with this crate,
+    /// since a different encoder would load fine and be quietly worse.
     pub fn from_bundle(vocab_bytes: &[u8], config_json: &str) -> Result<Self, EncoderError> {
         let config: EncoderBundleConfig = serde_json::from_str(config_json)?;
+        let current = env!("CARGO_PKG_VERSION");
+        if !compatible_versions(&config.preprocessing_version, current) {
+            return Err(EncoderError::IncompatibleVersion {
+                bundle: config.preprocessing_version,
+                current: current.to_owned(),
+            });
+        }
         if config.tokenizer != "o200k_base" {
             return Err(EncoderError::UnsupportedTokenizer(config.tokenizer));
         }
@@ -327,7 +346,7 @@ impl DocumentEncoder {
     /// campaign measured real headroom in the 2000+-token band that truncation was leaving on
     /// the table). Every fragment carries the document's label, which is exact for whole-document
     /// labels. A trailing fragment shorter than `min_fill * chunk_size` tokens is dropped, the
-    /// window-level analogue of [`Self::grid`]'s trailing-chunk rule. Evaluation must use
+    /// window-level analogue of `grid`'s trailing-chunk rule. Evaluation must use
     /// [`Self::encode_batch`] instead: fragments would count as extra documents in split-level
     /// metrics.
     pub fn encode_batch_split<T: AsRef<str>>(
@@ -437,6 +456,22 @@ impl DocumentEncoder {
         let n_chunks = (n_full + usize::from(keep_tail)).clamp(1, self.max_chunks);
         (0..n_chunks)
             .map(move |k| window.start + k * cs..(window.start + (k + 1) * cs).min(window.end))
+    }
+}
+
+/// Cargo's compatibility rule: the same major, and also the same minor while the major is 0.
+/// Pre-release and build tags are ignored; anything unparseable is incompatible.
+fn compatible_versions(a: &str, b: &str) -> bool {
+    fn major_minor(version: &str) -> Option<(u64, u64)> {
+        let mut parts = version.split(['.', '-', '+']);
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        Some((major, minor))
+    }
+    match (major_minor(a), major_minor(b)) {
+        (Some((0, minor_a)), Some((0, minor_b))) => minor_a == minor_b,
+        (Some((major_a, _)), Some((major_b, _))) => major_a == major_b,
+        _ => false,
     }
 }
 
@@ -661,5 +696,24 @@ mod tests {
         bad.vocab_size = 999;
         let bad_json = serde_json::to_string(&bad).unwrap();
         assert!(DocumentEncoder::from_bundle(&vocab_bytes, &bad_json).is_err());
+
+        // So is a bundle from an incompatible preprocessing crate.
+        let mut old: EncoderBundleConfig = serde_json::from_str(&config_json).unwrap();
+        old.preprocessing_version = "0.1.0".to_owned();
+        let old_json = serde_json::to_string(&old).unwrap();
+        assert!(matches!(
+            DocumentEncoder::from_bundle(&vocab_bytes, &old_json),
+            Err(EncoderError::IncompatibleVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn version_compatibility_follows_cargo() {
+        assert!(compatible_versions("0.7.0-alpha.1", "0.7.2"));
+        assert!(compatible_versions("1.2.0", "1.9.3+build"));
+        assert!(!compatible_versions("0.7.0", "0.8.0"));
+        assert!(!compatible_versions("1.0.0", "2.0.0"));
+        assert!(!compatible_versions("garbage", "0.7.0"));
+        assert!(!compatible_versions("0", "0.7.0"));
     }
 }
