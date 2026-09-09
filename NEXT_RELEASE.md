@@ -92,20 +92,18 @@ Also untested at Magika defaults: `dropout`/`spatial_dropout` (0.1), `hidden` (2
       inference applies universal cleaning. Three different transformations across curation,
       training and inference. Production gets this right by calling the same cleaner from both
       sides. This is live skew, not future skew.
-- [ ] **Nothing is calibrated.** Production wrapped its models in `CalibratedClassifierCV`. A raw
-      sigmoid from an overfitting BCE-trained net is systematically overconfident, and the CLI
-      prints "Model 95.1%" as a confidence figure. Measure a reliability curve; add temperature
-      scaling fitted on validation if it is off. One parameter.
+- [x] **Calibration.** Done: the training run fits a temperature on validation and ships it as
+      `calibration_temperature.txt`; inference computes `sigmoid(logit / T)` and the threshold is
+      fit in that calibrated space (see "Artifact contract" below).
 
 ## Phase 3 — contract decisions to make before 1.0.0
 
 These change the artifact, so deciding them after release means a breaking change.
 
-- [ ] **Does the graph emit chunk-level output?** It currently emits only the document probability —
-      `DocumentOnly` wraps the chunk head away. Exposing "this passage looks generated" as a product
-      feature requires exporting both tensors. Decide now. _Burn path: the model's forward already
-      returns chunk logits and the CLI's `--chunks` view consumes them, so the question is now
-      whether that is part of the contract, not whether it is possible._
+- [ ] **Are chunk-level outputs part of the contract?** The model's forward returns chunk logits,
+      the library exposes them as uncalibrated per-chunk probabilities, and the CLI's `--chunks`
+      view shows them. Undecided: whether that is a stable, documented output (which pins the chunk
+      head and its calibration story) or an inspection aid that may change.
 - [ ] **Is `encoder_config.json` sufficient for Rust to reconstruct encoding exactly?** It currently
       carries preprocessing version, tokenizer, chunk size, min_fill, overlap, vocab size, oov and
       pad ids. Anything missing is a silent skew source.
@@ -271,11 +269,12 @@ Open items, in order:
       patience, LR, chunk-loss weight, dropout are all recompile-only today. Bring the
       `TrainingConfig` knobs up as flags with the frozen recipe as defaults, and make `evaluate`
       accept a specific weights file rather than assuming the artifact-dir layout.
-- [ ] **Regression benchmarks** (late-game want): a small runnable suite that pins today's
-      numbers so upgrades (Burn 0.22, toolchains) can't silently regress — training throughput
-      (`examples/step_bench.rs` already exists; give it a recorded baseline), inference
-      latency/throughput on the Flex backend, and end-model quality via a fixed `--limit` run
-      with a tolerance band.
+- [ ] **Regression benchmarks** (late-game want): pin today's numbers so upgrades (Burn 0.22,
+      toolchains) can't silently regress. Inference outputs are already pinned (the golden parity
+      test) and inference latency/throughput is measured (`just bench-inference`, results under
+      "Inference performance"); what is missing is a recorded baseline for that bench and for
+      training throughput (`examples/step_bench.rs`), plus end-model quality via a fixed
+      `--limit` run with a tolerance band.
 - [ ] **CutMix**: port after the splitting re-baseline lands, as its own arm. The design, settled
       in review: chunk isolation makes spliced grids _clean_ supervision for the chunk head (it
       sees only its own chunk, so per-chunk labels from different source documents are exact);
@@ -436,7 +435,7 @@ model — it is that 1.0.0 implies a stable contract while the three Phase 3 que
 - ~~Proper error types in the library interface.~~ **Done**: thiserror enums with structured variants
   in the model, preprocessing and inference crates; anyhow with context in the training binary.
 - ~~Speed benchmarks on inference.~~ **Done**: see "Inference performance", including the CPU vs GPU
-  scheduling sweep across seven backends; `BATCH_SIZE` is decided (256). Hybrid CPU/GPU routing is the
-  open follow-up.
+  scheduling sweep across seven backends and the hybrid CPU/GPU routing; `BATCH_SIZE` is decided
+  (256).
 - text without markdown formatting is often passed as human but text with markdown formatting is often passed as AI. How much of the model's accuracy is detecting formatting rather than style? A control arm stripping markdown from all text wouldanswer that.
 - I have noticed one of the most pervasive tells of LLM-isms is that they love to make inanimate objects the subject of verbs. For example an llm says 'Your conversation has been moved to the background - enter opens it - esc returns to it - ctrl+c twice quits', where a human would have written 'enter to open, esc to return, ctrl+c twice to quit'. Is this something we could try and explicitly train on? You could call something like this the personification of abstract nouns, but not always strictly abstract. Often very frequent with technical nouns 'holiday has the rest'. Is this something we could do in our training?
