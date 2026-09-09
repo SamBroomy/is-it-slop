@@ -376,22 +376,36 @@ on its own default policy:
 | 256 | 85.2  | 67.3    | 55.9       | 84.0  | 65.3  | 86.5   |
 | 512 | 165.7 | 130.1   | 106.8      | 131.9 | 103.7 | 135.2  |
 
-On this machine the GPU is not the faster device: ndarray + Accelerate beats Metal at every call size,
-and Flex beats Metal below ~256 documents. A single document costs 6 ms on Metal against 2 ms on
-Accelerate. The GPU's only win is over Flex at 512 documents (+25%), and Metal's CLI window sweep kept
-climbing (3949 docs/s at 256, 5004 at 512) because length sorting works better with more documents
-per window.
+On this machine the GPU is not clearly the faster device: ndarray + Accelerate beats Metal up to 256
+documents per call and ties it at 512; Flex beats Metal only below 8 documents, ties at 8, and loses
+from 16 up (Metal is 25% faster at 512). A single document costs 6 ms on Metal against 2-4 ms on the
+CPU backends. Metal's CLI window sweep kept climbing (3949 docs/s at 256, 5004 at 512) because length
+sorting works better with more documents per window.
+
+**Hybrid routing (done).** An accelerated build keeps the compiled CPU backend's model
+(`model::CPU_MODEL`) and `pipeline::accelerated::infer_each` sends calls below `CPU_UP_TO` to it under
+the CPU policy; `predict_each_with` bypasses the routing. The crossover is the measured tie point of the
+compiled CPU backend against Metal: 8 for Flex, 256 for ndarray, 512 for ndarray + Accelerate. With
+routing, a plain `metal` build scores one document at 279 docs/s instead of 164, and calls from 8
+documents up are unchanged. The tie points are from an Apple M-series machine; a discrete GPU would
+cross lower.
+
+**Shipping policy.** The default build (`default = ["cli"]`) is Flex only: no accelerator crate is in
+its dependency graph and every accelerated code path is behind `cfg(accelerated)`, so the shipped
+binaries and the Python/JNI packages carry none of it. Flex stays the CPU default (ndarray's lead here
+is Apple-specific and unmeasured on x86); `wgpu` is the portable accelerator, and `metal`, `vulkan`,
+`cuda` and `rocm` override it when enabled. An accelerated build panics at its first large call if the
+machine has no usable GPU device, so a runtime probe that demotes the build to the CPU path is required
+before any accelerated binary is shipped as a general download.
 
 **Decided.** The CLI's `BATCH_SIZE` is 256 (window sweep on Flex: 2143 / 2664 / 3021 / 3375 / 3464
 docs/s at 32 / 64 / 128 / 256 / 512, so 256 is 97% of the plateau at ~85 ms to first output, and holds
 four of the GPU policy's 64-document passes).
 
-**Next.** (1) Hybrid routing in accelerated builds: keep the compiled CPU backend's model alongside the
-GPU model, send `predict` and small `predict_each` calls to the CPU and large ones to the GPU. The
-launch-overhead argument holds on any GPU, so the routing is robust; only the crossover (~256 documents
-here) is hardware-specific and should be a constant of the accelerated policy. (2) Whether ndarray
-(with Accelerate on macOS) should replace Flex as the CPU default needs an x86 Linux measurement first.
-(3) A GPU build may want a larger CLI window than 256.
+**Next.** (1) Runtime GPU probe with CPU fallback before any accelerated binary ships. (2) An x86
+Linux measurement of Flex vs ndarray, and of a discrete GPU's crossover, before revisiting any default.
+(3) A GPU build may want a larger CLI window than 256. (4) burn 0.22.0-pre.3: check whether the
+pre-release moves any of these numbers.
 
 ## Versioning
 
