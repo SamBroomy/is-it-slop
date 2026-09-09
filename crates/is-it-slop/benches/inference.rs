@@ -1,9 +1,10 @@
 //! Inference throughput against batch size and document length.
 //!
 //! Batching trades forward-pass count against padding: every document in a batch is padded to the
-//! longest one, so the sweet spot depends on how mixed the lengths are. The synthetic corpus mixes
-//! lengths from a few sentences to several windows. Point `IS_IT_SLOP_BENCH_CORPUS` at a file with
-//! one document per line to measure real text instead.
+//! longest one, so the sweet spot depends on how mixed the lengths are. The corpus is a fixed
+//! random sample of the released test split (`corpus.jsonl`, 128 documents, both labels, lengths
+//! from a sentence to about fifteen chunks). Point `IS_IT_SLOP_BENCH_CORPUS` at another JSONL file
+//! with a `text` field per line to measure different text.
 //!
 //! Under `cargo test` (no `--bench` flag) the corpus shrinks so every group runs once as a smoke
 //! test.
@@ -16,80 +17,54 @@ use is_it_slop::Predictor;
 
 const BATCH_SIZES: [usize; 7] = [1, 4, 8, 16, 32, 64, 128];
 
-/// Words per synthetic document, chosen uniformly so lengths are log-uniform from about one chunk
-/// to a couple of windows.
-const WORD_COUNTS: [usize; 8] = [20, 40, 80, 160, 320, 640, 1280, 2560];
+/// Chunk counts the `document_length` group looks for; each is served by the corpus document
+/// whose real chunk count is nearest.
+const TARGET_CHUNKS: [usize; 5] = [1, 2, 4, 8, 16];
 
-#[rustfmt::skip]
-const WORDS: &[&str] = &[
-    "the", "model", "reads", "every", "document", "as", "a", "grid", "of", "chunks", "and", "pools",
-    "them", "into", "one", "score", "while", "short", "texts", "cost", "little", "but", "long",
-    "ones", "set", "the", "padding", "for", "their", "whole", "batch", "so", "throughput", "moves",
-    "with", "how", "mixed", "the", "lengths", "are", "in", "practice", "which", "is", "what", "this",
-    "corpus", "tries", "to", "imitate", "without", "shipping", "any", "real", "data.",
-];
-
-/// Deterministic generator so runs are comparable across machines and commits.
-struct Lcg(u64);
-
-impl Lcg {
-    fn next(&mut self) -> usize {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        (self.0 >> 33) as usize
-    }
-
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
-        &items[self.next() % items.len()]
-    }
+#[derive(serde::Deserialize)]
+struct Record {
+    text: String,
 }
 
-fn synthetic_document(rng: &mut Lcg, words: usize) -> String {
-    let mut text = String::with_capacity(words * 6);
-    for i in 0..words {
-        if i > 0 {
-            text.push(' ');
-        }
-        text.push_str(rng.pick(WORDS));
-    }
-    text
-}
-
-fn synthetic_corpus(docs: usize) -> Vec<String> {
-    let mut rng = Lcg(0x5eed);
-    (0..docs)
-        .map(|_| {
-            let words = *rng.pick(&WORD_COUNTS);
-            synthetic_document(&mut rng, words)
+fn parse_corpus(jsonl: &str, what: &str) -> Vec<String> {
+    let docs: Vec<String> = jsonl
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<Record>(line)
+                .unwrap_or_else(|e| panic!("{what}: bad record {line:.60}: {e}"))
+                .text
         })
-        .collect()
+        .collect();
+    assert!(!docs.is_empty(), "{what} has no records");
+    docs
 }
 
 fn corpus(full: bool) -> Vec<String> {
-    if let Ok(path) = std::env::var("IS_IT_SLOP_BENCH_CORPUS") {
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("reading IS_IT_SLOP_BENCH_CORPUS={path}: {e}"));
-        let docs: Vec<String> = text
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(str::to_owned)
-            .collect();
-        assert!(
-            !docs.is_empty(),
-            "IS_IT_SLOP_BENCH_CORPUS={path} has no non-blank lines"
-        );
-        return docs;
+    let mut docs = std::env::var("IS_IT_SLOP_BENCH_CORPUS").ok().map_or_else(
+        || parse_corpus(include_str!("corpus.jsonl"), "benches/corpus.jsonl"),
+        |path| {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("reading IS_IT_SLOP_BENCH_CORPUS={path}: {e}"));
+            parse_corpus(&text, &format!("IS_IT_SLOP_BENCH_CORPUS={path}"))
+        },
+    );
+    if !full {
+        docs.truncate(8);
     }
-    synthetic_corpus(if full { 128 } else { 8 })
+    docs
+}
+
+fn warmed_predictor() -> Predictor {
+    let predictor = Predictor::new();
+    // Force the lazily loaded model and encoder out of the first sample.
+    predictor.predict("warm up").expect("warm-up prediction");
+    predictor
 }
 
 fn batch_size(c: &mut Criterion) {
     let full = std::env::args().any(|a| a == "--bench");
-    let predictor = Predictor::new();
-    // Force the lazily loaded model and encoder out of the first sample.
-    predictor.predict("warm up").expect("warm-up prediction");
+    let predictor = warmed_predictor();
     let corpus = corpus(full);
 
     let mut group = c.benchmark_group("batch_size");
@@ -110,15 +85,33 @@ fn batch_size(c: &mut Criterion) {
 }
 
 fn document_length(c: &mut Criterion) {
-    let predictor = Predictor::new();
-    predictor.predict("warm up").expect("warm-up prediction");
-    let mut rng = Lcg(0x5eed);
+    let full = std::env::args().any(|a| a == "--bench");
+    let predictor = warmed_predictor();
+    let corpus = corpus(full);
+    let chunk_counts: Vec<usize> = corpus
+        .iter()
+        .map(|text| predictor.chunk_texts(text).len())
+        .collect();
+
+    // The document nearest each target; the id carries its real chunk count.
+    let mut picked: Vec<(usize, &String)> = TARGET_CHUNKS
+        .iter()
+        .map(|&target| {
+            let (i, &chunks) = chunk_counts
+                .iter()
+                .enumerate()
+                .min_by_key(|&(_, &chunks)| chunks.abs_diff(target))
+                .expect("non-empty corpus");
+            (chunks, &corpus[i])
+        })
+        .collect();
+    picked.sort_by_key(|&(chunks, _)| chunks);
+    picked.dedup_by_key(|&mut (chunks, _)| chunks);
 
     let mut group = c.benchmark_group("document_length");
     group.sample_size(10).warm_up_time(Duration::from_secs(1));
-    for &words in &WORD_COUNTS {
-        let text = synthetic_document(&mut rng, words);
-        group.bench_with_input(BenchmarkId::from_parameter(words), &text, |b, text| {
+    for (chunks, text) in picked {
+        group.bench_with_input(BenchmarkId::new("chunks", chunks), text, |b, text| {
             b.iter(|| black_box(predictor.predict(text)));
         });
     }

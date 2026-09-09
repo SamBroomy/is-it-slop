@@ -12,7 +12,7 @@ categories.workspace = true
 rust-version.workspace = true
 # Model artifacts are downloaded at build time if not present
 # See build.rs for download logic
-exclude = ["model_artifacts/**"]
+exclude = ["model_artifacts/**", "benches/**"]
 
 [lib]
 name = "is_it_slop"
@@ -44,6 +44,7 @@ jni = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 
