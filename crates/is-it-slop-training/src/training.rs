@@ -440,14 +440,18 @@ impl MetricsRenderer for ThrottledRenderer {
 /// `None::<burn::train::renderer::CliMetricsRenderer>` to keep it); metric logs and
 /// the summary land under `artifact_dir`.
 ///
-/// Three knowing deviations from the original Python loop, all from leaning on Burn's built-ins:
-/// early stopping acts on the store's mean of per-batch validation AUCs rather than the
-/// full-split AUC; the returned model carries the final epoch's weights rather than the best
-/// epoch's; and the loader trains on the final partial batch each epoch (Python used
-/// `drop_last=True`; the cosine horizon below counts steps the Burn way, so schedule and loader
-/// agree). The parity run verified none of it matters: val AUC 0.9960 / test 0.9967 against
-/// Python's 0.9961 / 0.9968, inside seed noise (EXPERIMENTS.md, "Burn training port"). This
-/// implementation is the reference now; the Python numbers stay only as the quality baseline.
+/// Two knowing deviations from the original Python loop, both from leaning on Burn's built-ins:
+/// the returned model carries the final epoch's weights rather than the best epoch's; and the
+/// loader trains on the final partial batch each epoch (Python used `drop_last=True`; the cosine
+/// horizon below counts steps the Burn way, so schedule and loader agree). Early stopping acts
+/// on Burn's validation AUROC, which Burn 0.22 accumulates over the whole epoch, as Python did.
+/// (The parity numbers below were measured on Burn 0.21, where it was a mean of per-batch AUCs.)
+///
+/// Check [`LearningResult::error`] and `interrupted` on the result: Burn 0.22 stops and reports a
+/// failed metric read, dataloader, checkpointer or worker there instead of panicking. The parity
+/// run verified none of it matters: val AUC 0.9960 / test 0.9967 against Python's 0.9961 / 0.9968,
+/// inside seed noise (EXPERIMENTS.md, "Burn training port"). This implementation is the reference
+/// now; the Python numbers stay only as the quality baseline.
 pub fn train(
     artifact_dir: &str,
     model: HierarchicalSlopClassifier,

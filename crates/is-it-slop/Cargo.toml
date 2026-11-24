@@ -59,7 +59,7 @@ name = "inference"
 harness = false
 
 [features]
-default = ["cli"]
+default = ["cli", "flex-simd"]
 python = ["pyo3"]
 pyo3 = ["dep:pyo3"]
 cli = [
@@ -79,6 +79,9 @@ self-update = []
 # Flex runs in CI; flex, ndarray, accelerate, apple-amx, wgpu, metal and webgpu have been run locally;
 # cuda and rocm only compile-checked; vulkan needs the Vulkan SDK on macOS; cpu (burn-cpu) currently
 # aborts on its first forward. `metal`, `vulkan` and `webgpu` imply `wgpu` in burn; see `model::Backend`.
+# Flex CPU speedups (burn-flex features; `burn` here has default-features = false).
+flex-simd = ["burn/simd"]
+flex-rayon = ["burn/rayon"]
 wgpu = ["burn/wgpu"]
 metal = ["burn/metal"]
 vulkan = ["burn/vulkan"]

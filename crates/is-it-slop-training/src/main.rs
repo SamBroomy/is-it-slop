@@ -375,11 +375,11 @@ fn launch(args: &TrainArgs, backend: &str, device: &Device) -> Result<()> {
         .shuffle(config.seed)
         .num_workers(2)
         .build(InMemDataset::new(encoded_train));
-    // The valid loader is shuffled because the dashboard AUROC (which drives early stopping) is
-    // computed per batch: the parquets are grouped by label, and single-class batches score 0,
-    // collapsing the epoch mean. Python didn't need this — it computed AUC over the whole split.
-    // The encoded documents stay resident (cloned into the dataset) so the post-training
-    // evaluation doesn't re-encode the split.
+    // The valid loader stays shuffled from the Burn 0.21 port, where the AUROC that drives early
+    // stopping was computed per batch and single-class batches (the parquets are grouped by
+    // label) collapsed the epoch mean. Burn 0.22 accumulates AUROC over the epoch, so shuffling
+    // is no longer needed for that. The encoded documents stay resident (cloned into the dataset)
+    // so the post-training evaluation doesn't re-encode the split.
     let dataloader_valid = DataLoaderBuilder::new(batcher.clone())
         .batch_size(config.batch_size)
         .shuffle(config.seed)
@@ -422,6 +422,21 @@ fn launch(args: &TrainArgs, backend: &str, device: &Device) -> Result<()> {
         renderer,
     );
     let train_seconds = started.elapsed().as_secs_f64();
+
+    // Burn 0.22 reports a failed metric read, dataloader, checkpointer or worker through the
+    // result instead of panicking; saving the partial model as if finished would hide it.
+    if let Some(error) = &result.error {
+        anyhow::bail!(
+            "training stopped early after an error (device poisoned: {}): {error}",
+            error.is_device_poisoned()
+        );
+    }
+    if let Some(interruption) = &result.interrupted {
+        tracing::warn!(
+            ?interruption,
+            "training was interrupted; saving the model as it stands"
+        );
+    }
 
     save_model_artifacts(&result.model.model, &args.artifact_dir)?;
 
