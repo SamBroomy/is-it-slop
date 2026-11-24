@@ -30,6 +30,11 @@ burn = { workspace = true, features = [
     "tui",
     "flex",
     "safetensors",
+    # System metrics (CPU/GPU load and memory). Burn 0.22.1 does not compile them with systemstat
+    # 0.2.8 (its Linux type is not Sync): Cargo.lock pins systemstat to 0.2.7 as a stopgap. Fixed
+    # upstream in tracel-ai/burn#6539 (listed as unreleased); once a Burn release includes it, run
+    # `cargo update -p systemstat` and delete this note.
+    "metrics",
     "autotune",
     "fusion",
 ] }

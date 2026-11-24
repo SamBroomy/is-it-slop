@@ -464,7 +464,8 @@ pub fn train(
     use burn::train::{
         Learner, MetricEarlyStoppingStrategy, StoppingCondition, SupervisedTraining,
         metric::{
-            AccuracyMetric, AurocMetric, IterationSpeedMetric, LearningRateMetric, LossMetric,
+            AccuracyMetric, AurocMetric, CpuMemory, CpuUse, IterationSpeedMetric,
+            LearningRateMetric, LossMetric,
             store::{Aggregate, Direction, Split},
         },
     };
@@ -502,9 +503,18 @@ pub fn train(
         .metric_valid_numeric(AccuracyMetric::new())
         .metric_train_numeric(LearningRateMetric::new())
         .metric_train(IterationSpeedMetric::new())
+        // System metrics (Burn's `metrics` feature): host CPU load and memory on every backend,
+        // GPU utilisation and memory on CUDA. They need `systemstat` pinned to 0.2.7 in
+        // Cargo.lock (see the training crate's Cargo.toml).
+        .metric_train(CpuUse::new())
+        .metric_train(CpuMemory::new())
         .early_stopping(early_stopping)
         .num_epochs(config.epochs)
         .summary();
+    #[cfg(feature = "cuda")]
+    {
+        training = training.metric_train(burn::train::metric::CudaMetric::new());
+    }
     if let Some(renderer) = renderer {
         training = training.renderer(Box::new(renderer));
     }

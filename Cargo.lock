@@ -1355,10 +1355,13 @@ dependencies = [
  "burn-std",
  "derive-new",
  "log",
+ "nvml-wrapper",
  "rand 0.10.4",
  "ratatui",
  "rstest",
  "serde",
+ "sysinfo",
+ "systemstat",
  "thiserror 2.0.21",
  "tracing-appender",
  "tracing-core",
@@ -1447,6 +1450,12 @@ dependencies = [
  "portable-atomic",
  "serde",
 ]
+
+[[package]]
+name = "bytesize"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e93abca9e28e0a1b9877922aacb20576e05d4679ffa78c3d6dc22a26a216659"
 
 [[package]]
 name = "bzip2"
@@ -4633,6 +4642,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kstat-rs"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52d0786643a0b49f595bd1fc81e1c1aa7bad8555bc820c6892f4d28cb20cf210"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "lab"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4901,6 +4920,12 @@ dependencies = [
  "quote",
  "syn 3.0.10",
 ]
+
+[[package]]
+name = "mach2"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "matchers"
@@ -8268,6 +8293,22 @@ dependencies = [
  "objc2-io-kit",
  "objc2-open-directory",
  "windows",
+]
+
+[[package]]
+name = "systemstat"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a583abe520746270ffdbdaf0e3039a806f29be9d7034d66466a4839a01de0610"
+dependencies = [
+ "bytesize",
+ "kstat-rs",
+ "lazy_static",
+ "libc",
+ "mach2",
+ "nom 7.1.3",
+ "time",
+ "winapi",
 ]
 
 [[package]]
