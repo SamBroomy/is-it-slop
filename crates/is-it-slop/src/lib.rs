@@ -85,7 +85,9 @@ pub enum ThresholdError {
 /// [`Threshold::try_new`] (returns `Err` on invalid input). Also constructible
 /// via [`TryFrom`] for `f32`, `f64`, and `&str`.
 ///
-/// The default value is [`CLASSIFICATION_THRESHOLD`].
+/// The default value is [`CLASSIFICATION_THRESHOLD`], chosen by the training process to maximise
+/// overall F1. Prefer it; a custom threshold is an escape hatch for a deliberate precision/recall
+/// trade-off.
 ///
 /// # Examples
 ///

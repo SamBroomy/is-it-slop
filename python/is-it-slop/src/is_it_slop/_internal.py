@@ -123,8 +123,10 @@ def is_this_slop(text: str, threshold: float | None = None) -> Prediction:
 
     Args:
         text: Input text to classify. Must be non-empty.
-        threshold: Classification threshold in [0.0, 1.0] (default: the built-in
-            `CLASSIFICATION_THRESHOLD`). If P(AI) >= threshold the text is classified as AI.
+        threshold: Classification threshold in [0.0, 1.0]. Leave unset: the default,
+            `CLASSIFICATION_THRESHOLD`, was chosen by training to maximise overall F1. A custom
+            value is an escape hatch for a deliberate precision/recall trade-off.
+            If P(AI) >= threshold the text is classified as AI.
 
     Returns:
         Prediction: Probabilities, classification and confidence details.

@@ -20,7 +20,8 @@ import kotlinx.coroutines.withContext
 object IsItSlop {
     /**
      * Probability of AI at or above which a text is classified as [Classification.Ai].
-     * Fitted on calibrated validation probabilities.
+     * Fitted by the training process on calibrated validation probabilities to maximise overall F1;
+     * you should almost always use it as is.
      */
     val defaultThreshold: Float by lazy { guarded { NativeBridge.defaultThreshold() } }
 
@@ -114,7 +115,13 @@ data class Prediction(
     /** Classification at [IsItSlop.defaultThreshold]. */
     val classification: Classification get() = classify()
 
-    /** Classify with a custom [threshold] in `0.0..1.0`: AI if [aiProbability] is at or above it. */
+    /**
+     * Classify, AI if [aiProbability] is at or above [threshold] (in `0.0..1.0`).
+     *
+     * Use the default. [IsItSlop.defaultThreshold] was chosen by the training process to maximise
+     * overall F1, so a custom threshold is an escape hatch for a deliberate precision/recall trade
+     * (a higher one flags fewer texts as AI, a lower one flags more), not a tuning knob.
+     */
     fun classify(threshold: Float = IsItSlop.defaultThreshold): Classification {
         require(threshold in 0f..1f) { "threshold must be in 0.0..1.0, got $threshold" }
         return if (aiProbability >= threshold) Classification.Ai else Classification.Human

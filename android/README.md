@@ -12,7 +12,8 @@ Everything Android-specific (Gradle, Kotlin, the JNI glue crate) lives in this f
 val prediction = IsItSlop.predict("Some text to check")
 println("${prediction.classification}: ${prediction.aiProbability}")
 
-// Custom threshold (the default is IsItSlop.defaultThreshold)
+// `classification` uses IsItSlop.defaultThreshold, which training chose to maximise F1.
+// Pass your own only as a deliberate precision/recall trade-off.
 prediction.classify(threshold = 0.7f)
 
 // Many texts: all or nothing, or one nullable result per text (null = blank text)
@@ -37,7 +38,7 @@ applied in Kotlin.
 
 ## Building
 
-You need JDK 17, the Android SDK with NDK 27 (`ANDROID_NDK_HOME` set), Gradle, and:
+You need JDK 17 and the Android SDK with NDK 27 (`ANDROID_NDK_HOME` set; `android/local.properties` with `sdk.dir=...` if `ANDROID_HOME` is not set). Gradle comes from the wrapper (`./gradlew`). Plus:
 
 ```sh
 cargo install cargo-ndk
@@ -45,7 +46,7 @@ rustup target add aarch64-linux-android x86_64-linux-android
 just android::build-aar   # AAR in android/library/build/outputs/aar/
 ```
 
-Only `arm64-v8a` and `x86_64` are built (the model is embedded in each `.so`). The Rust glue tests
+Only `arm64-v8a` (phones) and `x86_64` (emulators) are built; the model is embedded in each `.so`, ~20 MB compressed per ABI. `armeabi-v7a` and `x86` also compile if you add them to `abis` in `library/build.gradle.kts`. The Rust glue tests
 run on the host with `cargo test -p is-it-slop-android`.
 
 Not done yet: a release pipeline that attaches the AAR to a GitHub release and publishes it.

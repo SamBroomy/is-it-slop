@@ -47,8 +47,6 @@ jobs:
           packages: platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973
 
       - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.11.1"
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
@@ -58,13 +56,13 @@ jobs:
 
       - name: Kotlin unit tests
         working-directory: android
-        run: gradle testDebugUnitTest
+        run: ./gradlew testDebugUnitTest
 
       - name: Build AAR
         working-directory: android
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: gradle assembleRelease
+        run: ./gradlew assembleRelease
 
       - uses: actions/upload-artifact@v4
         with:

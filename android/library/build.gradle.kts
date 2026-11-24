@@ -35,6 +35,11 @@ android {
 
     sourceSets["main"].jniLibs.srcDir(rustJniLibs)
 
+    packaging {
+        // cargo-ndk also copies the core crate's own cdylib (used by the Python bindings); not needed here.
+        jniLibs.excludes += "**/libis_it_slop.so"
+    }
+
     publishing {
         singleVariant("release")
     }
@@ -54,6 +59,17 @@ val cargoNdk by tasks.registering(Exec::class) {
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
     .configureEach { dependsOn(cargoNdk) }
+
+// JVM tests load the real Rust library built for this machine (see IsItSlopNativeTest).
+val cargoBuildHost by tasks.registering(Exec::class) {
+    workingDir = repoRoot
+    commandLine("cargo", "build", "-p", "is-it-slop-android")
+}
+
+tasks.withType<Test>().configureEach {
+    dependsOn(cargoBuildHost)
+    systemProperty("java.library.path", repoRoot.resolve("target/debug").path)
+}
 
 dependencies {
     implementation(libs.kotlinx.coroutines.android)
