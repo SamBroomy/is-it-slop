@@ -415,11 +415,20 @@ least because runtime dispatch is the natural home for item (1); until then the 
 
 Burn 0.22 alone was ~27% faster than the numbers above (single document 5.5 ms to 3.9 ms). Flex SIMD
 (`flex-simd`, now a default feature) adds ~9% more: 3.56 ms single document, 0.96 s for 128
-documents; golden outputs unchanged. The opt-in `flex-rayon` speeds large batches (0.96 s to 0.71 s
-at 128 documents) but slows single documents (3.56 ms to 4.44 ms), because Flex's inner rayon
-parallelism competes with our per-document concurrency. Making it adaptive (small batches in a
-pool sized to the batch, so the nested calls stay inline) is untried. The default CPU backend has
-not been compared against `cpu` (burn-cpu), ndarray or wgpu yet; see the backend profiling task.
+documents; golden outputs unchanged.
+
+The opt-in `flex-rayon` (Flex's inner, kernel-level rayon parallelism) does not help the default
+strategy (one document per forward pass, passes concurrent): single document 3.56 ms to 4.44 ms,
+128 documents 30.0 ms to 31.6 ms. Its apparent win (a 128-document batch in 0.71 s instead of
+0.96 s) is for packing all 128 documents into ONE forward pass, a strategy we do not use on CPU
+because it is ~25x slower than the default (0.7 s against 30 ms). Tried and dropped: confining small
+calls to a rayon pool sized to the batch so nested calls stay inline. It recovers single-document
+latency and is 5-15% faster than plain SIMD for 2-16 documents, but 15% slower at 32 documents, and
+the pool alone (without `flex-rayon`) changes nothing, so the gain is rayon work-stealing at the
+tail; not worth the complexity. Leave `flex-rayon` off. The default CPU backend has not been
+compared against `cpu` (burn-cpu), ndarray or wgpu yet; see the backend profiling task. wgpu inside
+WSL2 is not a valid test: only the software `lvp` Vulkan driver is installed there, and the GPU path
+panics on the first large batch; test wgpu natively on Windows or Linux.
 
 ## Tokenizer: size and vendor bias
 

@@ -79,7 +79,9 @@ self-update = []
 # Flex runs in CI; flex, ndarray, accelerate, apple-amx, wgpu, metal and webgpu have been run locally;
 # cuda and rocm only compile-checked; vulkan needs the Vulkan SDK on macOS; cpu (burn-cpu) currently
 # aborts on its first forward. `metal`, `vulkan` and `webgpu` imply `wgpu` in burn; see `model::Backend`.
-# Flex CPU speedups (burn-flex features; `burn` here has default-features = false).
+# Flex CPU features (burn-flex; `burn` here has default-features = false). `flex-simd` is on by
+# default (~9% faster). `flex-rayon` is off: it does not help the default one-document-per-pass
+# strategy (single document +25% slower); see NEXT_RELEASE.md "After the Burn 0.22 migration".
 flex-simd = ["burn/simd"]
 flex-rayon = ["burn/rayon"]
 wgpu = ["burn/wgpu"]
