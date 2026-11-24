@@ -11,14 +11,19 @@ use std::sync::Arc;
 
 use burn::{
     config::Config,
-    lr_scheduler::LrScheduler,
-    module::{AutodiffModule, Module},
-    optim::{AdamW, AdamWConfig, AdamWState, SimpleOptimizer, adaptor::OptimizerAdaptor},
-    tensor::{
-        Int, Tensor,
-        backend::{AutodiffBackend, Backend},
+    lr_scheduler::{LrScheduler, LrSchedulerRecord},
+    module::Module,
+    optim::{AdamW, AdamWConfig, AdamWState, ModuleOptimizer, Optimizer},
+    tensor::{Device, Int, Tensor},
+    train::{
+        ClassificationOutput, InferenceStep, LearningResult, TrainOutput, TrainStep,
+        logger::{EvaluationProgressLogger, TrainingProgressLogger},
+        metric::MetricDefinition,
+        renderer::{
+            EvaluationName, MetricState, MetricsRenderer, MetricsRendererEvaluation,
+            MetricsRendererTraining,
+        },
     },
-    train::{ClassificationOutput, InferenceStep, LearningResult, TrainOutput, TrainStep},
 };
 
 use crate::model::{HierarchicalSlopClassifier, ModelOutput};
@@ -86,8 +91,6 @@ impl WarmupCosine {
 }
 
 impl LrScheduler for WarmupCosine {
-    type Record<B: Backend> = usize;
-
     fn step(&mut self) -> f64 {
         let s = self.step;
         self.step += 1;
@@ -101,13 +104,14 @@ impl LrScheduler for WarmupCosine {
         self.base_lr * lambda
     }
 
-    fn to_record<B: Backend>(&self) -> Self::Record<B> {
-        self.step
+    fn to_record(&self) -> LrSchedulerRecord {
+        LrSchedulerRecord::new().with_scalar("step", self.step as u64)
     }
 
-    fn load_record<B: Backend>(mut self, record: Self::Record<B>) -> Self {
-        self.step = record;
-        self
+    fn load_record(&mut self, record: LrSchedulerRecord) {
+        if let Some(step) = record.scalar::<u64>("step") {
+            self.step = step as usize;
+        }
     }
 }
 
@@ -142,34 +146,32 @@ impl RankGatedAdamW {
         }
     }
 
-    /// Wrap into an [`Optimizer`](burn::optim::Optimizer) usable by the `Learner`.
+    /// Wrap into a [`ModuleOptimizer`] usable by the `Learner`.
     #[must_use]
-    pub fn init<B: AutodiffBackend, M: AutodiffModule<B>>(
-        weight_decay: f32,
-    ) -> OptimizerAdaptor<Self, M, B> {
-        Self::new(weight_decay).into()
+    pub fn init(weight_decay: f32) -> ModuleOptimizer {
+        ModuleOptimizer::from(Self::new(weight_decay))
     }
 }
 
-impl<B: Backend> SimpleOptimizer<B> for RankGatedAdamW {
-    type State<const D: usize> = AdamWState<B, D>;
+impl Optimizer for RankGatedAdamW {
+    type State<const D: usize> = AdamWState<D>;
 
     fn step<const D: usize>(
         &self,
         lr: f64,
-        tensor: Tensor<B, D>,
-        grad: Tensor<B, D>,
+        tensor: Tensor<D>,
+        grad: Tensor<D>,
         state: Option<Self::State<D>>,
-    ) -> (Tensor<B, D>, Option<Self::State<D>>) {
+    ) -> (Tensor<D>, Option<Self::State<D>>) {
         if D >= 2 {
-            SimpleOptimizer::<B>::step(&self.decay, lr, tensor, grad, state)
+            Optimizer::step(&self.decay, lr, tensor, grad, state)
         } else {
-            SimpleOptimizer::<B>::step(&self.plain, lr, tensor, grad, state)
+            Optimizer::step(&self.plain, lr, tensor, grad, state)
         }
     }
 
-    fn to_device<const D: usize>(state: Self::State<D>, device: &B::Device) -> Self::State<D> {
-        <AdamW as SimpleOptimizer<B>>::to_device(state, device)
+    fn to_device<const D: usize>(state: Self::State<D>, device: &Device) -> Self::State<D> {
+        <AdamW as Optimizer>::to_device(state, device)
     }
 }
 
@@ -181,10 +183,7 @@ impl<B: Backend> SimpleOptimizer<B> for RankGatedAdamW {
 ///
 /// The standard numerically stable form, matching
 /// `torch.nn.functional.binary_cross_entropy_with_logits`.
-fn bce_with_logits<B: Backend, const D: usize>(
-    logits: Tensor<B, D>,
-    targets: Tensor<B, D>,
-) -> Tensor<B, D> {
+fn bce_with_logits<const D: usize>(logits: Tensor<D>, targets: Tensor<D>) -> Tensor<D> {
     logits.clone().clamp_min(0.0) - logits.clone() * targets
         + (logits.abs().neg().exp() + 1.0).log()
 }
@@ -193,11 +192,8 @@ fn bce_with_logits<B: Backend, const D: usize>(
 ///
 /// Chunk targets are the document label copied down (`y_chunk` in Python exists for `CutMix`'s soft
 /// targets, which are not ported).
-pub fn losses<B: Backend>(
-    output: &ModelOutput<B>,
-    labels: Tensor<B, 1>,
-    chunk_loss_weight: f64,
-) -> Tensor<B, 1> {
+#[must_use]
+pub fn losses(output: &ModelOutput, labels: Tensor<1>, chunk_loss_weight: f64) -> Tensor<1> {
     let [b, c] = output.chunk_logits.dims();
     let doc_loss = bce_with_logits(output.doc_logits.clone(), labels.clone()).mean();
 
@@ -216,54 +212,58 @@ pub fn losses<B: Backend>(
 /// One training or validation batch. Building these from encoded documents is the data layer's
 /// job (see [`crate::data`]); the steps only consume them.
 #[derive(Debug, Clone)]
-pub struct Batch<B: Backend> {
+pub struct Batch {
     /// Compact token ids, `[batch, chunks, chunk_size]`.
-    pub ids: Tensor<B, 3, Int>,
+    pub ids: Tensor<3, Int>,
     /// Document labels in `{0.0, 1.0}`, `[batch]`.
-    pub labels: Tensor<B, 1>,
+    pub labels: Tensor<1>,
 }
 
 /// The classifier plus the loss weighting its steps need; this is the module the `Learner`
 /// trains.
 #[derive(Module, Debug)]
-pub struct TrainableClassifier<B: Backend> {
+pub struct TrainableClassifier {
     /// The network itself.
-    pub model: HierarchicalSlopClassifier<B>,
+    pub model: HierarchicalSlopClassifier,
     /// Lambda in `L_doc + lambda * L_chunk`.
     pub chunk_loss_weight: f64,
 }
 
-impl<B: Backend> TrainableClassifier<B> {
+impl TrainableClassifier {
     /// Forward pass plus the recipe's loss, packaged as Burn's [`ClassificationOutput`] so the
     /// built-in metrics (and their `ItemLazy` sync) apply without custom adaptors.
     ///
-    /// The single document logit becomes the two-class row `[0, logit]`: the metrics softmax it,
-    /// and `softmax([0, x])[1] == sigmoid(x)`, so AUROC sees exactly the AI probability and
-    /// accuracy's argmax is the 0.5-threshold decision.
-    pub fn forward_step(&self, batch: Batch<B>) -> ClassificationOutput<B> {
+    /// The single document logit `x` becomes the two-class row `[-x, x]`. Accuracy's argmax is then
+    /// the 0.5-threshold decision (class 1 wins iff `x > 0`). Burn 0.22's AUROC scores every
+    /// column one-vs-rest and macro-averages them: with `[-x, x]` both columns rank documents
+    /// identically, so the average is the document AUC. A constant column (the old `[0, x]`)
+    /// would score 0.5 and drag the reported value to `(0.5 + AUC) / 2`.
+    #[must_use]
+    pub fn forward_step(&self, batch: Batch) -> ClassificationOutput {
         let output = self.model.forward(batch.ids);
         let loss = losses(&output, batch.labels.clone(), self.chunk_loss_weight);
-        let logits = Tensor::stack::<2>(vec![output.doc_logits.zeros_like(), output.doc_logits], 1);
+        let logits =
+            Tensor::stack::<2>(vec![output.doc_logits.clone().neg(), output.doc_logits], 1);
         ClassificationOutput::new(loss, logits, batch.labels.int())
     }
 }
 
-impl<B: AutodiffBackend> TrainStep for TrainableClassifier<B> {
-    type Input = Batch<B>;
-    type Output = ClassificationOutput<B>;
+impl TrainStep for TrainableClassifier {
+    type Input = Batch;
+    type Output = ClassificationOutput;
 
-    fn step(&self, batch: Batch<B>) -> TrainOutput<ClassificationOutput<B>> {
+    fn step(&self, batch: Batch) -> TrainOutput<ClassificationOutput> {
         let output = self.forward_step(batch);
         let grads = output.loss.backward();
         TrainOutput::new(self, grads, output)
     }
 }
 
-impl<B: Backend> InferenceStep for TrainableClassifier<B> {
-    type Input = Batch<B>;
-    type Output = ClassificationOutput<B>;
+impl InferenceStep for TrainableClassifier {
+    type Input = Batch;
+    type Output = ClassificationOutput;
 
-    fn step(&self, batch: Batch<B>) -> ClassificationOutput<B> {
+    fn step(&self, batch: Batch) -> ClassificationOutput {
         self.forward_step(batch)
     }
 }
@@ -271,10 +271,10 @@ impl<B: Backend> InferenceStep for TrainableClassifier<B> {
 /// Extract `(labels, document logits)` from a step output, for the evaluation side
 /// ([`crate::evaluation`]).
 ///
-/// Column 1 of the `[batch, 2]` output is the raw document logit (column 0 is the constant zero
+/// Column 1 of the `[batch, 2]` output is the raw document logit (column 0 is its negation, which
 /// [`TrainableClassifier::forward_step`] adds for the metric contract).
 #[must_use]
-pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Vec<f32>) {
+pub fn doc_scores(output: &ClassificationOutput) -> (Vec<f32>, Vec<f32>) {
     let [n, _] = output.output.dims();
     let logits = output.output.clone().slice([0..n, 1..2]).reshape([n]);
     // convert() first: on an f16/flex32 element backend the data arrives in that type.
@@ -285,9 +285,9 @@ pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Ve
             .float()
             .into_data()
             .convert::<f32>()
-            .to_vec()
+            .try_to_vec()
             .unwrap(),
-        logits.into_data().convert::<f32>().to_vec().unwrap(),
+        logits.into_data().convert::<f32>().try_to_vec().unwrap(),
     )
 }
 
@@ -297,13 +297,16 @@ pub fn doc_scores<B: Backend>(output: &ClassificationOutput<B>) -> (Vec<f32>, Ve
 
 /// A quiet progress renderer for non-interactive runs.
 ///
-/// Burn's fallback `CliMetricsRenderer` (chosen whenever stdout is not a terminal) debug-prints
-/// the full progress struct **every iteration**; this prints one compact line per
-/// `INTERVAL` instead. Per-epoch metrics still land in the artifact dir's metric logs
-/// and the end-of-run summary.
+/// Burn's fallback `CliMetricsRenderer` (chosen whenever stdout is not a terminal) reports every
+/// iteration; this prints one compact line per `INTERVAL` instead. Per-epoch metrics still land
+/// in the artifact dir's metric logs and the end-of-run summary.
 pub struct ThrottledRenderer {
     last_print: Option<std::time::Instant>,
     last_items: usize,
+    split: String,
+    split_total: usize,
+    epoch: usize,
+    total_epochs: usize,
 }
 
 impl ThrottledRenderer {
@@ -316,44 +319,11 @@ impl ThrottledRenderer {
         Self {
             last_print: None,
             last_items: 0,
+            split: String::new(),
+            split_total: 0,
+            epoch: 0,
+            total_epochs: 0,
         }
-    }
-
-    fn render(&mut self, split: &str, item: &burn::train::renderer::TrainingProgress) {
-        use std::fmt::Write;
-
-        let now = std::time::Instant::now();
-        let elapsed = self.last_print.map(|t| now.duration_since(t));
-        if elapsed.is_some_and(|e| e < Self::INTERVAL) {
-            return;
-        }
-
-        let global = &item.global_progress;
-        let mut line = format!(
-            "{split} {}/{} epochs",
-            global.items_processed, global.items_total
-        );
-        if let Some(progress) = &item.progress {
-            let _ = write!(
-                line,
-                " | {}/{} items",
-                progress.items_processed, progress.items_total
-            );
-            // Items/s over the printing interval; skip across epoch wraps and split switches.
-            if let (Some(elapsed), true) = (elapsed, progress.items_processed >= self.last_items) {
-                let rate = (progress.items_processed - self.last_items) as f64
-                    / elapsed.as_secs_f64().max(1e-9);
-                if rate > 0.0 {
-                    let _ = write!(line, " | {rate:.0} items/s");
-                }
-            }
-            self.last_items = progress.items_processed;
-        }
-        if let Some(iteration) = item.iteration {
-            let _ = write!(line, " | iteration {iteration}");
-        }
-        println!("{line}");
-        self.last_print = Some(now);
     }
 }
 
@@ -363,41 +333,69 @@ impl Default for ThrottledRenderer {
     }
 }
 
-impl burn::train::renderer::MetricsRendererTraining for ThrottledRenderer {
-    fn update_train(&mut self, _state: burn::train::renderer::MetricState) {}
-
-    fn update_valid(&mut self, _state: burn::train::renderer::MetricState) {}
-
-    fn render_train(
+impl TrainingProgressLogger for ThrottledRenderer {
+    fn start(
         &mut self,
-        item: burn::train::renderer::TrainingProgress,
-        _progress_indicators: Vec<burn::train::renderer::ProgressType>,
+        total_epochs: usize,
+        starting_epoch: usize,
+        _total_items: Option<usize>,
+        _label: Option<&str>,
     ) {
-        self.render("train", &item);
+        self.total_epochs = total_epochs;
+        self.epoch = starting_epoch;
     }
 
-    fn render_valid(
-        &mut self,
-        item: burn::train::renderer::TrainingProgress,
-        _progress_indicators: Vec<burn::train::renderer::ProgressType>,
-    ) {
-        self.render("valid", &item);
+    fn update_epoch(&mut self, epoch: usize) {
+        self.epoch = epoch;
     }
+
+    fn start_split(&mut self, split: &str, total_items: usize) {
+        split.clone_into(&mut self.split);
+        self.split_total = total_items;
+        self.last_items = 0;
+    }
+
+    fn update_split(&mut self, items_processed: usize) {
+        use std::fmt::Write;
+
+        let now = std::time::Instant::now();
+        let elapsed = self.last_print.map(|t| now.duration_since(t));
+        if elapsed.is_some_and(|e| e < Self::INTERVAL) {
+            return;
+        }
+        let mut line = format!(
+            "{} epoch {}/{} | {items_processed}/{} items",
+            self.split, self.epoch, self.total_epochs, self.split_total
+        );
+        // Items/s over the printing interval; skip across epoch wraps and split switches.
+        if let (Some(elapsed), true) = (elapsed, items_processed >= self.last_items) {
+            let rate = (items_processed - self.last_items) as f64 / elapsed.as_secs_f64().max(1e-9);
+            if rate > 0.0 {
+                let _ = write!(line, " | {rate:.0} items/s");
+            }
+        }
+        self.last_items = items_processed;
+        println!("{line}");
+        self.last_print = Some(now);
+    }
+
+    fn end_split(&mut self) {}
+
+    fn end(&mut self) {}
+
+    fn log_event_training(&mut self, _event: String) {}
 }
 
-impl burn::train::renderer::MetricsRendererEvaluation for ThrottledRenderer {
-    fn update_test(
-        &mut self,
-        _name: burn::train::renderer::EvaluationName,
-        _state: burn::train::renderer::MetricState,
-    ) {
+impl EvaluationProgressLogger for ThrottledRenderer {
+    fn start_global_progress(&mut self, _total_tests: usize) {}
+
+    fn start_test(&mut self, name: &str, total_items: usize) {
+        name.clone_into(&mut self.split);
+        self.split_total = total_items;
+        self.last_items = 0;
     }
 
-    fn render_test(
-        &mut self,
-        item: burn::train::renderer::EvaluationProgress,
-        _progress_indicators: Vec<burn::train::renderer::ProgressType>,
-    ) {
+    fn update_test_progress(&mut self, items_processed: usize) {
         let now = std::time::Instant::now();
         if self
             .last_print
@@ -405,18 +403,31 @@ impl burn::train::renderer::MetricsRendererEvaluation for ThrottledRenderer {
         {
             return;
         }
-        println!(
-            "test {}/{} items",
-            item.progress.items_processed, item.progress.items_total
-        );
+        println!("test {items_processed}/{} items", self.split_total);
         self.last_print = Some(now);
     }
+
+    fn end_test(&mut self) {}
+
+    fn end_global_progress(&mut self) {}
+
+    fn log_event_evaluation(&mut self, _event: String) {}
 }
 
-impl burn::train::renderer::MetricsRenderer for ThrottledRenderer {
+impl MetricsRendererTraining for ThrottledRenderer {
+    fn update_train(&mut self, _state: MetricState) {}
+
+    fn update_valid(&mut self, _state: MetricState) {}
+}
+
+impl MetricsRendererEvaluation for ThrottledRenderer {
+    fn update_test(&mut self, _name: EvaluationName, _state: MetricState) {}
+}
+
+impl MetricsRenderer for ThrottledRenderer {
     fn manual_close(&mut self) {}
 
-    fn register_metric(&mut self, _definition: burn::train::metric::MetricDefinition) {}
+    fn register_metric(&mut self, _definition: MetricDefinition) {}
 }
 
 // --------------------------------------------------------------------------------------------
@@ -437,17 +448,15 @@ impl burn::train::renderer::MetricsRenderer for ThrottledRenderer {
 /// agree). The parity run verified none of it matters: val AUC 0.9960 / test 0.9967 against
 /// Python's 0.9961 / 0.9968, inside seed noise (EXPERIMENTS.md, "Burn training port"). This
 /// implementation is the reference now; the Python numbers stay only as the quality baseline.
-pub fn train<B: AutodiffBackend>(
+pub fn train(
     artifact_dir: &str,
-    model: HierarchicalSlopClassifier<B>,
+    model: HierarchicalSlopClassifier,
     config: &TrainingConfig,
-    dataloader_train: Arc<dyn burn::data::dataloader::DataLoader<B, Batch<B>>>,
-    dataloader_valid: Arc<
-        dyn burn::data::dataloader::DataLoader<B::InnerBackend, Batch<B::InnerBackend>>,
-    >,
-    device: &B::Device,
-    renderer: Option<impl burn::train::renderer::MetricsRenderer + 'static>,
-) -> LearningResult<TrainableClassifier<B::InnerBackend>> {
+    dataloader_train: Arc<dyn burn::data::dataloader::DataLoader<Batch>>,
+    dataloader_valid: Arc<dyn burn::data::dataloader::DataLoader<Batch>>,
+    device: &Device,
+    renderer: Option<impl MetricsRenderer + 'static>,
+) -> LearningResult<TrainableClassifier> {
     use burn::train::{
         Learner, MetricEarlyStoppingStrategy, StoppingCondition, SupervisedTraining,
         metric::{
@@ -456,7 +465,7 @@ pub fn train<B: AutodiffBackend>(
         },
     };
 
-    B::seed(device, config.seed);
+    device.seed(config.seed);
 
     let steps_per_epoch = dataloader_train.num_items().div_ceil(config.batch_size);
     let schedule = WarmupCosine::new(config.lr, steps_per_epoch, config.epochs * steps_per_epoch);
@@ -466,7 +475,7 @@ pub fn train<B: AutodiffBackend>(
         chunk_loss_weight: config.chunk_loss_weight,
     };
 
-    let auroc = AurocMetric::new();
+    let auroc = AurocMetric::binary();
     let early_stopping = MetricEarlyStoppingStrategy::new(
         &auroc,
         Aggregate::Mean,
@@ -477,11 +486,10 @@ pub fn train<B: AutodiffBackend>(
         },
     );
 
-    // No epoch checkpointer: nothing resumes from checkpoints yet (NEXT_RELEASE, "Resume a
-    // training run"), the returned model carries the final weights, and burn 0.21's
-    // AsyncCheckpointer races the fusion backend — a checkpointer-thread panic ("Should have
-    // handle for tensor") killed a full run at the next epoch's checkpoint hand-off
-    // (SendError abort). Checkpoints return with resume support, on a sync recorder.
+    // No epoch checkpointer yet: nothing resumes from checkpoints (NEXT_RELEASE, "Resume a
+    // training run"), and the returned model carries the final weights. Burn 0.22's
+    // `with_default_checkpointers()` writes burnpack checkpoints and is the place to start when
+    // resume support lands.
     let mut training = SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_valid)
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
@@ -494,7 +502,7 @@ pub fn train<B: AutodiffBackend>(
         .num_epochs(config.epochs)
         .summary();
     if let Some(renderer) = renderer {
-        training = training.renderer(renderer);
+        training = training.renderer(Box::new(renderer));
     }
 
     training.launch(Learner::new(trainable, optim, schedule))
@@ -502,11 +510,7 @@ pub fn train<B: AutodiffBackend>(
 
 #[cfg(test)]
 mod tests {
-    use burn::backend::{Flex, flex::FlexDevice};
-
     use super::*;
-
-    type B = Flex;
 
     #[test]
     fn warmup_cosine_matches_pytorch_lambda_lr() {
@@ -541,16 +545,16 @@ mod tests {
         // Values computed with torch.nn.functional.binary_cross_entropy_with_logits and the
         // Python losses(): doc_loss 0.3936693668, chunk_loss 1.0513024330, total 0.7090600729
         // at chunk_loss_weight 0.3 with one masked-out chunk.
-        let device = FlexDevice;
+        let device = Device::flex();
         let output = ModelOutput {
-            doc_logits: Tensor::<B, 1>::from_floats([0.5, -1.0], &device),
-            chunk_logits: Tensor::<B, 2>::from_floats([[0.2, -0.3], [1.5, 0.7]], &device),
-            chunk_mask: Tensor::<B, 2>::from_floats([[1.0, 1.0], [1.0, 0.0]], &device)
+            doc_logits: Tensor::<1>::from_floats([0.5, -1.0], &device),
+            chunk_logits: Tensor::<2>::from_floats([[0.2, -0.3], [1.5, 0.7]], &device),
+            chunk_mask: Tensor::<2>::from_floats([[1.0, 1.0], [1.0, 0.0]], &device)
                 .greater_elem(0.5),
         };
-        let labels = Tensor::<B, 1>::from_floats([1.0, 0.0], &device);
+        let labels = Tensor::<1>::from_floats([1.0, 0.0], &device);
 
-        let total = losses(&output, labels, 0.3).into_scalar();
+        let total = losses(&output, labels, 0.3).into_scalar::<f32>();
         assert!(
             (f64::from(total) - 0.709_060_072_9).abs() < 1e-6,
             "got {total}, torch says 0.7090600729"
@@ -561,18 +565,18 @@ mod tests {
     fn rank_gated_adamw_decays_matrices_only() {
         // One step with zero gradients isolates the decay term: the matrix must shrink by
         // lr * weight_decay, the vector must not move.
-        let device = FlexDevice;
+        let device = Device::flex();
         let optim = RankGatedAdamW::new(0.5);
 
-        let matrix = Tensor::<B, 2>::ones([2, 2], &device);
-        let vector = Tensor::<B, 1>::ones([2], &device);
+        let matrix = Tensor::<2>::ones([2, 2], &device);
+        let vector = Tensor::<1>::ones([2], &device);
         let (matrix_after, _) =
-            SimpleOptimizer::<B>::step(&optim, 0.1, matrix, Tensor::zeros([2, 2], &device), None);
+            Optimizer::step(&optim, 0.1, matrix, Tensor::zeros([2, 2], &device), None);
         let (vector_after, _) =
-            SimpleOptimizer::<B>::step(&optim, 0.1, vector, Tensor::zeros([2], &device), None);
+            Optimizer::step(&optim, 0.1, vector, Tensor::zeros([2], &device), None);
 
-        let m: Vec<f32> = matrix_after.into_data().to_vec().unwrap();
-        let v: Vec<f32> = vector_after.into_data().to_vec().unwrap();
+        let m: Vec<f32> = matrix_after.into_data().try_to_vec().unwrap();
+        let v: Vec<f32> = vector_after.into_data().try_to_vec().unwrap();
         assert!(
             m.iter().all(|x| (x - 0.95).abs() < 1e-6),
             "matrix should decay to 1 - lr*wd = 0.95, got {m:?}"
@@ -586,7 +590,6 @@ mod tests {
     #[test]
     fn learner_pipeline_learns_a_toy_rule() {
         use burn::{
-            backend::Autodiff,
             data::{dataloader::DataLoaderBuilder, dataset::InMemDataset},
             train::renderer::CliMetricsRenderer,
         };
@@ -596,11 +599,11 @@ mod tests {
             evaluation::roc_auc,
         };
 
-        type AB = Autodiff<Flex>;
-        let device = FlexDevice;
+        let inner_device = Device::flex();
+        let device = inner_device.clone().autodiff();
         // Reduce sensitivity to parallel tests sharing the global RNG; `train` reseeds again but
         // model init happens before it.
-        AB::seed(&device, 7);
+        device.seed(7);
 
         // Tiny model, tiny corpus: label 1 iff the document's tokens come from the upper half of
         // the vocabulary. The full harness (batcher, learner, schedule, optimizer, AUROC early
@@ -659,9 +662,9 @@ mod tests {
             .with_patience(20)
             .with_batch_size(16);
         let artifacts = tempfile::tempdir().unwrap();
-        let result = train::<AB>(
+        let result = train(
             artifacts.path().to_str().unwrap(),
-            model_cfg.init::<AB>(&device),
+            model_cfg.init(&device),
             &config,
             dataloader_train,
             dataloader_valid,
@@ -671,26 +674,26 @@ mod tests {
 
         // Score the returned model on the validation set with the oracle-tested AUC.
         let valid_docs = make_docs(64, 1);
-        let batch: Batch<Flex> = burn::data::dataloader::batcher::Batcher::batch(
+        let batch: Batch = burn::data::dataloader::batcher::Batcher::batch(
             &SlopBatcher {
                 max_chunks: 2,
                 chunk_size: 8,
             },
             valid_docs,
-            &device,
+            &inner_device,
         );
         let output = result.model.forward_step(batch);
         let (labels, logits) = doc_scores(&output);
         let auc = roc_auc(&labels, &logits);
 
         // Diagnostics: train-split AUC of the returned model.
-        let train_batch: Batch<Flex> = burn::data::dataloader::batcher::Batcher::batch(
+        let train_batch: Batch = burn::data::dataloader::batcher::Batcher::batch(
             &SlopBatcher {
                 max_chunks: 2,
                 chunk_size: 8,
             },
             make_docs(256, 0),
-            &device,
+            &inner_device,
         );
         let (train_labels, train_logits) = doc_scores(&result.model.forward_step(train_batch));
         let train_auc = roc_auc(&train_labels, &train_logits);

@@ -40,7 +40,7 @@ use burn::{
         Dropout, DropoutConfig, Embedding, EmbeddingConfig, Gelu, LayerNorm, LayerNormConfig,
         Linear, LinearConfig,
     },
-    tensor::{Distribution, Int, Tensor, activation::softmax, backend::Backend},
+    tensor::{Bool, Device, Distribution, Int, Tensor, activation::softmax},
 };
 
 /// A configuration the network cannot be built from.
@@ -131,7 +131,8 @@ impl HierarchicalModelConfig {
     ///
     /// Panics if the configuration fails [`Self::validate`]; validate first when the
     /// configuration comes from a file.
-    pub fn init<B: Backend>(&self, device: &B::Device) -> HierarchicalSlopClassifier<B> {
+    #[must_use]
+    pub fn init(&self, device: &Device) -> HierarchicalSlopClassifier {
         if let Err(e) = self.validate() {
             panic!("{e}");
         }
@@ -161,9 +162,9 @@ impl HierarchicalModelConfig {
 /// Drop whole embedding channels across all positions, as in Magika's spatial dropout.
 ///
 /// Mirrors `torch.nn.Dropout2d` applied channelwise: one Bernoulli draw per (sample, channel),
-/// shared across sequence positions. Gated on `B::ad_enabled()` exactly like Burn's own
-/// [`Dropout`], so validation and inference run without it.
-#[derive(Module, Debug, Clone)]
+/// shared across sequence positions. Gated on the input being autodiff-tracked exactly like Burn's
+/// own [`Dropout`], so validation and inference run without it.
+#[derive(Module, Debug)]
 pub struct SpatialDropout1d {
     /// Probability of dropping a channel.
     pub prob: f64,
@@ -171,13 +172,14 @@ pub struct SpatialDropout1d {
 
 impl SpatialDropout1d {
     /// Apply channel dropout to `[batch, positions, channels]`.
-    pub fn forward<B: Backend>(&self, input: Tensor<B, 3>) -> Tensor<B, 3> {
-        if !B::ad_enabled(&input.device()) || self.prob == 0.0 {
+    #[must_use]
+    pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+        if !input.is_autodiff() || self.prob == 0.0 {
             return input;
         }
         let prob_keep = 1.0 - self.prob;
         let [n, _, channels] = input.dims();
-        let mask = Tensor::<B, 3>::random(
+        let mask = Tensor::<3>::random(
             [n, 1, channels],
             Distribution::Bernoulli(prob_keep),
             &input.device(),
@@ -188,56 +190,53 @@ impl SpatialDropout1d {
 
 /// See the [module documentation](self) for the stage-by-stage dataflow.
 #[derive(Module, Debug)]
-pub struct HierarchicalSlopClassifier<B: Backend> {
+pub struct HierarchicalSlopClassifier {
     /// Stage 1: token rows, `[vocab_size + 2, embed_dim]` — ~90% of the parameters.
-    embed: Embedding<B>,
+    embed: Embedding,
     /// Stage 1: channel dropout on the embedding, shared across positions.
     spatial_dropout: SpatialDropout1d,
     /// Stage 3: first trunk layer, `group * embed_dim -> hidden` — reads grouped token n-grams.
-    trunk_in: Linear<B>,
+    trunk_in: Linear,
     /// Stage 3: trunk normalization.
-    trunk_norm: LayerNorm<B>,
+    trunk_norm: LayerNorm,
     /// Stage 3: elementwise dropout inside the trunk.
     trunk_dropout: Dropout,
     /// Stage 3: second trunk layer, `hidden -> hidden`.
-    trunk_out: Linear<B>,
+    trunk_out: Linear,
     /// Stage 3: activation after each trunk layer.
     gelu: Gelu,
     /// Stage 4: normalizes the max-pooled chunk vectors.
-    chunk_norm: LayerNorm<B>,
+    chunk_norm: LayerNorm,
     /// Stage 5: per-chunk logit, `hidden -> 1` — the auxiliary loss head.
-    chunk_head: Linear<B>,
+    chunk_head: Linear,
     /// Stage 6: attention scores over chunks, `hidden -> 1`.
-    attend: Linear<B>,
+    attend: Linear,
     /// Stage 6: normalizes the concatenated attention + max document vector.
-    doc_norm: LayerNorm<B>,
+    doc_norm: LayerNorm,
     /// Stage 6: dropout before the document head.
     doc_dropout: Dropout,
     /// Stage 6: document logit, `2 * hidden -> 1`.
-    doc_head: Linear<B>,
+    doc_head: Linear,
     chunk_size: usize,
     group: usize,
     pad_id: usize,
 }
 
 /// The model's raw outputs for one batch.
-pub struct ModelOutput<B: Backend> {
+pub struct ModelOutput {
     /// Document logits, `[batch]`.
-    pub doc_logits: Tensor<B, 1>,
+    pub doc_logits: Tensor<1>,
     /// Per-chunk logits, `[batch, chunks]`.
-    pub chunk_logits: Tensor<B, 2>,
+    pub chunk_logits: Tensor<2>,
     /// Which chunk slots are real (slot 0 always counts), `[batch, chunks]`.
-    pub chunk_mask: Tensor<B, 2, burn::tensor::Bool>,
+    pub chunk_mask: Tensor<2, Bool>,
 }
 
-impl<B: Backend> HierarchicalSlopClassifier<B> {
+impl HierarchicalSlopClassifier {
     /// Stages 1-4: encode ids `[batch, chunks, chunk_size]` into chunk vectors
     /// `[batch, chunks, hidden]` plus a real-chunk mask `[batch, chunks]` — embed, group, run
     /// the shared trunk, and max-pool each chunk.
-    fn encode_chunks(
-        &self,
-        ids: Tensor<B, 3, Int>,
-    ) -> (Tensor<B, 3>, Tensor<B, 2, burn::tensor::Bool>) {
+    fn encode_chunks(&self, ids: Tensor<3, Int>) -> (Tensor<3>, Tensor<2, Bool>) {
         let [b, c, length] = ids.dims();
         let groups = length / self.group;
         let hidden = self.trunk_out.weight.dims()[1];
@@ -268,7 +267,7 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
             .expand([b * c, hidden]);
         // Slot 0 always counts as real: a document that tokenizes to nothing still needs one
         // finite slot, or the document pools reduce over an empty set and produce NaN.
-        let slot0 = Tensor::<B, 1, Int>::arange(0..c as i64, &device)
+        let slot0 = Tensor::<1, Int>::arange(0..c as i64, &device)
             .equal_elem(0)
             .reshape([1, c])
             .expand([b, c]);
@@ -296,7 +295,8 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
 
     /// Stages 5-6: produce document logits `[batch]`, chunk logits `[batch, chunks]`, and the
     /// real-chunk mask — the chunk head plus the attention+max document pooling.
-    pub fn forward(&self, ids: Tensor<B, 3, Int>) -> ModelOutput<B> {
+    #[must_use]
+    pub fn forward(&self, ids: Tensor<3, Int>) -> ModelOutput {
         let (h, chunk_mask) = self.encode_chunks(ids);
         let [b, c, hidden] = h.dims();
         let neg_inf = f64::NEG_INFINITY;
@@ -341,17 +341,13 @@ impl<B: Backend> HierarchicalSlopClassifier<B> {
 
 #[cfg(test)]
 mod tests {
-    use burn::backend::{Flex, flex::FlexDevice};
-
     use super::*;
-
-    type B = Flex;
 
     #[test]
     fn forward_shapes_and_finiteness() {
-        let device = FlexDevice;
+        let device = Device::flex();
         let cfg = HierarchicalModelConfig::new();
-        let model = cfg.init::<B>(&device);
+        let model = cfg.init(&device);
         let pad = cfg.pad_id() as i64;
 
         // Two documents: one with 1.5 real chunks, one fully padded (the NaN-guard case).
@@ -359,25 +355,22 @@ mod tests {
         for (i, v) in data.iter_mut().enumerate().take(cfg.chunk_size * 3 / 2) {
             *v = (i % 100) as i64;
         }
-        let ids = Tensor::<B, 1, Int>::from_ints(data.as_slice(), &device).reshape([
-            2,
-            3,
-            cfg.chunk_size,
-        ]);
+        let ids =
+            Tensor::<1, Int>::from_ints(data.as_slice(), &device).reshape([2, 3, cfg.chunk_size]);
 
         let out = model.forward(ids);
         assert_eq!(out.doc_logits.dims(), [2]);
         assert_eq!(out.chunk_logits.dims(), [2, 3]);
         assert_eq!(out.chunk_mask.dims(), [2, 3]);
 
-        let logits: Vec<f32> = out.doc_logits.into_data().to_vec().unwrap();
+        let logits: Vec<f32> = out.doc_logits.into_data().try_to_vec().unwrap();
         assert!(
             logits.iter().all(|v| v.is_finite()),
             "document logits must be finite even for an all-pad document: {logits:?}"
         );
 
         // Doc 0: chunks 0 and 1 real, chunk 2 padded. Doc 1: only the slot-0 clamp.
-        let mask: Vec<bool> = out.chunk_mask.into_data().to_vec().unwrap();
+        let mask: Vec<bool> = out.chunk_mask.into_data().try_to_vec().unwrap();
         assert_eq!(mask, vec![true, true, false, true, false, false]);
     }
 
@@ -385,7 +378,7 @@ mod tests {
     fn parameter_count_matches_python() {
         // Python reported 1,183,363 parameters for v16384-d64 at group=4. At group=2 the first
         // trunk layer halves its input: 1,183,363 - (4-2) * 64 * 256 = 1,150,595.
-        let model = HierarchicalModelConfig::new().init::<B>(&FlexDevice);
+        let model = HierarchicalModelConfig::new().init(&Device::flex());
         assert_eq!(model.num_params(), 1_150_595);
     }
 }

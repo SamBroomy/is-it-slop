@@ -6,9 +6,9 @@
 //! ("Training throughput"). Variants, each 50 warmup + 300 timed iterations
 //! (`STEP_BENCH_WARMUP`/`STEP_BENCH_ITERS` override, `STEP_BENCH_ONLY` picks one):
 //!
-//! - `fwd`: train-mode forward + loss, synced per iteration via `loss.into_scalar()`. Broken in
-//!   Burn 0.21: a forward-only loop under `Autodiff` leaks until macOS SIGKILLs the process (~130
-//!   iterations), so run this one alone and short if at all.
+//! - `fwd`: train-mode forward + loss, synced per iteration via `loss.into_scalar::<f32>()`. Broken
+//!   in Burn 0.21: a forward-only loop under `Autodiff` leaks until macOS SIGKILLs the process
+//!   (~130 iterations), so run this one alone and short if at all.
 //! - `fwd_inner`: inference-mode forward on the inner backend (no autodiff, dropout off) — compare
 //!   against a torch `eval()` + `no_grad()` forward.
 //! - `fwd_bwd`: forward + backward, no optimizer step.
@@ -23,21 +23,21 @@
 //! Run with the backend under test, never two benches concurrently (GPU contention), e.g.:
 //!
 //! ```sh
-//! cargo run --release -p is-it-slop-training --example step_bench --features metal
+//! STEP_BENCH_BACKEND=metal cargo run --release -p is-it-slop-training --example step_bench --features metal
 //! ```
+//!
+//! `STEP_BENCH_BACKEND` names one of the backends compiled in (default: the best one).
 
 #[path = "../src/backend.rs"]
+#[allow(dead_code)]
 mod backend;
 
 use std::{hint::black_box, time::Instant};
 
 use burn::{
-    module::AutodiffModule,
-    optim::{GradientsParams, Optimizer},
-    tensor::{
-        Int, Tensor, TensorData,
-        backend::{AutodiffBackend, Backend},
-    },
+    module::Module,
+    optim::GradientsParams,
+    tensor::{Device, Int, Tensor, TensorData},
 };
 use is_it_slop_training::{
     model::HierarchicalModelConfig,
@@ -50,12 +50,12 @@ fn env_count(name: &str, default: usize) -> usize {
     })
 }
 
-fn synthetic_batch<B: AutodiffBackend>(
+fn synthetic_batch(
     config: &HierarchicalModelConfig,
     batch_size: usize,
     max_chunks: usize,
-    device: &B::Device,
-) -> (Vec<i32>, Batch<B>) {
+    device: &Device,
+) -> (Vec<i32>, Batch) {
     // Deterministic LCG so runs are comparable; ids uniform over the vocabulary, no padding.
     let mut state = 0x853c_49e6_748f_ea9bu64;
     let n = batch_size * max_chunks * config.chunk_size;
@@ -101,25 +101,32 @@ fn bench(label: &str, mut iter: impl FnMut()) {
 }
 
 fn main() {
-    type B = backend::Selected;
-    let device = backend::device();
+    let backend = std::env::var("STEP_BENCH_BACKEND").map_or_else(
+        |_| backend::Backend::best(),
+        |name| {
+            backend::Backend::from_name(&name)
+                .expect("STEP_BENCH_BACKEND names a compiled-in backend")
+        },
+    );
+    // Autodiff is a property of the device now: tensors and models created on it record a graph.
+    let device = backend.device().autodiff();
     let model_config = HierarchicalModelConfig::new();
     let config = TrainingConfig::new();
     println!(
         "backend={} v{}-d{} batch={} [b, 8, {}]",
-        backend::NAME,
+        backend.name(),
         model_config.vocab_size,
         model_config.embed_dim,
         config.batch_size,
         model_config.chunk_size,
     );
-    B::seed(&device, config.seed);
+    device.seed(config.seed);
 
-    let (host_ids, batch) = synthetic_batch::<B>(&model_config, config.batch_size, 8, &device);
+    let (host_ids, batch) = synthetic_batch(&model_config, config.batch_size, 8, &device);
     let shape = [config.batch_size, 8, model_config.chunk_size];
 
     let trainable = TrainableClassifier {
-        model: model_config.init::<B>(&device),
+        model: model_config.init(&device),
         chunk_loss_weight: config.chunk_loss_weight,
     };
 
@@ -128,7 +135,7 @@ fn main() {
         let batch = batch.clone();
         bench("fwd", move || {
             let output = trainable.forward_step(batch.clone());
-            black_box(output.loss.into_scalar());
+            black_box(output.loss.into_scalar::<f32>());
         });
     }
 
@@ -136,10 +143,10 @@ fn main() {
         // Inference-mode forward on the inner backend: no autodiff bookkeeping, dropout off.
         // Compare against a torch `eval()` + `no_grad()` forward, not the train-mode one.
         let model = trainable.model.valid();
-        let ids = batch.ids.clone().inner();
+        let ids = batch.ids.clone().without_autodiff();
         bench("fwd_inner", move || {
             let output = model.forward(ids.clone());
-            black_box(output.doc_logits.mean().into_scalar());
+            black_box(output.doc_logits.mean().into_scalar::<f32>());
         });
     }
 
@@ -153,25 +160,25 @@ fn main() {
             let output = trainable.forward_step(batch.clone());
             let grads = GradientsParams::from_grads(output.loss.backward(), &trainable);
             black_box(&grads);
-            black_box(output.loss.into_scalar());
+            black_box(output.loss.into_scalar::<f32>());
         });
     }
 
     {
         let mut trainable = trainable.clone();
-        let mut optim = RankGatedAdamW::init::<B, TrainableClassifier<B>>(config.weight_decay);
+        let mut optim = RankGatedAdamW::init(config.weight_decay);
         let batch = batch.clone();
         bench("step", move || {
             let output = trainable.forward_step(batch.clone());
             let grads = GradientsParams::from_grads(output.loss.backward(), &trainable);
             trainable = optim.step(config.lr, trainable.clone(), grads);
-            black_box(output.loss.into_scalar());
+            black_box(output.loss.into_scalar::<f32>());
         });
     }
 
     {
         let mut trainable = trainable.clone();
-        let mut optim = RankGatedAdamW::init::<B, TrainableClassifier<B>>(config.weight_decay);
+        let mut optim = RankGatedAdamW::init(config.weight_decay);
         let batch = batch.clone();
         bench("step+pull", move || {
             let output = trainable.forward_step(batch.clone());
@@ -179,26 +186,23 @@ fn main() {
             trainable = optim.step(config.lr, trainable.clone(), grads);
             black_box(output.output.into_data());
             black_box(output.targets.into_data());
-            black_box(output.loss.into_scalar());
+            black_box(output.loss.into_scalar::<f32>());
         });
     }
 
     {
         let mut trainable = trainable;
-        let mut optim = RankGatedAdamW::init::<B, TrainableClassifier<B>>(config.weight_decay);
+        let mut optim = RankGatedAdamW::init(config.weight_decay);
         let labels = batch.labels;
         bench("step+h2d", move || {
             let fresh = Batch {
-                ids: Tensor::<B, 3, Int>::from_data(
-                    TensorData::new(host_ids.clone(), shape),
-                    &device,
-                ),
+                ids: Tensor::<3, Int>::from_data(TensorData::new(host_ids.clone(), shape), &device),
                 labels: labels.clone(),
             };
             let output = trainable.forward_step(fresh);
             let grads = GradientsParams::from_grads(output.loss.backward(), &trainable);
             trainable = optim.step(config.lr, trainable.clone(), grads);
-            black_box(output.loss.into_scalar());
+            black_box(output.loss.into_scalar::<f32>());
         });
     }
 }

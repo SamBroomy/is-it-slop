@@ -1,10 +1,10 @@
 //! Train the hierarchical slop classifier and inspect its artifacts.
 //!
-//! The backend is a compile-time feature, following Burn's text-classification example: build
-//! with `--features metal` (Apple GPU), `wgpu`, or `cuda`; with no feature the Flex pure-Rust
-//! CPU backend runs everywhere. `train` runs the frozen recipe with the terminal metrics
-//! dashboard; `evaluate` re-scores a trained bundle's shrunk weight forms afterwards,
-//! deliberately outside the training run so a backend limitation there can never cost a
+//! Backends are cargo features (`metal`, `wgpu`, `vulkan`, `cuda`, `rocm`) and the choice among
+//! those compiled in is made at run time with `--backend` (default: the best one compiled in);
+//! Flex, the pure-Rust CPU backend, is always available. `train` runs the frozen recipe with the
+//! terminal metrics dashboard; `evaluate` re-scores a trained bundle's shrunk weight forms
+//! afterwards, deliberately outside the training run so a backend limitation there can never cost a
 //! finished run its outputs.
 //!
 //! ```sh
@@ -21,7 +21,7 @@ use burn::{
     config::Config,
     data::{dataloader::DataLoaderBuilder, dataset::InMemDataset},
     module::Module,
-    tensor::backend::AutodiffBackend,
+    tensor::Device,
 };
 use clap::{Parser, Subcommand};
 use is_it_slop_training::{
@@ -38,6 +38,9 @@ use tracing::info;
 /// Train the slop classifier and inspect the resulting bundle.
 #[derive(Parser, Debug)]
 struct Cli {
+    /// Backend to run on, among those compiled in (default: the best one compiled in).
+    #[arg(long, global = true)]
+    backend: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -87,10 +90,6 @@ struct EvaluateArgs {
 
 mod backend;
 
-/// The non-autodiff backend evaluation and checking run on: a forward-only loop under
-/// `Autodiff` leaks until the OS kills it (EXPERIMENTS.md).
-type Inner = <backend::Selected as AutodiffBackend>::InnerBackend;
-
 fn main() -> Result<()> {
     // Burn and CubeCL log per-iteration progress and autotune chatter at INFO; keep the console
     // for this crate's own reporting (RUST_LOG still overrides).
@@ -102,11 +101,17 @@ fn main() -> Result<()> {
         )
         .init();
 
-    match Cli::parse().command {
-        Command::Train(args) => {
-            launch::<backend::Selected>(&args, backend::NAME, &backend::device())
-        }
-        Command::Evaluate(args) => evaluate::<Inner>(&args, &backend::device()),
+    let cli = Cli::parse();
+    let backend = match &cli.backend {
+        Some(name) => backend::Backend::from_name(name).map_err(anyhow::Error::msg)?,
+        None => backend::Backend::best(),
+    };
+    // Evaluation and checking run on a device without autodiff: a forward-only loop with autodiff
+    // on leaks until the OS kills it (EXPERIMENTS.md). Training derives its device with
+    // `.autodiff()`.
+    match cli.command {
+        Command::Train(args) => launch(&args, backend.name(), &backend.device()),
+        Command::Evaluate(args) => evaluate(&args, &backend.device()),
     }
 }
 
@@ -139,11 +144,11 @@ struct SplitPredictions {
     real_chunks: Vec<f32>,
 }
 
-fn predictions<B: burn::tensor::backend::Backend>(
-    model: &HierarchicalSlopClassifier<B>,
+fn predictions(
+    model: &HierarchicalSlopClassifier,
     batcher: &SlopBatcher,
     encoded: &[EncodedDocument],
-    device: &B::Device,
+    device: &Device,
 ) -> SplitPredictions {
     use burn::{data::dataloader::batcher::Batcher, tensor::activation::sigmoid};
 
@@ -154,7 +159,7 @@ fn predictions<B: burn::tensor::backend::Backend>(
         real_chunks: Vec::with_capacity(encoded.len()),
     };
     for docs in encoded.chunks(512) {
-        let batch: Batch<B> = batcher.batch(docs.to_vec(), device);
+        let batch: Batch = batcher.batch(docs.to_vec(), device);
         let output = model.forward(batch.ids);
 
         let chunk_probs = sigmoid(output.chunk_logits);
@@ -174,13 +179,22 @@ fn predictions<B: burn::tensor::backend::Backend>(
                 .doc_logits
                 .into_data()
                 .convert::<f32>()
-                .to_vec::<f32>()
+                .try_to_vec::<f32>()
                 .unwrap(),
         );
-        out.chunk_std
-            .extend(std.into_data().convert::<f32>().to_vec::<f32>().unwrap());
-        out.real_chunks
-            .extend(count.into_data().convert::<f32>().to_vec::<f32>().unwrap());
+        out.chunk_std.extend(
+            std.into_data()
+                .convert::<f32>()
+                .try_to_vec::<f32>()
+                .unwrap(),
+        );
+        out.real_chunks.extend(
+            count
+                .into_data()
+                .convert::<f32>()
+                .try_to_vec::<f32>()
+                .unwrap(),
+        );
     }
     out
 }
@@ -279,11 +293,8 @@ fn uncertainty_signals(
 /// candidate, ~50% smaller; `model.bpk` is Burn's native store, a local artifact only (zero-copy
 /// embedding, and the natural checkpoint format if epoch checkpointing returns with resume
 /// support).
-fn save_model_artifacts<B: burn::tensor::backend::Backend>(
-    model: &HierarchicalSlopClassifier<B>,
-    artifact_dir: &Path,
-) -> Result<()> {
-    use burn_store::{BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
+fn save_model_artifacts(model: &HierarchicalSlopClassifier, artifact_dir: &Path) -> Result<()> {
+    use burn::store::{BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
 
     let version = env!("CARGO_PKG_VERSION");
     let mut bpk = BurnpackStore::from_file(artifact_dir.join("model.bpk"))
@@ -319,7 +330,7 @@ fn epochs_trained(artifact_dir: &Path) -> Option<usize> {
         .max()
 }
 
-fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Device) -> Result<()> {
+fn launch(args: &TrainArgs, backend: &str, device: &Device) -> Result<()> {
     info!(backend, ?device, "starting");
 
     let train_split = load(&args.data_dir, args.limit, "train")?;
@@ -400,13 +411,14 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
     };
 
     let started = std::time::Instant::now();
-    let result = train::<B>(
+    let train_device = device.clone().autodiff();
+    let result = train(
         artifact_dir,
-        model_config.init::<B>(device),
+        model_config.init(&train_device),
         &config,
         dataloader_train,
         dataloader_valid,
-        device,
+        &train_device,
         renderer,
     );
     let train_seconds = started.elapsed().as_secs_f64();
@@ -416,13 +428,12 @@ fn launch<B: AutodiffBackend>(args: &TrainArgs, backend: &str, device: &B::Devic
     // The parity-gate numbers: full-split AUC, the statistic the campaign tables report
     // (combo band: validation 0.9960-0.9961, test 0.9968). AUC is invariant under the monotone
     // calibration, so it is computed on the raw logits.
-    let inner_device = Default::default();
-    let val = predictions(&result.model.model, &batcher, &encoded_valid, &inner_device);
+    let val = predictions(&result.model.model, &batcher, &encoded_valid, device);
     let val_auc = roc_auc(&val.labels, &val.logits);
     println!("validation AUC (full split): {val_auc:.6}");
     let test_split = load(&args.data_dir, args.limit, "test")?;
     let encoded_test = encoder.encode_batch(&test_split.texts, &test_split.labels);
-    let test = predictions(&result.model.model, &batcher, &encoded_test, &inner_device);
+    let test = predictions(&result.model.model, &batcher, &encoded_test, device);
     println!(
         "test AUC (full split): {:.6}",
         roc_auc(&test.labels, &test.logits)
@@ -499,28 +510,25 @@ struct ArtifactChecks {
 /// (biases, `LayerNorm` scales) in float.
 struct MatrixQuantizer(burn::module::Quantizer);
 
-impl<B: burn::tensor::backend::Backend> burn::module::ModuleMapper<B> for MatrixQuantizer {
+impl burn::module::ModuleMapper for MatrixQuantizer {
     fn map_float<const D: usize>(
         &mut self,
-        param: burn::module::Param<burn::tensor::Tensor<B, D>>,
-    ) -> burn::module::Param<burn::tensor::Tensor<B, D>> {
+        param: burn::module::Param<burn::tensor::Tensor<D>>,
+    ) -> burn::module::Param<burn::tensor::Tensor<D>> {
         if D >= 2 {
-            burn::module::ModuleMapper::<B>::map_float(&mut self.0, param)
+            burn::module::ModuleMapper::map_float(&mut self.0, param)
         } else {
             param
         }
     }
 }
 
-fn evaluate<B: burn::tensor::backend::Backend>(
-    args: &EvaluateArgs,
-    device: &B::Device,
-) -> Result<()> {
+fn evaluate(args: &EvaluateArgs, device: &Device) -> Result<()> {
     use burn::{
         module::Quantizer,
+        store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore},
         tensor::quantization::{Calibration, QuantScheme, QuantStore, QuantValue},
     };
-    use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
 
     let dir = &args.artifact_dir;
     let model_config = HierarchicalModelConfig::load(dir.join("model_config.json"))
@@ -538,7 +546,7 @@ fn evaluate<B: burn::tensor::backend::Backend>(
     let valid = load(&args.data_dir, args.limit, "validation")?;
     let encoded = encoder.encode_batch(&valid.texts, &valid.labels);
 
-    let mut model = model_config.init::<B>(device);
+    let mut model = model_config.init(device);
     let mut store = SafetensorsStore::from_file(dir.join("model.safetensors"));
     model
         .load_from(&mut store)
@@ -546,7 +554,7 @@ fn evaluate<B: burn::tensor::backend::Backend>(
     let p = predictions(&model, &batcher, &encoded, device);
     let full = roc_auc(&p.labels, &p.logits);
 
-    let mut f16_model = model_config.init::<B>(device);
+    let mut f16_model = model_config.init(device);
     let mut store = SafetensorsStore::from_file(dir.join("model.f16.safetensors"))
         .with_from_adapter(HalfPrecisionAdapter::new());
     f16_model
@@ -557,12 +565,12 @@ fn evaluate<B: burn::tensor::backend::Backend>(
 
     // Native store: the packed-u32 default requires last dims divisible by 4, which the
     // [hidden, 1] head weights are not — and its failure poisons the device stream.
-    let mut quantizer = MatrixQuantizer(Quantizer {
-        calibration: Calibration::MinMax,
-        scheme: QuantScheme::default()
+    let mut quantizer = MatrixQuantizer(Quantizer::new(
+        Calibration::MinMax,
+        QuantScheme::default()
             .with_value(QuantValue::Q8S)
             .with_store(QuantStore::Native),
-    });
+    ));
     let q8_model = model.map(&mut quantizer);
     let p = predictions(&q8_model, &batcher, &encoded, device);
     let q8 = roc_auc(&p.labels, &p.logits);

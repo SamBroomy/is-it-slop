@@ -10,7 +10,7 @@ mod splits;
 
 use burn::{
     data::dataloader::batcher::Batcher,
-    tensor::{Int, Tensor, backend::Backend},
+    tensor::{Device, Int, Tensor},
 };
 pub use is_it_slop_preprocessing::encoder::{
     DocumentEncoder, EncodedDocument, EncoderBundleConfig, EncoderError, O200K_CEILING, Vocabulary,
@@ -28,8 +28,8 @@ pub struct SlopBatcher {
     pub chunk_size: usize,
 }
 
-impl<B: Backend> Batcher<B, EncodedDocument, Batch<B>> for SlopBatcher {
-    fn batch(&self, items: Vec<EncodedDocument>, device: &B::Device) -> Batch<B> {
+impl Batcher<EncodedDocument, Batch> for SlopBatcher {
+    fn batch(&self, items: Vec<EncodedDocument>, device: &Device) -> Batch {
         let n = items.len();
         let mut ids = Vec::with_capacity(n * self.max_chunks * self.chunk_size);
         let mut labels = Vec::with_capacity(n);
@@ -43,12 +43,12 @@ impl<B: Backend> Batcher<B, EncodedDocument, Batch<B>> for SlopBatcher {
             labels.push(item.label);
         }
         Batch {
-            ids: Tensor::<B, 1, Int>::from_ints(ids.as_slice(), device).reshape([
+            ids: Tensor::<1, Int>::from_ints(ids.as_slice(), device).reshape([
                 n,
                 self.max_chunks,
                 self.chunk_size,
             ]),
-            labels: Tensor::<B, 1>::from_floats(labels.as_slice(), device),
+            labels: Tensor::<1>::from_floats(labels.as_slice(), device),
         }
     }
 }

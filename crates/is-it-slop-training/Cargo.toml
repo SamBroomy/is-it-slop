@@ -14,16 +14,13 @@ publish = false
 
 [features]
 default = []
-# Backends are additive; the training binary picks the best one enabled — see src/backend.rs for
-# the priority order. Flex (pure-Rust CPU) is the no-feature fallback so tests run everywhere.
+# Backends are additive and chosen at runtime (`--backend`, default: the best one compiled in) —
+# see src/backend.rs for the priority order. Flex (pure-Rust CPU) is always available.
 metal = ["burn/metal"]
 cuda = ["burn/cuda"]
 rocm = ["burn/rocm"]
 vulkan = ["burn/vulkan"]
 wgpu = ["burn/wgpu"]
-tch-cpu = ["burn/tch"]
-tch-gpu = ["burn/tch"]
-remote = ["burn/remote"]
 
 [dependencies]
 burn = { workspace = true, features = [
@@ -31,12 +28,11 @@ burn = { workspace = true, features = [
     "autodiff",
     "train",
     "tui",
-    "sqlite-bundled",
     "flex",
+    "safetensors",
     "autotune",
     "fusion",
 ] }
-burn-store = { workspace = true }
 clap = { workspace = true }
 is-it-slop-model = { workspace = true }
 is-it-slop-preprocessing = { workspace = true }

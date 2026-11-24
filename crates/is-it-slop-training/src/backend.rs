@@ -1,135 +1,110 @@
-//! Compile-time backend selection for the training binary.
+//! Runtime backend selection for the training binary.
 //!
-//! Mirrors Burn's text-classification example: each backend is a cargo feature, and when several
-//! are enabled the highest-priority one wins — metal > cuda > rocm > vulkan > wgpu > tch-gpu >
-//! tch-cpu > remote > flex (the no-feature fallback, so tests and plain builds always compile).
+//! Burn 0.22 picks the backend at runtime through a [`Device`]; cargo features only decide which
+//! backends are compiled in. Several can be enabled together and `--backend` (or the default
+//! priority below) chooses among them: cuda > rocm > metal > vulkan > wgpu > flex. Flex is always
+//! compiled in, so plain builds and tests work everywhere.
 //!
-//! The float element is always f32. A pure-f16 element is deliberately not offered: without loss
-//! scaling this recipe overflows to NaN from epoch 1 (measured on a full-data Metal run). Burn's
-//! `flex32` relaxed element is the untried middle ground if training throughput ever matters.
+//! The float element is the device default (f32). A pure-f16 element is deliberately not used:
+//! without loss scaling this recipe overflows to NaN from epoch 1 (measured on a full-data Metal
+//! run).
 
-use burn::{backend::Autodiff, tensor::Device};
+use burn::tensor::Device;
 
-#[cfg(feature = "metal")]
-mod selected {
-    pub type Inner = burn::backend::Metal<f32, i32>;
-    pub const NAME: &str = "metal";
+/// A backend this binary can train on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    /// NVIDIA GPU through CUDA.
+    #[cfg(feature = "cuda")]
+    Cuda,
+    /// AMD GPU through ROCm.
+    #[cfg(feature = "rocm")]
+    Rocm,
+    /// Apple GPU through Metal.
+    #[cfg(feature = "metal")]
+    Metal,
+    /// GPU through Vulkan.
+    #[cfg(feature = "vulkan")]
+    Vulkan,
+    /// GPU through WGPU's automatically chosen graphics API.
+    #[cfg(feature = "wgpu")]
+    Wgpu,
+    /// Burn's pure-Rust CPU backend.
+    Flex,
 }
 
-#[cfg(all(feature = "cuda", not(feature = "metal")))]
-mod selected {
-    pub type Inner = burn::backend::Cuda<f32, i32>;
-    pub const NAME: &str = "cuda";
-}
-
-#[cfg(all(feature = "rocm", not(any(feature = "metal", feature = "cuda"))))]
-mod selected {
-    pub type Inner = burn::backend::Rocm<f32, i32>;
-    pub const NAME: &str = "rocm";
-}
-
-#[cfg(all(
-    feature = "vulkan",
-    not(any(feature = "metal", feature = "cuda", feature = "rocm"))
-))]
-mod selected {
-    pub type Inner = burn::backend::Vulkan<f32, i32>;
-    pub const NAME: &str = "vulkan";
-}
-
-#[cfg(all(
-    feature = "wgpu",
-    not(any(
-        feature = "metal",
-        feature = "cuda",
-        feature = "rocm",
-        feature = "vulkan"
-    ))
-))]
-mod selected {
-    pub type Inner = burn::backend::Wgpu<f32, i32>;
-    pub const NAME: &str = "wgpu";
-}
-
-#[cfg(all(
-    any(feature = "tch-gpu", feature = "tch-cpu"),
-    not(any(
-        feature = "metal",
-        feature = "cuda",
-        feature = "rocm",
-        feature = "vulkan",
-        feature = "wgpu"
-    ))
-))]
-mod selected {
-    pub type Inner = burn::backend::libtorch::LibTorch<f32>;
-    #[cfg(feature = "tch-gpu")]
-    pub const NAME: &str = "tch-gpu";
-    #[cfg(not(feature = "tch-gpu"))]
-    pub const NAME: &str = "tch-cpu";
-}
-
-#[cfg(all(
-    feature = "remote",
-    not(any(
-        feature = "metal",
-        feature = "cuda",
-        feature = "rocm",
-        feature = "vulkan",
-        feature = "wgpu",
-        feature = "tch-gpu",
-        feature = "tch-cpu"
-    ))
-))]
-mod selected {
-    pub type Inner = burn::backend::RemoteBackend;
-    pub const NAME: &str = "remote";
-}
-
-#[cfg(not(any(
-    feature = "metal",
-    feature = "cuda",
-    feature = "rocm",
-    feature = "vulkan",
-    feature = "wgpu",
-    feature = "tch-gpu",
-    feature = "tch-cpu",
-    feature = "remote"
-)))]
-mod selected {
-    pub type Inner = burn::backend::Flex;
-    pub const NAME: &str = "flex";
-}
-
-/// The training backend the enabled features selected.
-pub type Selected = Autodiff<selected::Inner>;
-
-/// Human-readable name of the selected backend, for logs.
-pub const NAME: &str = selected::NAME;
-
-/// The device to train on.
-///
-/// Every backend's default device is right except libtorch, whose default is CPU: `tch-gpu`
-/// wants MPS on macOS and the first CUDA device elsewhere.
-pub fn device() -> Device<Selected> {
-    #[cfg(all(
-        feature = "tch-gpu",
-        not(any(
-            feature = "metal",
-            feature = "cuda",
-            feature = "rocm",
-            feature = "vulkan",
-            feature = "wgpu"
-        ))
-    ))]
-    {
-        #[cfg(target_os = "macos")]
-        return burn::backend::libtorch::LibTorchDevice::Mps;
-        #[cfg(not(target_os = "macos"))]
-        return burn::backend::libtorch::LibTorchDevice::Cuda(0);
+impl Backend {
+    /// Every backend compiled into this binary, in default-priority order.
+    #[must_use]
+    pub fn available() -> Vec<Self> {
+        vec![
+            #[cfg(feature = "cuda")]
+            Self::Cuda,
+            #[cfg(feature = "rocm")]
+            Self::Rocm,
+            #[cfg(feature = "metal")]
+            Self::Metal,
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan,
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu,
+            Self::Flex,
+        ]
     }
-    // The concrete device type differs per selected backend, so the trait-level default is the
-    // point here.
-    #[allow(unreachable_code, clippy::default_trait_access)]
-    Default::default()
+
+    /// The highest-priority backend compiled in.
+    #[must_use]
+    pub fn best() -> Self {
+        Self::available()[0]
+    }
+
+    /// The name used on the command line and in logs.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            #[cfg(feature = "cuda")]
+            Self::Cuda => "cuda",
+            #[cfg(feature = "rocm")]
+            Self::Rocm => "rocm",
+            #[cfg(feature = "metal")]
+            Self::Metal => "metal",
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan => "vulkan",
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu => "wgpu",
+            Self::Flex => "flex",
+        }
+    }
+
+    /// Look a backend up by name among those compiled in.
+    pub fn from_name(name: &str) -> Result<Self, String> {
+        Self::available()
+            .into_iter()
+            .find(|b| b.name() == name)
+            .ok_or_else(|| {
+                let names: Vec<_> = Self::available().into_iter().map(Self::name).collect();
+                format!(
+                    "backend `{name}` is not compiled into this binary (available: {})",
+                    names.join(", ")
+                )
+            })
+    }
+
+    /// The device to run on. The first device of the backend's kind.
+    #[must_use]
+    pub fn device(self) -> Device {
+        match self {
+            #[cfg(feature = "cuda")]
+            Self::Cuda => Device::cuda(0),
+            #[cfg(feature = "rocm")]
+            Self::Rocm => Device::rocm(0),
+            #[cfg(feature = "metal")]
+            Self::Metal => Device::metal(burn::tensor::DeviceKind::default()),
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan => Device::vulkan(burn::tensor::DeviceKind::default()),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu => Device::wgpu(burn::tensor::DeviceKind::default()),
+            Self::Flex => Device::flex(),
+        }
+    }
 }

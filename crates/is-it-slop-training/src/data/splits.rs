@@ -34,16 +34,17 @@ impl SplitData {
 /// Read a split parquet (e.g. `data/3.0.0/train.parquet`).
 pub fn read_split(path: &Path) -> Result<SplitData> {
     let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let df = ParquetReader::new(file)
-        .finish()
-        .with_context(|| format!("reading parquet {}", path.display()))?;
+    // polars' own `PolarsContext` also has `with_context`, so name anyhow's explicitly.
+    let df = Context::with_context(ParquetReader::new(file).finish(), || {
+        format!("reading parquet {}", path.display())
+    })?;
 
     // Null cells fail loudly: the released splits are fully populated, so a null means the file
     // is not what this loader thinks it is.
     let texts: Vec<String> = df
         .column("text")?
         .str()?
-        .into_iter()
+        .iter()
         .map(|t| t.map(str::to_owned))
         .collect::<Option<_>>()
         .ok_or_else(|| anyhow!("null text cell in {}", path.display()))?;
@@ -51,7 +52,7 @@ pub fn read_split(path: &Path) -> Result<SplitData> {
         .column("label")?
         .cast(&DataType::Float32)?
         .f32()?
-        .into_iter()
+        .iter()
         .collect::<Option<_>>()
         .ok_or_else(|| anyhow!("null label cell in {}", path.display()))?;
 

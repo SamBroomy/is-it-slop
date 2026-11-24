@@ -1,6 +1,6 @@
 //! One forward pass over a group of encoded documents.
 
-use burn::tensor::{Int, Tensor, activation::sigmoid, backend::Backend};
+use burn::tensor::{Device, Int, Tensor, activation::sigmoid};
 use is_it_slop_model::HierarchicalSlopClassifier;
 
 use super::UnifiedPrediction;
@@ -24,9 +24,9 @@ pub fn run_on_cpu(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
     run_with(&crate::model::CPU_MODEL, &crate::model::cpu_device(), docs)
 }
 
-fn run_with<B: Backend>(
-    model: &HierarchicalSlopClassifier<B>,
-    device: &B::Device,
+fn run_with(
+    model: &HierarchicalSlopClassifier,
+    device: &Device,
     docs: &[&[u16]],
 ) -> Vec<UnifiedPrediction> {
     let chunk_size = ENCODER.chunk_size();
@@ -50,18 +50,18 @@ fn run_with<B: Backend>(
             *slot = i64::from(id);
         }
     }
-    let ids = Tensor::<B, 1, Int>::from_ints(ids.as_slice(), device)
+    let ids = Tensor::<1, Int>::from_ints(ids.as_slice(), device)
         .reshape([batch, max_chunks, chunk_size]);
 
     let output = model.forward(ids);
 
     let doc_probs: Vec<f32> = sigmoid(output.doc_logits / f64::from(CALIBRATION_TEMPERATURE))
         .into_data()
-        .to_vec()
+        .try_to_vec()
         .expect("document probabilities");
     let chunk_probs: Vec<f32> = sigmoid(output.chunk_logits)
         .into_data()
-        .to_vec()
+        .try_to_vec()
         .expect("chunk probabilities");
     // Read the mask through int: GPU backends store bools as bytes, which `to_vec::<bool>` rejects.
     let chunk_mask: Vec<bool> = output

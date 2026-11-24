@@ -16,78 +16,22 @@
 //!
 //! # Global Statics
 //!
-//! - [`MODEL`]: the classifier on the primary [`Backend`] (immutable after initialization), and in
-//!   accelerated builds `CPU_MODEL`, the same weights on the [`CpuBackend`]
+//! - [`MODEL`]: the classifier on the primary [`device`] (immutable after initialization), and in
+//!   accelerated builds `CPU_MODEL`, the same weights on the [`cpu_device`]
 //! - [`ENCODER`]: the document encoder reconstructing the bundle's exact text→grid encoding
 
 use std::sync::LazyLock;
 
-use burn_store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore};
+use burn::{
+    store::{HalfPrecisionAdapter, ModuleSnapshot, SafetensorsStore},
+    tensor::Device,
+};
 use is_it_slop_model::{HierarchicalModelConfig, HierarchicalSlopClassifier};
 use is_it_slop_preprocessing::encoder::DocumentEncoder;
 
 include!(concat!(env!("OUT_DIR"), "/threshold.rs"));
 
-/// The CPU backend, chosen by cargo feature: `cpu` (burn-cpu), else `ndarray` (which `accelerate`
-/// implies), else Flex, burn's pure-Rust CPU backend. It is [`Backend`] itself in a CPU build and
-/// the fallback for small calls in an accelerated one (see `pipeline::accelerated`).
-#[cfg(feature = "cpu")]
-pub type CpuBackend = burn::backend::Cpu;
-/// See the `cpu` definition.
-#[cfg(all(feature = "ndarray", not(feature = "cpu")))]
-pub type CpuBackend = burn::backend::NdArray;
-/// See the `cpu` definition.
-#[cfg(not(any(feature = "cpu", feature = "ndarray")))]
-pub type CpuBackend = burn::backend::Flex;
-
-/// The primary inference backend, chosen at compile time by cargo feature, in order of
-/// precedence: `cuda`, `rocm`, `metal`, `vulkan`, `webgpu`, `wgpu` (accelerators; the wgpu family
-/// implies `wgpu`, so the more specific one wins), else the [`CpuBackend`].
-///
-/// Inference must run on a non-autodiff backend — forward passes on an autodiff backend
-/// accumulate graph state and leak.
-#[cfg(feature = "cuda")]
-pub type Backend = burn::backend::Cuda;
-/// See the `cuda` definition.
-#[cfg(all(feature = "rocm", not(feature = "cuda")))]
-pub type Backend = burn::backend::Rocm;
-/// See the `cuda` definition.
-#[cfg(all(feature = "metal", not(any(feature = "cuda", feature = "rocm"))))]
-pub type Backend = burn::backend::Metal;
-/// See the `cuda` definition.
-#[cfg(all(
-    feature = "vulkan",
-    not(any(feature = "cuda", feature = "rocm", feature = "metal"))
-))]
-pub type Backend = burn::backend::Vulkan;
-/// See the `cuda` definition.
-#[cfg(all(
-    feature = "webgpu",
-    not(any(
-        feature = "cuda",
-        feature = "rocm",
-        feature = "metal",
-        feature = "vulkan"
-    ))
-))]
-pub type Backend = burn::backend::WebGpu;
-/// See the `cuda` definition.
-#[cfg(all(
-    feature = "wgpu",
-    not(any(
-        feature = "cuda",
-        feature = "rocm",
-        feature = "metal",
-        feature = "vulkan",
-        feature = "webgpu"
-    ))
-))]
-pub type Backend = burn::backend::Wgpu;
-/// See the `cuda` definition.
-#[cfg(not(accelerated))]
-pub type Backend = CpuBackend;
-
-/// The [`CpuBackend`]'s name, for logs and benchmark labels.
+/// The CPU backend's name, for logs and benchmark labels.
 pub const CPU_BACKEND: &str = if cfg!(feature = "cpu") {
     "cpu"
 } else if cfg!(feature = "accelerate") {
@@ -100,7 +44,8 @@ pub const CPU_BACKEND: &str = if cfg!(feature = "cpu") {
     "flex"
 };
 
-/// The primary [`Backend`]'s name, for logs and benchmark labels; same precedence as the type.
+/// The primary backend's name, for logs and benchmark labels. Precedence: `cuda`, `rocm`, `metal`,
+/// `vulkan`, `webgpu`, `wgpu` (accelerators, which set `cfg(accelerated)`), then the CPU backend.
 pub const BACKEND: &str = if cfg!(feature = "cuda") {
     "cuda"
 } else if cfg!(feature = "rocm") {
@@ -117,16 +62,60 @@ pub const BACKEND: &str = if cfg!(feature = "cuda") {
     CPU_BACKEND
 };
 
-/// The primary backend's default device (the CPU, or the first GPU).
+/// The primary inference device, chosen at compile time by cargo feature in the same precedence
+/// as [`BACKEND`] (the wgpu family implies `wgpu`, so the more specific one wins).
+///
+/// Inference must run on a device without autodiff: forward passes with autodiff on accumulate
+/// graph state and leak.
 #[must_use]
-pub fn device() -> burn::tensor::Device<Backend> {
-    burn::tensor::Device::<Backend>::default()
+pub fn device() -> Device {
+    #[cfg(feature = "cuda")]
+    return Device::cuda(0);
+    #[cfg(all(feature = "rocm", not(feature = "cuda")))]
+    return Device::rocm(0);
+    #[cfg(all(feature = "metal", not(any(feature = "cuda", feature = "rocm"))))]
+    return Device::metal(burn::tensor::DeviceKind::default());
+    #[cfg(all(
+        feature = "vulkan",
+        not(any(feature = "cuda", feature = "rocm", feature = "metal"))
+    ))]
+    return Device::vulkan(burn::tensor::DeviceKind::default());
+    #[cfg(all(
+        feature = "webgpu",
+        not(any(
+            feature = "cuda",
+            feature = "rocm",
+            feature = "metal",
+            feature = "vulkan"
+        ))
+    ))]
+    return Device::webgpu(burn::tensor::DeviceKind::default());
+    #[cfg(all(
+        feature = "wgpu",
+        not(any(
+            feature = "cuda",
+            feature = "rocm",
+            feature = "metal",
+            feature = "vulkan",
+            feature = "webgpu"
+        ))
+    ))]
+    return Device::wgpu(burn::tensor::DeviceKind::default());
+    #[cfg(not(accelerated))]
+    return cpu_device();
 }
 
-/// The CPU backend's device.
+/// The CPU device: burn-cpu (`cpu`), else ndarray (`ndarray`, which `accelerate` implies), else
+/// Flex, burn's pure-Rust CPU backend. It is [`device`] itself in a CPU build and the fallback for
+/// small calls in an accelerated one (see `pipeline::accelerated`).
 #[must_use]
-pub fn cpu_device() -> burn::tensor::Device<CpuBackend> {
-    burn::tensor::Device::<CpuBackend>::default()
+pub fn cpu_device() -> Device {
+    #[cfg(feature = "cpu")]
+    return Device::cpu();
+    #[cfg(all(feature = "ndarray", not(feature = "cpu")))]
+    return Device::ndarray();
+    #[cfg(not(any(feature = "cpu", feature = "ndarray")))]
+    return Device::flex();
 }
 
 /// Current model version
@@ -167,22 +156,22 @@ static MODEL_CONFIG: &str = include_str!(concat!(
 ///
 /// Burn modules are immutable at inference time, so no lock is needed; the forward pass
 /// takes `&self` and is safe to share across threads.
-pub static MODEL: LazyLock<HierarchicalSlopClassifier<Backend>> = LazyLock::new(|| load(&device()));
+pub static MODEL: LazyLock<HierarchicalSlopClassifier> = LazyLock::new(|| load(&device()));
 
-/// The same classifier on the [`CpuBackend`], for the calls too small to be worth a GPU pass.
+/// The same classifier on the [`cpu_device`], for the calls too small to be worth a GPU pass.
 /// Loaded on first such call, so a build that only ever batches never pays for it.
 #[cfg(accelerated)]
-pub(crate) static CPU_MODEL: LazyLock<HierarchicalSlopClassifier<CpuBackend>> =
+pub(crate) static CPU_MODEL: LazyLock<HierarchicalSlopClassifier> =
     LazyLock::new(|| load(&cpu_device()));
 
 /// The embedded config and weights on `device`.
-fn load<B: burn::tensor::backend::Backend>(device: &B::Device) -> HierarchicalSlopClassifier<B> {
+fn load(device: &Device) -> HierarchicalSlopClassifier {
     let config: HierarchicalModelConfig =
         serde_json::from_str(MODEL_CONFIG).expect("embedded model_config.json parses");
     config
         .validate()
         .expect("embedded model_config.json satisfies the model contract");
-    let mut model = config.init::<B>(device);
+    let mut model = config.init(device);
     let mut store = SafetensorsStore::from_bytes(Some(WEIGHTS_BYTES.to_vec()))
         .with_from_adapter(HalfPrecisionAdapter::new());
     model
