@@ -5,7 +5,15 @@ including single and batch predictions, result structure, and edge cases.
 """
 
 import pytest
-from is_it_slop import CLASSIFICATION_THRESHOLD, MODEL_VERSION, Prediction, is_this_slop, is_this_slop_batch
+from is_it_slop import (
+    CLASSIFICATION_THRESHOLD,
+    MODEL_VERSION,
+    Classification,
+    Prediction,
+    is_this_slop,
+    is_this_slop_batch,
+    is_this_slop_each,
+)
 
 
 class TestConstants:
@@ -305,3 +313,59 @@ class TestEdgeCases:
 
         with pytest.raises(ValueError, match="threshold"):
             is_this_slop(text, threshold=1.5)
+
+
+class TestApiShape:
+    """Shape of the public API: enum labels, immutability, per-text batches."""
+
+    def test_classification_is_enum_and_str_compatible(self) -> None:
+        """Classification is an enum that still compares equal to its label."""
+        result = is_this_slop("Enum check text.")
+
+        assert isinstance(result.classification, Classification)
+        assert result.classification == result.classification.value
+        assert str(Classification.AI) == "AI"
+        assert Classification.HUMAN == "Human"
+
+    def test_prediction_is_frozen_and_comparable(self) -> None:
+        """Prediction is immutable, hashable and has value equality."""
+        a = is_this_slop("Equality check text.")
+        b = is_this_slop("Equality check text.")
+
+        assert a == b
+        assert hash(a) == hash(b)
+        with pytest.raises(AttributeError):
+            a.ai_probability = 0.0  # type: ignore[misc]
+
+    def test_batch_accepts_any_iterable(self) -> None:
+        """Batch takes generators and tuples, not just lists."""
+        results = is_this_slop_batch(t for t in ("One text.", "Two text."))
+
+        assert len(results) == 2
+
+    def test_batch_blank_text_fails_whole_batch(self) -> None:
+        """A blank text fails the all-or-nothing batch."""
+        with pytest.raises(ValueError, match="empty"):
+            is_this_slop_batch(["Fine text.", ""])
+
+    def test_each_blank_text_gives_none(self) -> None:
+        """is_this_slop_each reports blanks per text instead of failing."""
+        results = is_this_slop_each(["Fine text.", "", "More fine text."])
+
+        assert len(results) == 3
+        assert isinstance(results[0], Prediction)
+        assert results[1] is None
+        assert isinstance(results[2], Prediction)
+
+    def test_each_empty_list(self) -> None:
+        """An empty input gives an empty result."""
+        assert is_this_slop_each([]) == []
+
+    def test_each_matches_single(self) -> None:
+        """Per-text results agree with single predictions."""
+        text = "Consistency between each and single."
+        single = is_this_slop(text)
+        (each,) = is_this_slop_each([text])
+
+        assert each is not None
+        assert abs(each.ai_probability - single.ai_probability) < 1e-4

@@ -244,7 +244,7 @@ mod tests {
                 .abs()
                 < 1e-5
         );
-        assert!(!result.chunk_predictions.is_empty());
+        assert_ne!(result.num_chunks(), 0);
     }
 
     #[test]

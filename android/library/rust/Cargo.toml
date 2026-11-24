@@ -1,0 +1,22 @@
+[package]
+name = "is-it-slop-android"
+description = "JNI bindings for the is-it-slop Android library (AI text detector)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+# Not `is_it_slop`: that would collide with the core crate's output file name.
+name = "is_it_slop_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+is-it-slop = { workspace = true, default-features = false }
+jni = { workspace = true }
+
+[lints]
+workspace = true

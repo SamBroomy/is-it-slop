@@ -150,14 +150,10 @@ Predict whether multiple texts are AI-generated or human-written.
 **Example:**
 
 ```python
-results = is_this_slop_batch([
-    "First document to check",
-    "Second document to check",
-    "Third document to check"
-])
+results = is_this_slop_batch(["First document to check", "Second document to check", "Third document to check"])
 
 for i, result in enumerate(results):
-    print(f"Text {i+1}: {result.classification}")
+    print(f"Text {i + 1}: {result.classification}")
 ```
 
 ### PredictionResult Object

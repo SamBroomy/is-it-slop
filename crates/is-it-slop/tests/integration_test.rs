@@ -357,7 +357,7 @@ fn test_chunking_boundaries() {
     let prediction = result.unwrap();
 
     // Should produce at least one chunk
-    assert!(!prediction.chunk_predictions.is_empty());
+    assert_ne!(prediction.num_chunks(), 0);
 }
 
 /// Test empty text handling

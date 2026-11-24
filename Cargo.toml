@@ -5,6 +5,7 @@ members = [
     "crates/is-it-slop-model",
     "crates/is-it-slop-preprocessing",
     "crates/is-it-slop-training",
+    "android/library/rust",
 ]
 
 [workspace.package]
@@ -32,6 +33,7 @@ keywords = [
 
 
 [workspace.dependencies]
+is-it-slop = { path = "crates/is-it-slop", version = "=0.7.0-alpha.1" }
 is-it-slop-model = { path = "crates/is-it-slop-model", version = "=0.7.0-alpha.1" }
 is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.7.0-alpha.1" }
 
@@ -41,6 +43,7 @@ burn = { version = "0.21", default-features = false }
 burn-store = "0.21"
 safetensors = "0.7"
 bpe-openai = "0.3.1"
+jni = "0.21"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 owo-colors = "4.3"
 supports-color = "3"

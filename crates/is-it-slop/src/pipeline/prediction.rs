@@ -39,7 +39,7 @@ use crate::Threshold;
 /// println!("AI: {:.2}%", result.prediction.ai_probability() * 100.0);
 /// # Ok::<(), PipelineError>(())
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Prediction(f32, f32);
 
 impl Prediction {
@@ -161,6 +161,24 @@ impl UnifiedPrediction {
                 .map(|&p| Prediction::from_ai_probability(p))
                 .collect(),
         }
+    }
+
+    /// Calibrated probability that the document is AI-generated, in `[0.0, 1.0]`.
+    #[must_use]
+    pub fn ai_probability(&self) -> f32 {
+        self.prediction.ai_probability()
+    }
+
+    /// Calibrated probability that the document is human-written, in `[0.0, 1.0]`.
+    #[must_use]
+    pub fn human_probability(&self) -> f32 {
+        self.prediction.human_probability()
+    }
+
+    /// Number of chunks the document was split into.
+    #[must_use]
+    pub fn num_chunks(&self) -> usize {
+        self.chunk_predictions.len()
     }
 
     /// The calibrated margin: distance of the calibrated probability from 0.5, scaled to

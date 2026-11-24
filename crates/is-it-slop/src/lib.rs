@@ -62,10 +62,8 @@ pub mod pipeline;
 use std::{fmt, ops::Deref, result::Result};
 
 use is_it_slop_preprocessing::as_strs;
-pub use model::MODEL_VERSION;
+pub use model::{CLASSIFICATION_THRESHOLD, MODEL_VERSION};
 pub use pipeline::{Classification, Prediction, UnifiedPrediction};
-
-use crate::model::CLASSIFICATION_THRESHOLD;
 
 /// A value that is not a classification threshold.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -105,7 +103,7 @@ pub enum ThresholdError {
 /// let t = Threshold::try_from(0.7_f32).unwrap();
 /// let t = Threshold::try_from(0.7_f64).unwrap();
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Threshold(f32);
@@ -185,7 +183,13 @@ impl Deref for Threshold {
     }
 }
 
-/// Builder struct for configuring and running predictions.
+/// Entry point for predictions.
+///
+/// A `Predictor` is cheap configuration: the model is a process-wide static, so
+/// creating a predictor does no work and predictors can be created freely or shared across
+/// threads. The only setting is the classification [`Threshold`], which affects the
+/// `classify*` methods and [`UnifiedPrediction::classification`] but never the probabilities
+/// from `predict*`.
 ///
 /// Use `Predictor::new()` to create with default threshold, or chain
 /// `.with_threshold()` to customize.
@@ -204,6 +208,7 @@ impl Deref for Threshold {
 /// let class = predictor.classify("some text")?;
 /// # Ok::<(), PipelineError>(())
 /// ```
+#[derive(Debug, Clone, Default)]
 pub struct Predictor {
     threshold: Threshold,
 }
@@ -285,7 +290,20 @@ impl Predictor {
         pipeline::predict(text.as_ref()).map(|pred| pred.classification(self.threshold))
     }
 
-    /// Classify multiple texts using the configured threshold.
+    /// Classify each text in one forward pass, with a result per text.
+    ///
+    /// A blank text fails on its own instead of failing the batch.
+    pub fn classify_each<T: AsRef<str>>(
+        &self,
+        texts: &[T],
+    ) -> Vec<pipeline::Result<Classification>> {
+        pipeline::predict_each(&as_strs(texts))
+            .into_iter()
+            .map(|r| r.map(|pred| pred.classification(self.threshold)))
+            .collect()
+    }
+
+    /// Classify multiple texts using the configured threshold, all or nothing.
     ///
     /// Returns a vector of classifications, one for each input text.
     pub fn classify_batch<T: AsRef<str>>(
@@ -301,15 +319,19 @@ impl Predictor {
     }
 }
 
-impl Default for Predictor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_each_fails_blank_texts_individually() {
+        let predictor = Predictor::new();
+        let results = predictor.classify_each(&["A normal sentence about nothing.", "  "]);
+
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err());
+    }
 
     #[test]
     fn test_predict_probabilities() {

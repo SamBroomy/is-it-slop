@@ -62,15 +62,3 @@ jobs:
           features: cli,self-update
           profile: dist
           token: ${{ secrets.GITHUB_TOKEN }}
-
-  dispatch-android:
-    name: Trigger Android repo sync
-    if: github.repository_owner == 'SamBroomy' && github.event_name == 'release'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.CROSS_REPO_TOKEN }}
-          repository: SamBroomy/is-it-slop-android
-          event-type: is-it-slop-released
-          client-payload: '{"version": "${{ github.ref_name }}", "tag": "${{ github.ref_name }}"}'

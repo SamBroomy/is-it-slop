@@ -29,9 +29,9 @@
 //! - `confidence`: calibrated margin in [0.0, 1.0]
 //! - `num_chunks` / `chunk_dispersion`: per-chunk analysis
 
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
-use crate::{Threshold, pipeline::PipelineError};
+use crate::{Predictor, Threshold, UnifiedPrediction, pipeline::PipelineError};
 
 /// Python prediction result containing probabilities and classification.
 ///
@@ -78,39 +78,49 @@ impl PredictionResult {
     }
 }
 
+impl PredictionResult {
+    fn new(prediction: &UnifiedPrediction, threshold: Threshold) -> Self {
+        Self {
+            human_probability: prediction.human_probability(),
+            ai_probability: prediction.ai_probability(),
+            classification: prediction.classification(threshold).to_string(),
+            confidence: prediction.confidence(),
+            num_chunks: prediction.num_chunks(),
+            chunk_dispersion: prediction.chunk_dispersion(),
+        }
+    }
+}
+
+/// Build a predictor from an optional user-supplied threshold.
+fn predictor(threshold: Option<f32>) -> PyResult<Predictor> {
+    let predictor = Predictor::new();
+    match threshold {
+        None => Ok(predictor),
+        Some(t) => Threshold::try_new(t)
+            .map(|t| predictor.with_threshold(t))
+            .map_err(|e| PyValueError::new_err(format!("Invalid threshold: {e}"))),
+    }
+}
+
+fn pipeline_error(error: &PipelineError) -> PyErr {
+    match error {
+        PipelineError::EmptyInput => {
+            PyValueError::new_err("Input text is empty. Please provide a non-empty string.")
+        }
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (text, threshold=None))]
 fn is_this_slop(py: Python<'_>, text: &str, threshold: Option<f32>) -> PyResult<PredictionResult> {
+    let predictor = predictor(threshold)?;
     py.detach(|| {
-        let predictor = crate::Predictor::new();
-        let predictor = if let Some(t) = threshold {
-            predictor.with_threshold(Threshold::try_new(t).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid threshold: {e}"))
-            })?)
-        } else {
-            predictor
-        };
-
-        let prediction = predictor.predict(text).map_err(|e| match e {
-            PipelineError::EmptyInput => PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Input text is empty. Please provide a non-empty string.",
-            ),
-        })?;
-
-        let classification = prediction.classification(predictor.threshold());
-        let chunk_info = prediction.chunk_info();
-
-        Ok(PredictionResult {
-            human_probability: prediction.prediction.human_probability(),
-            ai_probability: prediction.prediction.ai_probability(),
-            classification: classification.to_string(),
-            confidence: prediction.confidence(),
-            num_chunks: chunk_info.num_chunks,
-            chunk_dispersion: chunk_info.chunk_dispersion,
-        })
+        let prediction = predictor.predict(text).map_err(|e| pipeline_error(&e))?;
+        Ok(PredictionResult::new(&prediction, predictor.threshold()))
     })
 }
 
+/// All or nothing: any blank text raises `ValueError` for the whole batch.
 #[allow(clippy::needless_pass_by_value)]
 #[pyfunction]
 #[pyo3(signature = (texts, threshold=None))]
@@ -119,40 +129,38 @@ fn is_this_slop_batch(
     texts: Vec<String>,
     threshold: Option<f32>,
 ) -> PyResult<Vec<PredictionResult>> {
+    let predictor = predictor(threshold)?;
     py.detach(|| {
-        let predictor = crate::Predictor::new();
-        let predictor = if let Some(t) = threshold {
-            predictor.with_threshold(Threshold::try_new(t).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid threshold: {e}"))
-            })?)
-        } else {
-            predictor
-        };
-
-        let predictions = predictor.predict_batch(&texts).map_err(|e| match e {
-            PipelineError::EmptyInput => PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Input list is empty or contains an empty text.",
-            ),
-        })?;
-
-        let results = predictions
-            .into_iter()
-            .map(|pred| {
-                let classification = pred.classification(predictor.threshold());
-                let chunk_info = pred.chunk_info();
-                PredictionResult {
-                    human_probability: pred.prediction.human_probability(),
-                    ai_probability: pred.prediction.ai_probability(),
-                    classification: classification.to_string(),
-                    confidence: pred.confidence(),
-                    num_chunks: chunk_info.num_chunks,
-                    chunk_dispersion: chunk_info.chunk_dispersion,
-                }
-            })
-            .collect();
-
-        Ok(results)
+        let predictions = predictor
+            .predict_batch(&texts)
+            .map_err(|e| pipeline_error(&e))?;
+        Ok(predictions
+            .iter()
+            .map(|p| PredictionResult::new(p, predictor.threshold()))
+            .collect())
     })
+}
+
+/// One entry per input text, in order; blank texts yield `None` instead of failing the batch.
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+#[pyo3(signature = (texts, threshold=None))]
+fn is_this_slop_each(
+    py: Python<'_>,
+    texts: Vec<String>,
+    threshold: Option<f32>,
+) -> PyResult<Vec<Option<PredictionResult>>> {
+    let predictor = predictor(threshold)?;
+    Ok(py.detach(|| {
+        predictor
+            .predict_each(&texts)
+            .into_iter()
+            .map(|r| {
+                r.ok()
+                    .map(|p| PredictionResult::new(&p, predictor.threshold()))
+            })
+            .collect()
+    }))
 }
 
 /// CLI entry point for Python console scripts.
@@ -219,6 +227,7 @@ fn is_it_slop(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PredictionResult>()?;
     m.add_function(wrap_pyfunction!(is_this_slop, m)?)?;
     m.add_function(wrap_pyfunction!(is_this_slop_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(is_this_slop_each, m)?)?;
 
     #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(cli_main, m)?)?;

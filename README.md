@@ -201,7 +201,7 @@ CPU model and uses it for small calls, where a GPU pass's launch cost dominates.
 
 ### Android
 
-Android bindings live in their own repo, [SamBroomy/is-it-slop-android](https://github.com/SamBroomy/is-it-slop-android), a thin wrapper around this crate. See that repo for setup.
+A Kotlin library for on-device detection lives in [`android/`](android/README.md).
 
 ## Upgrading
 

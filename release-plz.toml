@@ -32,6 +32,10 @@ git_release_enable = true
 name = "is-it-slop-training"
 release = false
 
+[[package]]
+name = "is-it-slop-android"
+release = false
+
 
 [changelog]
 protect_breaking_commits = true

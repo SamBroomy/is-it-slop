@@ -1,5 +1,8 @@
 # Slop Detection CLI Examples
 
+# Android library recipes: `just android::<recipe>`
+mod android
+
 # Default recipe shows available commands
 default:
     @just --list

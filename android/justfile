@@ -1,0 +1,21 @@
+# Android library. Run from the repo root as `just android::<recipe>`, or here with `just <recipe>`.
+# Needs: JDK 17, Android SDK (+ NDK 27), gradle, `cargo install cargo-ndk`,
+#        `rustup target add aarch64-linux-android x86_64-linux-android`.
+
+set working-directory := '.'
+
+default:
+    @just --list
+
+# Build the AAR (builds the Rust library for each ABI first). Output: library/build/outputs/aar/
+build-aar:
+    gradle assembleRelease
+
+# JVM unit tests plus the Rust glue tests.
+test:
+    cargo test -p is-it-slop-android
+    gradle testDebugUnitTest
+
+# Publish to ~/.m2 to try the library from another project.
+publish-local:
+    gradle publishReleasePublicationToMavenLocal

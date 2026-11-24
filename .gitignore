@@ -52,3 +52,17 @@
 !/crates/is-it-slop-training/tests/fixtures/*.json
 !/crates/is-it-slop/benches/corpus.jsonl
 !/crates/is-it-slop/tests/fixtures/*.json
+
+# Android library (everything lives under /android; see android/README.md)
+!/android/README.md
+!/android/justfile
+!/android/**/*.kt
+!/android/**/*.kts
+!/android/**/*.rs
+!/android/**/*.xml
+!/android/**/*.pro
+!/android/**/*.toml
+!/android/**/*.properties
+/android/**/build/
+/android/**/.gradle/
+/android/**/.kotlin/
