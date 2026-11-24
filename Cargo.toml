@@ -90,7 +90,7 @@ lto = "fat"
 # Reduce codegen units to 1 for better optimizations
 codegen-units = 1
 opt-level = "z"
-panic = "abort"
+# Unwinding stays on: panics must stay catchable (e.g. the Android JNI glue) and abort saves little.
 strip = true
 
 # The profile that 'cargo dist' will build with
