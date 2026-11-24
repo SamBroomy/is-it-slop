@@ -27,7 +27,7 @@ pub fn run_update() -> ExitCode {
             eprintln!("Failed to check for updates: {e:#}");
             eprintln!();
             eprintln!("You can manually upgrade by running:");
-            eprintln!("  curl -fsSL {INSTALL_SCRIPT_URL} | sh");
+            eprintln!("  curl --proto '=https' --tlsv1.2 -fsSL {INSTALL_SCRIPT_URL} | sh");
             return ExitCode::FAILURE;
         }
     };
@@ -46,7 +46,7 @@ pub fn run_update() -> ExitCode {
     let status = Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "curl -fsSL {INSTALL_SCRIPT_URL} | sh -s -- {latest_tag}"
+            "curl --proto '=https' --tlsv1.2 -fsSL {INSTALL_SCRIPT_URL} | sh -s -- {latest_tag}"
         ))
         .status();
 
@@ -64,7 +64,9 @@ pub fn run_update() -> ExitCode {
             eprintln!("Error running upgrade: {e}");
             eprintln!();
             eprintln!("You can manually upgrade by running:");
-            eprintln!("  curl -fsSL {INSTALL_SCRIPT_URL} | sh -s -- {latest_tag}");
+            eprintln!(
+                "  curl --proto '=https' --tlsv1.2 -fsSL {INSTALL_SCRIPT_URL} | sh -s -- {latest_tag}"
+            );
             ExitCode::FAILURE
         }
     }
@@ -72,7 +74,7 @@ pub fn run_update() -> ExitCode {
 
 fn fetch_latest_tag() -> Result<String> {
     let output = Command::new("curl")
-        .args(["-fsSL", GITHUB_API_LATEST])
+        .args(["--proto", "=https", "--tlsv1.2", "-fsSL", GITHUB_API_LATEST])
         .output()
         .context("Failed to run curl")?;
 

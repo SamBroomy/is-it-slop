@@ -290,7 +290,7 @@ check-model-version:
         TEMP_DIR=$(mktemp -d)
         trap "rm -rf ${TEMP_DIR}" EXIT
         echo "Downloading existing release for comparison..."
-        curl -sL "https://github.com/SamBroomy/is-it-slop/releases/download/model-v${MODEL_VERSION}/model-v${MODEL_VERSION}.tar.gz" \
+        curl --proto '=https' --tlsv1.2 -sL "https://github.com/SamBroomy/is-it-slop/releases/download/model-v${MODEL_VERSION}/model-v${MODEL_VERSION}.tar.gz" \
             | tar -xz -C "${TEMP_DIR}" 2>/dev/null || {
                 echo "❌ Failed to download existing release"
                 exit 1

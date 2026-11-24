@@ -40,7 +40,7 @@
 **Quick Install** (shell script — downloads pre-built binary):
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
 ```
 
 **Windows Quick Install** (PowerShell — downloads pre-built binary):
@@ -215,7 +215,7 @@ Or re-run the install script:
 
 ```shell
 # Linux / macOS / WSL
-curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
 ```
 ```powershell
 # Windows PowerShell

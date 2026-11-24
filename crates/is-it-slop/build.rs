@@ -209,7 +209,7 @@ fn ensure_artifacts_in_out_dir(
         eprintln!("cargo:warning=Failed to download model artifacts: {e}");
         eprintln!("cargo:warning=");
         eprintln!("cargo:warning=To build this crate, you need model artifacts:");
-        eprintln!("cargo:warning=  curl -LO {default_url}");
+        eprintln!("cargo:warning=  curl --proto '=https' --tlsv1.2 -LO {default_url}");
         panic!("Model artifacts required but not found");
     }
 }

@@ -3,10 +3,10 @@
 # https://github.com/SamBroomy/is-it-slop
 #
 # Quick install:
-#   curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
+#   curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh
 #
 # Install specific version:
-#   curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh -s -- v0.6.0
+#   curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh -s -- v0.6.0
 # Running the script on an existing installation will upgrade it automatically.
 set -eu
 
@@ -173,7 +173,7 @@ get_latest_version() {
     info "  2. Set GITHUB_TOKEN to use an authenticated request:"
     info "     export GITHUB_TOKEN=ghp_...    # or a fine-grained token"
     info "  3. Specify a version explicitly:"
-    info "     curl -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh -s -- v0.6.3"
+    info "     curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/SamBroomy/is-it-slop/main/install.sh | sh -s -- v0.6.3"
     exit 1
   fi
 
