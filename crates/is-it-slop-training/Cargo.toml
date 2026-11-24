@@ -27,17 +27,22 @@ tch-gpu = ["burn/tch"]
 remote = ["burn/remote"]
 
 [dependencies]
-burn = { workspace = true, features = ["std", "autodiff", "train", "tui",
+burn = { workspace = true, features = [
+    "std",
+    "autodiff",
+    "train",
+    "tui",
     "sqlite-bundled",
     "metrics",
     "flex",
-    "autotune","fusion"] }
+    "autotune",
+    "fusion",
+] }
 burn-store = { workspace = true }
 clap = { workspace = true }
 is-it-slop-model = { workspace = true }
 is-it-slop-preprocessing = { workspace = true }
 polars = { workspace = true }
-safetensors = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
@@ -46,6 +51,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+safetensors = { workspace = true }
 
 [lints]
 workspace = true

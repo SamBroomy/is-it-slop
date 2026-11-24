@@ -40,8 +40,6 @@ which = { workspace = true }
 # Python bindings dependencies
 pyo3 = { workspace = true, optional = true }
 # pyo3-log = { workspace = true, optional = true }
-# Android JNI bindings
-jni = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -65,7 +63,13 @@ harness = false
 default = ["cli"]
 python = ["pyo3"]
 pyo3 = ["dep:pyo3"]
-cli = ["dep:clap", "serde", "dep:anyhow", "dep:owo-colors", "dep:supports-color"]
+cli = [
+    "dep:clap",
+    "serde",
+    "dep:anyhow",
+    "dep:owo-colors",
+    "dep:supports-color",
+]
 serde = ["dep:serde"]
 # Enable self-update for standalone binaries (not package manager installs).
 self-update = []
@@ -91,14 +95,11 @@ apple-amx = ["burn/apple-amx"]
 # Build with empty model artifacts (for docs, won't work at runtime)
 stub-model = []
 
-# Android JNI bindings for mobile integration
-jni = ["dep:jni", "serde"]
-
 
 # The feature set CI builds, tests and docs with. `--all-features` is never a valid build of this
 # crate: `python` links as an extension module, the backends are mutually exclusive platform choices,
 # and `vulkan` needs the Vulkan SDK on macOS.
-all-testable = ["cli", "jni", "self-update"]
+all-testable = ["cli", "self-update"]
 
 [package.metadata.docs.rs]
 features = ["stub-model"]

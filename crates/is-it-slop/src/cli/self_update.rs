@@ -16,7 +16,6 @@ const GITHUB_API_LATEST: &str = "https://api.github.com/repos/SamBroomy/is-it-sl
 ///
 /// Fetches the latest release tag from GitHub, compares to the current version,
 /// and runs the install script to upgrade if a newer version is available.
-#[must_use]
 pub fn run_update() -> ExitCode {
     let current_version = env!("CARGO_PKG_VERSION");
     println!("Checking for updates...");

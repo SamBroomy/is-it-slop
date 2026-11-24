@@ -31,7 +31,7 @@
 - **Accurate**: 95.6% accuracy on holdout test set (F1 0.958, MCC 0.912)
 - **Chunk-aware**: Handles long documents via overlapping 150-token chunks with weighted aggregation
 - **Cross-platform**: macOS (ARM64), Linux (x86_64, ARM64), Windows (x86_64, ARM64)
-- **Multiple interfaces**: Command-line tool, Python library, Rust library, Android AAR
+- **Multiple interfaces**: Command-line tool, Python library, Rust library
 
 ## Installation
 
@@ -201,26 +201,7 @@ CPU model and uses it for small calls, where a GPU pass's launch cost dominates.
 
 ### Android
 
-Download `is-it-slop-aarch64-linux-android.aar` from the [latest release](https://github.com/SamBroomy/is-it-slop/releases/latest)
-and drop it into `app/libs/`, then add to `app/build.gradle.kts`:
-
-```kotlin
-dependencies {
-    implementation(files("libs/is-it-slop-aarch64-linux-android.aar"))
-}
-```
-
-```kotlin
-import ai.isitlop.SlopDetector
-
-val result = SlopDetector.predict("Some text")
-// {"aiProbability":0.92,"humanProbability":0.08,"classification":"AI","numChunks":1,"chunkAgreement":1.0}
-
-val label = SlopDetector.classify("Some text")
-// "Human" or "AI"
-
-val results = SlopDetector.predictBatch("""["text 1","text 2"]""")
-```
+Android bindings live in their own repo, [SamBroomy/is-it-slop-android](https://github.com/SamBroomy/is-it-slop-android), a thin wrapper around this crate. See that repo for setup.
 
 ## Upgrading
 
@@ -300,11 +281,9 @@ crates/
     ├── model/                # Embedded artifacts (build.rs downloads)
     ├── pipeline/             # Prediction, aggregation, error types
     ├── python/               # PyO3 bindings (PyPI package)
-    ├── kotlin/               # JNI bindings (Android .so / .aar)
     └── lib.rs                # Predictor, Threshold, public re-exports
 
 python/                       # Two PyO3 packages (inference + preprocessing)
-android/                      # Kotlin wrapper for Android JNI
 notebooks/                    # Dataset curation + training
 ```
 

@@ -110,7 +110,7 @@ mod tests {
         let texts = vec!["Hello world", "Test"];
         let tokens = tokenize(&texts);
         assert_eq!(tokens.len(), 2);
-        assert!(!tokens[0].is_empty());
+        assert_ne!(tokens[0].len(), 0);
     }
 
     #[test]
@@ -172,7 +172,7 @@ mod tests {
 
         let tokens = tokenize(&texts);
         assert_eq!(tokens.len(), 1);
-        assert!(!tokens[0].is_empty());
+        assert_ne!(tokens[0].len(), 0);
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(tokens.len(), texts.len());
 
         for token_vec in &tokens {
-            assert!(!token_vec.is_empty());
+            assert_ne!(token_vec.len(), 0);
         }
     }
 
@@ -338,7 +338,7 @@ mod tests {
 
         // Both should produce valid tokens
         for token_vec in &tokens {
-            assert!(!token_vec.is_empty());
+            assert_ne!(token_vec.len(), 0);
         }
     }
 
@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(tokens.len(), 2);
 
         for token_vec in &tokens {
-            assert!(!token_vec.is_empty());
+            assert_ne!(token_vec.len(), 0);
         }
     }
 
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(tokens.len(), 3);
 
         for token_vec in &tokens {
-            assert!(!token_vec.is_empty());
+            assert_ne!(token_vec.len(), 0);
         }
     }
 

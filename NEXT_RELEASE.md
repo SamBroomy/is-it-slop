@@ -133,7 +133,7 @@ one probability removes that whole class of drift.
 
 `cleaner.rs` and `tokenizer.rs` unchanged and essential. `chunker.rs` survives as a file but its
 algorithm is replaced — the even-distribution solver goes, constant-size + pad + drop-runt replaces
-it. `ort` inference, CLI, PyO3/JNI bindings and packaging are unaffected.
+it. `ort` inference, CLI, PyO3 bindings and packaging are unaffected.
 
 The even-distribution chunker is worth removing on its own merits: it emits a redundant trailing
 chunk on **31% of multi-chunk documents** (always a strict subset of its predecessor, so the tail is
@@ -323,7 +323,7 @@ training-batch requirement, not a property of the weights.
 | 12          | 14.1 ms       | 11.2 ms          |
 
 **One document per forward, documents concurrent** (on CPU backends `pipeline::predict_each` runs
-one forward per document on rayon's pool, order preserved; library-level, so Python and Kotlin callers
+one forward per document on rayon's pool, order preserved; library-level, so Python callers
 get it too). Documents per second on the real corpus, by how many documents `predict_each` is handed
 at once:
 
@@ -393,7 +393,7 @@ cross lower.
 
 **Shipping policy.** The default build (`default = ["cli"]`) is Flex only: no accelerator crate is in
 its dependency graph and every accelerated code path is behind `cfg(accelerated)`, so the shipped
-binaries and the Python/JNI packages carry none of it. Flex stays the CPU default (ndarray's lead here
+binaries and the Python package carries none of it. Flex stays the CPU default (ndarray's lead here
 is Apple-specific and unmeasured on x86); `wgpu` is the portable accelerator, and `metal`, `vulkan`,
 `cuda` and `rocm` override it when enabled. An accelerated build panics at its first large call if the
 machine has no usable GPU device, so a runtime probe that demotes the build to the CPU path is required

@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn test_model_version_format() {
         // Verify MODEL_VERSION is in semver-like format (X.Y.Z)
-        assert!(!MODEL_VERSION.is_empty());
+        assert_ne!(MODEL_VERSION, "");
 
         let parts: Vec<&str> = MODEL_VERSION.split('.').collect();
         assert!(
