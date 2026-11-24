@@ -15,7 +15,10 @@ name = "is_it_slop_android"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-is-it-slop = { workspace = true, default-features = false }
+# flex-simd: compiles for all four ABIs; SIMD kernels are picked at run time with a scalar fallback.
+is-it-slop = { workspace = true, default-features = false, features = [
+    "flex-simd",
+] }
 jni = { workspace = true }
 
 [lints]

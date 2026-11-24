@@ -411,6 +411,44 @@ pre-release removes the backend type parameter from tensors and modules (`Tensor
 crates all need porting (21 errors in `is-it-slop-model` alone). Worth doing when 0.22 releases, not
 least because runtime dispatch is the natural home for item (1); until then the numbers above stand.
 
+### After the Burn 0.22 migration (x86, WSL2, Flex, short criterion runs)
+
+Burn 0.22 alone was ~27% faster than the numbers above (single document 5.5 ms to 3.9 ms). Flex SIMD
+(`flex-simd`, now a default feature) adds ~9% more: 3.56 ms single document, 0.96 s for 128
+documents; golden outputs unchanged. The opt-in `flex-rayon` speeds large batches (0.96 s to 0.71 s
+at 128 documents) but slows single documents (3.56 ms to 4.44 ms), because Flex's inner rayon
+parallelism competes with our per-document concurrency. Making it adaptive (small batches in a
+pool sized to the batch, so the nested calls stay inline) is untried. The default CPU backend has
+not been compared against `cpu` (burn-cpu), ndarray or wgpu yet; see the backend profiling task.
+
+## Tokenizer: size and vendor bias
+
+Every binary (CLI, Python wheel, Android `.so`) is ~40 MB, and ~32 MB of that is one blob: the
+precomputed o200k BPE table that the `bpe-openai` crate builds from a 1.7 MB tiktoken rank file.
+The model weights are 2.3 MB and the vocabulary 0.8 MB. Code is 2.8 MB, so profile tweaks cannot
+help; the table is the size.
+
+Two separate problems with it:
+
+- **Waste.** The classifier only distinguishes ~16,384 compact token ids; everything else collapses
+  onto one out-of-vocabulary id. Most of the 200k-token table exists only to produce ids the model
+  then throws away.
+- **Vendor bias.** o200k is OpenAI's tokenizer. We use it on purpose: which tokens and token
+  patterns a model emits is itself part of the signal. But it ties the signal to one vendor's
+  tokenization.
+
+Plan, in order of effort:
+
+1. **Compress the table.** Deflate gets ~16 MB, LZMA ~11 MB (LZMA decodes in 0.3 s on x86). Try
+   zstd, xz and brotli on this blob, inflate lazily on first use, and measure startup and
+   first-call cost on x86 and phone-class ARM before choosing; the CLI must stay snappy. Building
+   the table from the ranks at start-up is too slow.
+2. **Replace it with a small purpose-built tokenizer** (or a learned segmenter) trained to produce
+   token-shaped pieces that emulate many providers' tokenizers: OpenAI o200k and cl100k, Claude,
+   Llama 3, Gemini, Mistral, Qwen, DeepSeek and the other widely used ones. Document each
+   vocabulary, keep the "which token patterns does an LLM emit" signal, drop the single-vendor bias,
+   then retrain the classifier. Needs the data and experiment work first.
+
 ## Versioning
 
 Model artifacts **3.0.0 -> 4.0.0** — breaking: different files, different input shape, no vectorizer.
