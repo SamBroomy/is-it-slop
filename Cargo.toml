@@ -14,7 +14,6 @@ rust-version = "1.95"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
 license = "MIT"
 repository = "https://github.com/SamBroomy/is-it-slop"
-homepage = "https://github.com/SamBroomy/is-it-slop"
 readme = "README.md"
 description = "Detect AI-generated slop text using machine learning."
 categories = [
@@ -33,7 +32,6 @@ keywords = [
 
 
 [workspace.dependencies]
-is-it-slop = { path = "crates/is-it-slop" }
 is-it-slop-model = { path = "crates/is-it-slop-model", version = "=0.7.0-alpha.1" }
 is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.7.0-alpha.1" }
 
@@ -97,9 +95,6 @@ strip = true
 [profile.dist]
 inherits = "minimal-size"
 
-
-[workspace.metadata.cargo-shear]
-ignored = ["is-it-slop"]
 
 [workspace.lints.rust]
 # Standard Rust lints

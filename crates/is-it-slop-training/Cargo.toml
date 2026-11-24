@@ -6,7 +6,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 readme.workspace = true
 description = "Burn training pipeline for the is-it-slop classifier."
 categories.workspace = true
