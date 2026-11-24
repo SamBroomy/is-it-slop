@@ -32,7 +32,6 @@ burn = { workspace = true, features = [
     "train",
     "tui",
     "sqlite-bundled",
-    "metrics",
     "flex",
     "autotune",
     "fusion",
