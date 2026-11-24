@@ -1,4 +1,4 @@
-package com.github.sambroomy
+package io.github.sambroomy.isitslop
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

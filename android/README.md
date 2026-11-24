@@ -42,11 +42,25 @@ You need JDK 17 and the Android SDK with NDK 27 (`ANDROID_NDK_HOME` set; `androi
 
 ```sh
 cargo install cargo-ndk
-rustup target add aarch64-linux-android x86_64-linux-android
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
 just android::build-aar   # AAR in android/library/build/outputs/aar/
 ```
 
-Only `arm64-v8a` (phones) and `x86_64` (emulators) are built; the model is embedded in each `.so`, ~20 MB compressed per ABI. `armeabi-v7a` and `x86` also compile if you add them to `abis` in `library/build.gradle.kts`. The Rust glue tests
+All four ABIs are built: `arm64-v8a` (phones), `armeabi-v7a` (old 32-bit phones), `x86_64` and `x86` (emulators). Each `.so` is ~40 MB (~20 MB compressed) because the tokenizer tables are embedded, so the AAR is large, but an app only packages the ABIs it targets. The Rust glue tests
 run on the host with `cargo test -p is-it-slop-android`.
 
-Not done yet: a release pipeline that attaches the AAR to a GitHub release and publishes it.
+## Releasing
+
+`.github/workflows/android-release.yaml` runs when a GitHub release is published: it builds the AAR, attaches it to the release, and, if the secrets below exist, publishes to Maven Central as `io.github.sambroomy:is-it-slop:<workspace version>`. You can also run it by hand with a tag. Untested until the first release.
+
+One-time setup: create a [Central Portal](https://central.sonatype.com) account, verify the `io.github.sambroomy` namespace (automatic via GitHub login), generate a user token and a GPG key, and add repository secrets `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY` (armored private key) and `SIGNING_KEY_PASSWORD`.
+
+## Using the library
+
+```kotlin
+dependencies {
+    implementation("io.github.sambroomy:is-it-slop:<version>")
+}
+```
+
+(Maven Central is in every Android project by default; no extra repository needed.)

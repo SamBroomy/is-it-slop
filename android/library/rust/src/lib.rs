@@ -80,7 +80,7 @@ fn read_texts(env: &mut JNIEnv<'_>, texts: &JObjectArray<'_>) -> Result<Vec<Stri
 
 /// `NativeBridge.predictEach(texts: Array<String>): FloatArray`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_github_sambroomy_NativeBridge_predictEach<'local>(
+pub extern "system" fn Java_io_github_sambroomy_isitslop_NativeBridge_predictEach<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     texts: JObjectArray<'local>,
@@ -99,7 +99,7 @@ pub extern "system" fn Java_com_github_sambroomy_NativeBridge_predictEach<'local
 
 /// `NativeBridge.modelVersion(): String`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_github_sambroomy_NativeBridge_modelVersion<'local>(
+pub extern "system" fn Java_io_github_sambroomy_isitslop_NativeBridge_modelVersion<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
 ) -> jstring {
@@ -112,7 +112,7 @@ pub extern "system" fn Java_com_github_sambroomy_NativeBridge_modelVersion<'loca
 
 /// `NativeBridge.defaultThreshold(): Float`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_github_sambroomy_NativeBridge_defaultThreshold<'local>(
+pub extern "system" fn Java_io_github_sambroomy_isitslop_NativeBridge_defaultThreshold<'local>(
     _env: JNIEnv<'local>,
     _class: JClass<'local>,
 ) -> jfloat {

@@ -1,0 +1,78 @@
+name: Android Release
+
+# Builds the AAR for a published release, attaches it to the release, and publishes it to
+# Maven Central when the signing and Central Portal secrets are configured:
+#   MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD  (Central Portal user token)
+#   SIGNING_KEY (ASCII-armored GPG private key), SIGNING_KEY_PASSWORD
+# Without them the AAR is still built and attached.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach to (e.g. v0.7.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  publish:
+    name: Build, attach and publish AAR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      HAVE_SIGNING: ${{ secrets.SIGNING_KEY != '' && secrets.MAVEN_CENTRAL_USERNAME != '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - uses: Swatinem/rust-cache@v2.9.1
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build AAR
+        working-directory: android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: ./gradlew assembleRelease
+
+      - name: Attach AAR to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" android/library/build/outputs/aar/library-release.aar#is-it-slop-android.aar --clobber
+
+      - name: Publish to Maven Central
+        if: env.HAVE_SIGNING == 'true'
+        working-directory: android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache

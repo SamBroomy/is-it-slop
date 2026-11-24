@@ -1,8 +1,8 @@
-package com.github.sambroomy
+package io.github.sambroomy.isitslop
 
 /**
  * The JNI surface. `external` functions are implemented in Rust (`android/library/rust`), found by
- * name: `Java_com_github_sambroomy_NativeBridge_<function>`. Renaming anything here means renaming
+ * name: `Java_io_github_sambroomy_isitslop_NativeBridge_<function>`. Renaming anything here means renaming
  * the Rust function too. Not public API.
  *
  * `@JvmStatic` makes these true static methods, which is what the Rust side expects (a `JClass`

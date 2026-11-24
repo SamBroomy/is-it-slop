@@ -1,6 +1,6 @@
 # Android library. Run from the repo root as `just android::<recipe>`, or here with `just <recipe>`.
 # Needs: JDK 17, Android SDK (+ NDK 27), gradle, `cargo install cargo-ndk`,
-#        `rustup target add aarch64-linux-android x86_64-linux-android`.
+#        `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android`.
 
 set working-directory := '.'
 

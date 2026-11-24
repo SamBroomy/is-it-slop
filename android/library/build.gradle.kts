@@ -1,7 +1,9 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
-    id("maven-publish")
+    alias(libs.plugins.maven.publish)
 }
 
 // One version for everything: the Rust workspace version in the repo root Cargo.toml.
@@ -11,12 +13,13 @@ val libraryVersion: String = Regex("""\[workspace\.package][^\[]*?\nversion\s*=\
     ?.groupValues?.get(1)
     ?: error("could not find [workspace.package] version in Cargo.toml")
 
-// Only 64-bit ABIs: ~all current devices, and the model is embedded in every .so.
-val abis = listOf("arm64-v8a", "x86_64")
+// All four Android ABIs. Apps ship only the ones they target (ABI splits / app bundles), so the
+// big AAR does not reach end users; 32-bit ones are for old phones and old emulators.
+val abis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 val rustJniLibs = layout.buildDirectory.dir("rustJniLibs")
 
 android {
-    namespace = "com.github.sambroomy"
+    namespace = "io.github.sambroomy.isitslop"
     compileSdk = 35
 
     defaultConfig {
@@ -38,10 +41,6 @@ android {
     packaging {
         // cargo-ndk also copies the core crate's own cdylib (used by the Python bindings); not needed here.
         jniLibs.excludes += "**/libis_it_slop.so"
-    }
-
-    publishing {
-        singleVariant("release")
     }
 }
 
@@ -76,15 +75,37 @@ dependencies {
     testImplementation(libs.kotlin.test)
 }
 
-afterEvaluate {
-    publishing {
-        publications {
-            register<MavenPublication>("release") {
-                groupId = "com.github.sambroomy"
-                artifactId = "is-it-slop"
-                version = libraryVersion
-                from(components["release"])
+// Publishing to Maven Central (Central Portal). Signing and credentials come from CI secrets
+// (ORG_GRADLE_PROJECT_mavenCentralUsername / mavenCentralPassword / signingInMemoryKey /
+// signingInMemoryKeyPassword); without them only `publishToMavenLocal` works.
+mavenPublishing {
+    configure(AndroidSingleVariantLibrary(variant = "release", sourcesJar = true, publishJavadocJar = false))
+    coordinates("io.github.sambroomy", "is-it-slop", libraryVersion)
+    if (providers.gradleProperty("signingInMemoryKey").isPresent) {
+        publishToMavenCentral()
+        signAllPublications()
+    }
+    pom {
+        name.set("is-it-slop")
+        description.set("Detect AI-generated text on device. Small Rust model, embedded, no network.")
+        url.set("https://github.com/SamBroomy/is-it-slop")
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/licenses/MIT")
             }
+        }
+        developers {
+            developer {
+                id.set("SamBroomy")
+                name.set("SamBroomy")
+                url.set("https://github.com/SamBroomy")
+            }
+        }
+        scm {
+            url.set("https://github.com/SamBroomy/is-it-slop")
+            connection.set("scm:git:https://github.com/SamBroomy/is-it-slop.git")
+            developerConnection.set("scm:git:ssh://git@github.com/SamBroomy/is-it-slop.git")
         }
     }
 }

@@ -1,4 +1,4 @@
-package com.github.sambroomy
+package io.github.sambroomy.isitslop
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
