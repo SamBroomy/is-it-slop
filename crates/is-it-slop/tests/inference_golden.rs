@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use is_it_slop::{Prediction, Predictor, UnifiedPrediction, pipeline::Strategy};
+use is_it_slop::{Prediction, Predictor, UnifiedPrediction, pipeline::default_strategy};
 use is_it_slop_preprocessing::pre_processor::tokenize;
 
 const TOLERANCE: f32 = 1e-5;
@@ -229,7 +229,7 @@ fn shipped_model_reproduces_the_golden_outputs() {
     }
     // Straight onto the primary backend under its own policy: on an accelerated build the calls
     // above are small enough to be routed to the CPU, so this is the pass that exercises the GPU.
-    let primary = predictor.predict_each_with(&texts, Strategy::default());
+    let primary = predictor.predict_each_with(&texts, default_strategy());
     for (case, got) in golden.cases.iter().zip(&primary) {
         assert_matches(
             case,

@@ -239,8 +239,14 @@ fn ok_row(id: &DocumentId, scored: &Scored) -> serde_json::Value {
             "human": prediction.prediction.human_probability(),
             "ai": prediction.prediction.ai_probability(),
         },
-        "confidence": prediction.confidence_metrics(),
-        "chunk_info": prediction.chunk_info(),
+        "confidence": {
+            "confidence": prediction.confidence(),
+            "chunk_dispersion": prediction.chunk_dispersion(),
+        },
+        "chunk_info": {
+            "num_chunks": prediction.num_chunks(),
+            "chunk_dispersion": prediction.chunk_dispersion(),
+        },
         "chunk_predictions": prediction.chunk_predictions.iter().map(|p| {
             (p.human_probability(), p.ai_probability())
         }).collect::<Vec<_>>(),

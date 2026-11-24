@@ -35,13 +35,6 @@ impl Strategy {
     }
 }
 
-impl Default for Strategy {
-    /// The compiled primary backend's policy.
-    fn default() -> Self {
-        super::backend::STRATEGY
-    }
-}
-
 /// Score non-blank texts under `strategy`, one `forward` per group, results in input order.
 pub fn run(texts: &[&str], strategy: Strategy, forward: Forward) -> Vec<UnifiedPrediction> {
     let chunk_size = ENCODER.chunk_size();

@@ -61,10 +61,19 @@ pub use classification::Classification;
 #[cfg(not(accelerated))]
 use cpu as backend;
 pub use error::{PipelineError, Result};
-pub use prediction::{ChunkInfo, ConfidenceMetrics, Prediction, UnifiedPrediction};
+pub use prediction::{Prediction, UnifiedPrediction};
 pub use schedule::Strategy;
 
 use crate::model::ENCODER;
+
+/// The compiled primary backend's scheduling policy, used by [`predict_each`].
+///
+/// A function rather than `Strategy: Default`, so [`Strategy`] does not depend on the backend
+/// modules that are built from it.
+#[must_use]
+pub const fn default_strategy() -> Strategy {
+    backend::STRATEGY
+}
 
 /// Cap on chunks per document (~49k tokens at the shipped encoding).
 ///

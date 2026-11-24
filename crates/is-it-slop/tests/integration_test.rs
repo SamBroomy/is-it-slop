@@ -335,9 +335,9 @@ fn test_confidence_metrics() {
     let predictor = Predictor::new();
     let result = predictor.predict(text).unwrap();
 
-    let metrics = result.confidence_metrics();
+    let confidence = result.confidence();
     assert!(
-        (0.0..=1.0).contains(&metrics.confidence),
+        (0.0..=1.0).contains(&confidence),
         "Confidence should be in [0.0, 1.0]"
     );
 }

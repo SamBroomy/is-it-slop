@@ -30,7 +30,7 @@ fn run_with(
     docs: &[&[u16]],
 ) -> Vec<UnifiedPrediction> {
     let chunk_size = ENCODER.chunk_size();
-    let pad = ENCODER.vocabulary().pad_id();
+    let pad = ENCODER.pad_id();
     let batch = docs.len();
     let max_chunks = docs
         .iter()

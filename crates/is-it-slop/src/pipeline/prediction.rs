@@ -2,7 +2,6 @@
 //!
 //! - [`Prediction`]: single prediction with P(Human) and P(AI) probabilities
 //! - [`UnifiedPrediction`]: document-level prediction plus per-chunk analysis
-//! - [`ConfidenceMetrics`]: the calibrated confidence signals
 //!
 //! # The decision contract
 //!
@@ -110,33 +109,6 @@ impl From<[f32; 2]> for Prediction {
     }
 }
 
-/// The calibrated confidence signals for a prediction.
-///
-/// Both were validated against the model's actual errors on the validation split: the calibrated
-/// margin ranks errors best (documents the model gets wrong sit near 0), with chunk dispersion
-/// as the secondary indicator for mixed human/AI content.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ConfidenceMetrics {
-    /// The calibrated margin: how far the calibrated probability sits from the 0.5 coin-flip
-    /// point, scaled to 0.0-1.0. This is the primary confidence number.
-    pub confidence: f32,
-
-    /// Standard deviation of the per-chunk AI probabilities over real chunks.
-    /// High dispersion suggests mixed human/AI content. `None` for single-chunk documents.
-    pub chunk_dispersion: Option<f32>,
-}
-
-/// Summary of the per-chunk analysis.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ChunkInfo {
-    /// Number of real (non-padding) chunks the document produced.
-    pub num_chunks: usize,
-    /// Standard deviation of chunk AI probabilities (None for single chunk).
-    pub chunk_dispersion: Option<f32>,
-}
-
 /// Document-level prediction with per-chunk analysis.
 ///
 /// The document probability comes straight from the network's document head (calibrated by the
@@ -207,24 +179,6 @@ impl UnifiedPrediction {
         Some(variance.sqrt())
     }
 
-    /// Get the confidence signals.
-    #[must_use]
-    pub fn confidence_metrics(&self) -> ConfidenceMetrics {
-        ConfidenceMetrics {
-            confidence: self.confidence(),
-            chunk_dispersion: self.chunk_dispersion(),
-        }
-    }
-
-    /// Get chunk information summary.
-    #[must_use]
-    pub fn chunk_info(&self) -> ChunkInfo {
-        ChunkInfo {
-            num_chunks: self.chunk_predictions.len(),
-            chunk_dispersion: self.chunk_dispersion(),
-        }
-    }
-
     /// Get the binary classification using the given threshold.
     #[must_use]
     pub fn classification(&self, threshold: Threshold) -> Classification {
@@ -276,8 +230,7 @@ mod tests {
     fn test_chunk_dispersion_single_chunk_none() {
         let single = UnifiedPrediction::new(0.8, &[0.8]);
         assert!(single.chunk_dispersion().is_none());
-        assert!(single.chunk_info().chunk_dispersion.is_none());
-        assert_eq!(single.chunk_info().num_chunks, 1);
+        assert_eq!(single.num_chunks(), 1);
     }
 
     #[test]
@@ -297,13 +250,5 @@ mod tests {
 
         let consistent = UnifiedPrediction::new(0.9, &[0.85, 0.9, 0.95, 0.88]);
         assert!(consistent.chunk_dispersion().unwrap() < 0.05);
-    }
-
-    #[test]
-    fn test_confidence_metrics_shape() {
-        let pred = UnifiedPrediction::new(0.9, &[0.8, 0.9]);
-        let metrics = pred.confidence_metrics();
-        assert!((metrics.confidence - 0.8).abs() < 1e-6);
-        assert!(metrics.chunk_dispersion.is_some());
     }
 }

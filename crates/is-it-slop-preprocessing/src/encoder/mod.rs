@@ -149,6 +149,12 @@ pub struct DocumentEncoder {
 }
 
 impl DocumentEncoder {
+    /// The id padding is filled with (the vocabulary's padding row).
+    #[must_use]
+    pub const fn pad_id(&self) -> u16 {
+        self.vocabulary.pad_id()
+    }
+
     /// The frozen encoding: 192-token chunks, 8-chunk training budget, 10% minimum fill.
     /// Cleaning is off — the training path encodes curated data.
     #[must_use]

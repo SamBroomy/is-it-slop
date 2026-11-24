@@ -58,7 +58,8 @@ impl Pretty {
         let prediction = &scored.prediction;
         let human_prob = prediction.prediction.human_probability();
         let ai_prob = prediction.prediction.ai_probability();
-        let metrics = prediction.confidence_metrics();
+        let margin = prediction.confidence();
+        let dispersion = prediction.chunk_dispersion();
 
         let (bar_value, bar_style) = match scored.class {
             Classification::Human => (human_prob, STYLE_HUMAN_BAR),
@@ -88,17 +89,18 @@ impl Pretty {
         }
 
         if self.detail == Detail::Verbose && prediction.chunk_predictions.len() > 1 {
-            let chunk_info = prediction.chunk_info();
+            let num_chunks = prediction.num_chunks();
+            let chunk_dispersion = prediction.chunk_dispersion();
             writeln!(out)?;
             writeln!(out, "{}", self.paint("Chunk Analysis", STYLE_HEADER))?;
-            let chunks_t = ((chunk_info.num_chunks as f32 - 4.0) / 6.0).clamp(0.0, 1.0);
+            let chunks_t = ((num_chunks as f32 - 4.0) / 6.0).clamp(0.0, 1.0);
             writeln!(
                 out,
                 "  {:<12} {}",
                 "Chunks",
-                self.truecolor(&chunk_info.num_chunks.to_string(), rose_rgb(chunks_t))
+                self.truecolor(&num_chunks.to_string(), rose_rgb(chunks_t))
             )?;
-            if let Some(dispersion) = chunk_info.chunk_dispersion {
+            if let Some(dispersion) = chunk_dispersion {
                 writeln!(
                     out,
                     "  {:<12} {}",
@@ -113,13 +115,11 @@ impl Pretty {
 
         writeln!(out)?;
         let confidence_label = self.paint(&format!("{:<12}", "Confidence"), STYLE_HEADER);
-        let confidence = self.truecolor(
-            &format!("{:>5.1}%", metrics.confidence * 100.0),
-            confidence_rgb(metrics.confidence),
-        );
+        let confidence =
+            self.truecolor(&format!("{:>5.1}%", margin * 100.0), confidence_rgb(margin));
         writeln!(out, "  {confidence_label} {confidence}")?;
 
-        if metrics.chunk_dispersion.is_some_and(|d| d > 0.25) {
+        if dispersion.is_some_and(|d| d > 0.25) {
             writeln!(out)?;
             writeln!(
                 out,
@@ -129,7 +129,7 @@ impl Pretty {
                     STYLE_WARN
                 )
             )?;
-        } else if metrics.confidence < 0.3 {
+        } else if margin < 0.3 {
             writeln!(out)?;
             writeln!(
                 out,
