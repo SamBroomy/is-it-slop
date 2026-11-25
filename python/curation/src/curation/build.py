@@ -4,36 +4,24 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
 from . import stats
 from .guards import add_keys, apply_guards, clean
-from .loaders import load_source
+from .loaders import load_source, missing_credentials
 from .select import SPLITS, assign_splits, key_rows
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .config import Config, Source
 
 log = logging.getLogger("curation")
 
 OUTPUT_COLUMNS = ("text", "label", "dataset", "generator", "domain", "attack", "doc_id")
-
-
-def unavailable(source: Source) -> str | None:
-    """Why this source cannot be read right now (missing credentials), or `None`."""
-    if source.requires == "hf_token":
-        from huggingface_hub import get_token
-
-        return None if get_token() else "gated on Hugging Face: run `hf auth login` or set HF_TOKEN"
-    if source.requires == "kaggle":
-        have = os.environ.get("KAGGLE_KEY") or Path("~/.kaggle/kaggle.json").expanduser().exists()
-        return None if have else "needs Kaggle credentials (KAGGLE_USERNAME/KAGGLE_KEY or ~/.kaggle/kaggle.json)"
-    return None
 
 
 def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFrame:
@@ -45,9 +33,12 @@ def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFra
         lf
         .with_columns(doc=pl.col("text").hash(config.seed))
         .join(chosen.lazy(), on=["doc", "label"], how="inner")
+        .collect(engine="streaming")
+        # The streaming engine does not preserve row order, so "first" would be arbitrary when one
+        # text appears twice with different metadata: sort on a total order, then keep the first.
+        .sort("doc", "label", "dataset", "generator", "domain", "attack", "group", nulls_last=True, maintain_order=True)
         .unique(subset=["doc", "label"], keep="first", maintain_order=True)
         .drop("doc")
-        .collect(engine="streaming")
     )
     return clean(picked)
 
@@ -71,7 +62,7 @@ def build(
         if not source.enabled:
             skipped[source.name] = "disabled in sources.toml"
             continue
-        if reason := unavailable(source):
+        if reason := missing_credentials(source.requires):
             if strict:
                 msg = f"{source.name}: {reason}"
                 raise RuntimeError(msg)
@@ -90,7 +81,7 @@ def build(
     df = pl.concat(frames, how="diagonal")
     del frames
     df, guard_report = apply_guards(add_keys(df, config.seed, config.prefix_chars), prefix_chars=config.prefix_chars)
-    df = df.rename({"doc_id": "doc_id"}).with_columns(pl.col("dataset").cast(pl.Categorical))
+    df = df.with_columns(pl.col("dataset").cast(pl.Categorical))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     splits: dict[str, pl.DataFrame] = {}

@@ -1,0 +1,36 @@
+[project]
+name = "is-it-slop-curation"
+version = "0.1.0"
+description = "Builds the human/AI text dataset the is-it-slop model is trained and evaluated on."
+authors = [
+    { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
+]
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = [
+    "is-it-slop",
+    "polars==2.2.0",          # pinned: hash() (which picks the rows) is only stable within a version
+    "huggingface-hub>=2.4.0",
+    "kagglehub>=1.0.3",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+curation = "curation.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=9.2.0"]
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "curation"
+
+[tool.uv.sources]
+is-it-slop = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

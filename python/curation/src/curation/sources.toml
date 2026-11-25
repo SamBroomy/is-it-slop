@@ -1,5 +1,9 @@
 # Sources for the curated human/AI text dataset. Label 0 is human, 1 is AI.
 #
+# Every source is plain files in a Hugging Face (or Kaggle) dataset repo. `files` lists names or
+# patterns (`data/*.parquet`); as a table (`name = files`) each name labels its files in the
+# `dataset` column.
+#
 # Quotas (`primary` feeds train + test, `validation` is drawn from rows left over after primary):
 #   "all"                    every row            { each = n }       up to n rows of each label
 #   n                        n rows in total      { 0 = n, 1 = "all" }  explicit per label
@@ -18,48 +22,53 @@ prefix_chars = 200  # a test/validation row sharing this many leading characters
 
 [[source]]
 name = "english_quotes"
-loader = "hf_dataset"
+loader = "files"
 repo = "Abirate/english_quotes"
+files = ["quotes.jsonl"]
 text_column = "quote"
 label = 0
 primary = "all"
 
 [[source]]
 name = "newswire"
-loader = "hf_dataset"
+loader = "files"
 repo = "dell-research-harvard/newswire" # public-domain US newswire articles, 1878-1977
+files = ["*_data_clean.json"]
 text_column = "cleaned_article"
 label = 0
 primary = 50000
 
 [[source]]
 name = "rotten_tomatoes"
-loader = "hf_dataset"
+loader = "files"
 repo = "cornell-movie-review-data/rotten_tomatoes"
+files = ["*.parquet"]
 label = 0
 primary = 7500
 
 [[source]]
 name = "ag_news"
-loader = "hf_dataset"
+loader = "files"
 repo = "fancyzhx/ag_news"
+files = ["data/*.parquet"]
 label = 0
 primary = 20000
 
 [[source]]
 name = "imdb"
-loader = "hf_dataset"
+loader = "files"
 repo = "stanfordnlp/imdb"
+files = ["plain_text/*.parquet"]
 label = 0
 primary = 10000
 
 [[source]]
 name = "human-essays"
-loader = "hf_dataset"
+loader = "files"
 repo = "artfultom/human-essays"
-subsets = ["asap2 essays", "ivy panda essays", "persuade essays"]
+files = { "asap2 essays" = "asap2_essays.csv", "ivy panda essays" = "ivy_panda_essays.csv", "persuade essays" = "persuade_essays.csv" }
 label = 0
-primary = 40000                                                   # across the three subsets; avoids topic over-fitting
+primary = 40000                                                                                                                         # across the three subsets; avoids topic over-fitting
 
 # ---------------------------------------------------------------------------------------------
 # AI text only
@@ -67,9 +76,9 @@ primary = 40000                                                   # across the t
 
 [[source]]
 name = "llm-generated-essays"
-loader = "hf_dataset"
+loader = "files"
 repo = "artfultom/llm-generated-essays"
-subsets = ["one prompt", "two prompts"]
+files = { "one prompt" = "*_essays_[123].csv", "two prompts" = "*_essays_[45].csv" }
 label = 1
 generator_column = "model"
 domain = "essay"
@@ -77,8 +86,9 @@ primary = "all"
 
 [[source]]
 name = "General-Knowledge"
-loader = "hf_dataset"
+loader = "files"
 repo = "MuskumPillerum/General-Knowledge"
+files = ["output.json"]
 text_column = "Answer"
 label = 1
 primary = 10000                           # capped: the answers are formulaic
@@ -97,7 +107,7 @@ validation = 8000
 name = "arena-expert-5k"
 loader = "arena"
 repo = "lmarena-ai/arena-expert-5k"
-files = ["data/train-00000-of-00001.parquet"]
+files = ["data/train-*.parquet"]
 sides = [
     [
         "conversation_a",
@@ -115,15 +125,7 @@ primary = "all"
 name = "arena-human-preference-140k"
 loader = "arena"
 repo = "lmarena-ai/arena-human-preference-140k"
-files = [
-    "data/train-00000-of-00007.parquet",
-    "data/train-00001-of-00007.parquet",
-    "data/train-00002-of-00007.parquet",
-    "data/train-00003-of-00007.parquet",
-    "data/train-00004-of-00007.parquet",
-    "data/train-00005-of-00007.parquet",
-    "data/train-00006-of-00007.parquet",
-]
+files = ["data/train-*.parquet"]
 sides = [["conversation_a", "model_a"], ["conversation_b", "model_b"]]
 domain = "chat"
 primary = 50000
@@ -135,7 +137,7 @@ validation = 12000
 
 [[source]]
 name = "raid"
-loader = "hf_files"
+loader = "files"
 repo = "liamdugan/raid"
 files = ["train.csv"]
 text_column = "generation"
@@ -159,7 +161,7 @@ validation = { each = 30000 }
 
 [[source]]
 name = "human_vs_machine"
-loader = "hf_files"
+loader = "files"
 repo = "NicolaiSivesind/human-vs-machine"
 files = ["wiki-labeled.csv", "research-abstracts-labeled.csv"]
 label_column = "label"
@@ -180,8 +182,9 @@ primary = { 0 = 25000, 1 = "all" }
 
 [[source]]
 name = "AI-and-Human-Generated-Text"
-loader = "hf_dataset"
+loader = "files"
 repo = "Ateeqq/AI-and-Human-Generated-Text"
+files = ["train.csv", "test.csv"]
 text_column = "abstract"
 label_column = "label"
 generator = "gpt-3"
@@ -189,8 +192,9 @@ primary = "all"
 
 [[source]]
 name = "AI_Human_generated_movie_reviews"
-loader = "hf_dataset"
+loader = "files"
 repo = "Milkyway-islander/AI_Human_generated_movie_reviews"
+files = ["data/*.parquet"]
 label_column = "labels"
 generator_column = "models"
 domain = "movie_review"
@@ -198,8 +202,9 @@ primary = "all"
 
 [[source]]
 name = "human_vs_ai_sentences"
-loader = "hf_dataset"
+loader = "files"
 repo = "shahxeebhassan/human_vs_ai_sentences"
+files = ["complete_dataset.csv"]
 label_column = "label"
 primary = { each = 7500 }
 
@@ -211,6 +216,7 @@ primary = { each = 7500 }
 name = "ai-vs-human"
 loader = "pairs"
 repo = "ilyasoulk/ai-vs-human"
+files = ["data/*.parquet"]
 generator = "gpt-3.5-turbo"
 domain = "cnn_dailymail"
 primary = { each = 4500 }
@@ -220,6 +226,7 @@ validation = "all"
 name = "ai-vs-human-HuggingFaceTB-SmolLM2-360M-Instruct"
 loader = "pairs"
 repo = "zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-360M-Instruct"
+files = ["data/*.parquet"]
 generator = "SmolLM2-360M-Instruct"
 domain = "cnn_dailymail"
 primary = "all"
@@ -228,6 +235,7 @@ primary = "all"
 name = "ai-vs-human-HuggingFaceTB-SmolLM2-1.7B-Instruct"
 loader = "pairs"
 repo = "zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-1.7B-Instruct"
+files = ["data/*.parquet"]
 generator = "SmolLM2-1.7B-Instruct"
 domain = "cnn_dailymail"
 primary = "all"
@@ -236,6 +244,7 @@ primary = "all"
 name = "ai-vs-human-Qwen-Qwen2.5-1.5B-Instruct"
 loader = "pairs"
 repo = "zcamz/ai-vs-human-Qwen-Qwen2.5-1.5B-Instruct"
+files = ["data/*.parquet"]
 generator = "Qwen2.5-1.5B-Instruct"
 domain = "cnn_dailymail"
 primary = "all"
@@ -244,6 +253,7 @@ primary = "all"
 name = "ai-vs-human-google-gemma-2-2b-it"
 loader = "pairs"
 repo = "zcamz/ai-vs-human-google-gemma-2-2b-it"
+files = ["data/*.parquet"]
 generator = "gemma-2-2b-it"
 domain = "cnn_dailymail"
 primary = "all"
@@ -252,6 +262,7 @@ primary = "all"
 name = "ai-vs-human-meta-llama-Llama-3.2-1B-Instruct"
 loader = "pairs"
 repo = "zcamz/ai-vs-human-meta-llama-Llama-3.2-1B-Instruct"
+files = ["data/*.parquet"]
 generator = "Llama-3.2-1B-Instruct"
 domain = "cnn_dailymail"
 primary = "all"
@@ -260,6 +271,7 @@ primary = "all"
 name = "ai-vs-human-meta-llama-Llama-3.1-8B-Instruct"
 loader = "pairs"
 repo = "ilyasoulk/ai-vs-human-meta-llama-Llama-3.1-8B-Instruct"
+files = ["data/*.parquet"]
 generator = "Llama-3.1-8B-Instruct"
 domain = "openwebtext"
 primary = "all"
@@ -270,8 +282,9 @@ primary = "all"
 
 [[source]]
 name = "AI-human-text"
-loader = "hf_dataset"
+loader = "files"
 repo = "andythetechnerd03/AI-human-text"
+files = ["data/*.parquet"]
 label_column = "generated"
 enabled = false
 primary = "all"

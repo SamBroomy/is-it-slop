@@ -3,6 +3,9 @@
 # Android library recipes: `just android::<recipe>`
 mod android
 
+# Dataset curation recipes: `just curation::build`
+mod curation 'python/curation'
+
 # Default recipe shows available commands
 default:
     @just --list
@@ -23,16 +26,8 @@ install-pre-commit:
 # Development Pipeline
 # =============================================================================
 
-model-pipeline: && dataset-curation training-pipeline build-bindings build-cli-release
+model-pipeline: && curation::build training-pipeline build-bindings build-cli-release
     uv sync --all-extras --all-groups
-
-# Build data/<version>/{train,test,validation}.parquet from the sources in curation/sources.toml
-dataset-curation version="4.0.0":
-    uv run python -m curation build --version {{ version }}
-
-# Offline tests for the curation pipeline
-test-curation:
-    uv run pytest tests -q
 
 # Train the model with the Rust training crate (`--backend` picks cuda/wgpu/flex; see its --help)
 training-pipeline:

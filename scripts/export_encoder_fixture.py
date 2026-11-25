@@ -1,4 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["numpy", "polars", "safetensors"]
+# ///
 """Export the encoding-contract fixture for the Rust training crate.
 
 The Rust `DocumentEncoder` is pinned by golden vectors: raw texts, the vocabulary, and the exact
@@ -7,7 +11,7 @@ from the original Python pipeline's cache, which defined the encoding every trai
 depends on; the fixture's job now is to freeze that contract, not to track Python. Changing the
 encoding deliberately means regenerating this fixture and versioning the artifact format.
 
-    uv run --with safetensors python scripts/export_encoder_fixture.py
+    uv run scripts/export_encoder_fixture.py
 
 Reads the v8192 cache and bundle; the outputs are committed.
 """

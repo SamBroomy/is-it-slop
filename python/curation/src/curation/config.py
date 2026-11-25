@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from importlib.resources.abc import Traversable
     from pathlib import Path
 
 HUMAN, AI = 0, 1
@@ -99,6 +100,19 @@ class Source:
     enabled: bool = True
     params: dict[str, Any] = field(default_factory=dict)
 
+    def referenced_columns(self) -> list[str]:
+        """List the columns of the raw files that this source's configuration reads (sorted, unique)."""
+        named = [
+            self.text_column,
+            self.label_column,
+            self.generator_column,
+            self.domain_column,
+            self.attack_column,
+            self.group_column,
+            *self.params.get("keep", {}),
+        ]
+        return sorted({name for name in named if name})
+
     def validate(self) -> None:
         """Reject sources whose label cannot be determined."""
         has_label = self.label in {HUMAN, AI} or self.label_column is not None or self.loader in {"pairs", "arena"}
@@ -125,7 +139,7 @@ _SOURCE_KEYS = {
 }  # fmt: skip
 
 
-def load_config(path: Path) -> Config:
+def load_config(path: Path | Traversable) -> Config:
     """Read and validate a sources file."""
     raw_bytes = path.read_bytes()
     raw = tomllib.loads(raw_bytes.decode())

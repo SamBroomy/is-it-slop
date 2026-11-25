@@ -55,26 +55,23 @@ def apply_guards(df: pl.DataFrame, *, prefix_chars: int) -> tuple[pl.DataFrame, 
         kept = dict(after.group_by("split").len().iter_rows())
         report[name] = {s: counts.get(s, 0) - kept.get(s, 0) for s in SPLITS}
 
-    conflicts = df.group_by("norm").agg(pl.col("label").n_unique().alias("labels")).filter(pl.col("labels") > 1)
-    after = df.join(conflicts.select("norm"), on="norm", how="anti")
+    after = df.filter(pl.col("label").n_unique().over("norm") == 1)
     removed("label_conflict", df, after)
     df = after
 
-    order = pl.col("split").replace_strict({s: i for i, s in enumerate(SPLITS)}, return_dtype=pl.Int8)
-    after = df.sort(order, "doc_id").unique(subset="doc_id", keep="first", maintain_order=True)
+    # Earliest split first, then a total order, so which copy survives never depends on row order.
+    split_rank = pl.col("split").cast(pl.Enum(SPLITS)).to_physical()
+    tie_breakers = [c for c in ("doc_id", "dataset", "generator", "domain", "attack") if c in df.columns]
+    ordered = df.sort(split_rank, *tie_breakers, nulls_last=True, maintain_order=True)
+    after = ordered.unique(subset="doc_id", keep="first", maintain_order=True)
     removed("duplicate", df, after)
     df = after
 
-    earlier = {"test": ["train"], "validation": ["train", "test"]}
+    # A later split may not repeat what an earlier one holds; repeats inside one split are kept.
     for name, key in (("shared_normalised", "norm"), ("shared_prefix", "prefix")):
         if key == "prefix" and not prefix_chars:
             continue
-        kept = [df.filter(pl.col("split") == "train")]
-        for split, against in earlier.items():
-            part = df.filter(pl.col("split") == split)
-            seen = df.filter(pl.col("split").is_in(against)).select(key).unique()
-            kept.append(part.join(seen, on=key, how="anti"))
-        after = pl.concat(kept)
+        after = df.filter(split_rank == split_rank.min().over(key))
         removed(name, df, after)
         df = after
 

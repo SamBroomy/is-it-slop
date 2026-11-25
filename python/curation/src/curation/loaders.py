@@ -2,11 +2,19 @@
 
 Every loader returns a `LazyFrame`; `standardise` then maps it onto the schema the rest of the
 pipeline relies on: `text`, `label`, `group`, `generator`, `domain`, `attack`, `dataset`.
+
+Sources are plain files in a Hugging Face (or Kaggle) dataset repo, read straight into polars:
+parquet, csv and ndjson are scanned lazily, and JSON arrays are streamed one file at a time.
 """
 
 from __future__ import annotations
 
+import ast
+import fnmatch
+import functools
+import os
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
@@ -17,11 +25,8 @@ from .config import AI, HUMAN, Source
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    import pyarrow as pa
-
 COLUMNS = ("text", "label", "group", "generator", "domain", "attack", "dataset")
 
-Loader = "Callable[[Source], pl.LazyFrame]"
 LOADERS: dict[str, Callable[[Source], pl.LazyFrame]] = {}
 
 
@@ -36,107 +41,151 @@ def loader(name: str) -> Callable[[Callable[[Source], pl.LazyFrame]], Callable[[
 
 
 # --------------------------------------------------------------------------------------------
-# Generic readers
+# Getting files
 # --------------------------------------------------------------------------------------------
 
 
-def _scan(path: str) -> pl.LazyFrame:
-    if path.endswith(".parquet"):
-        return pl.scan_parquet(path)
-    if path.endswith(".csv"):
-        return pl.scan_csv(path, infer_schema_length=10_000)
-    if path.endswith((".json", ".jsonl")):
-        return pl.read_json(path).lazy() if path.endswith(".json") else pl.scan_ndjson(path)
-    msg = f"don't know how to read {path}"
-    raise ValueError(msg)
+@functools.cache
+def repo_files(repo: str) -> tuple[str, ...]:
+    """Every file in a Hugging Face dataset repo."""
+    from huggingface_hub import HfApi
+
+    return tuple(HfApi().list_repo_files(repo, repo_type="dataset"))
 
 
-def _download(repo: str, filename: str) -> str:
+def download(repo: str, filename: str) -> Path:
+    """Download one file of a dataset repo (cached by `huggingface_hub`) and return its path."""
     from huggingface_hub import hf_hub_download
 
-    return hf_hub_download(repo, filename, repo_type="dataset")
+    return Path(hf_hub_download(repo, filename, repo_type="dataset"))
 
 
-def arrow_scan(table: pa.Table, batch_size: int = 20_000) -> pl.LazyFrame:
-    """Scan an Arrow table lazily, converting `batch_size` rows at a time.
+def expand(repo: str, patterns: list[str]) -> list[str]:
+    """Resolve file names and `*`/`?`/`[...]` patterns against a repo; every pattern must match."""
+    names = repo_files(repo)
+    found: list[str] = []
+    for pattern in patterns:
+        matches = sorted(fnmatch.filter(names, pattern))
+        if not matches:
+            msg = f"{repo}: no file matches {pattern!r}"
+            raise FileNotFoundError(msg)
+        found.extend(matches)
+    return found
 
-    `pl.from_arrow` copies every string of the table, which for a multi-gigabyte news corpus is more
-    memory than the machine has. Converting batch by batch keeps the footprint at one batch, and
-    projection, predicate and row-limit pushdown are honoured so polars can still optimise around it.
+
+# --------------------------------------------------------------------------------------------
+# Reading files
+# --------------------------------------------------------------------------------------------
+
+
+def lazy_from_frames(frames: Callable[[], Iterator[pl.DataFrame]], schema: Callable[[], pl.Schema]) -> pl.LazyFrame:
+    """Scan frames lazily as they are produced, so only one is in memory at a time.
+
+    Projection, predicate and row-limit pushdown are honoured; columns are cast to `schema` so that
+    files whose inferred types drift (an all-null column, say) still concatenate.
     """
-    schema = pl.from_arrow(table.schema.empty_table()).schema
 
     def source(
         with_columns: list[str] | None, predicate: pl.Expr | None, n_rows: int | None, _hint: int | None
     ) -> Iterator[pl.DataFrame]:
+        declared = schema()
         remaining = n_rows
-        for batch in table.to_batches(max_chunksize=batch_size):
-            if remaining is not None and remaining <= 0:
-                return
-            df = pl.from_arrow(batch)
+        for frame in frames():
+            df = frame
             if remaining is not None:
+                if remaining <= 0:
+                    return
                 df = df.head(remaining)
                 remaining -= len(df)
             if predicate is not None:
                 df = df.filter(predicate)
-            if with_columns is not None:
-                df = df.select(with_columns)
+            columns = with_columns if with_columns is not None else list(declared)
+            df = df.select(
+                pl.col(c).cast(declared[c]) if c in df.columns else pl.lit(None, declared[c]).alias(c) for c in columns
+            )
             if len(df):
                 yield df
 
-    return register_io_source(source, schema=schema)
+    return register_io_source(source, schema=schema, is_pure=True)
 
 
-@loader("hf_files")
-def hf_files(source: Source) -> pl.LazyFrame:
-    """Specific data files of a dataset repo (csv, parquet, json), scanned lazily.
+@functools.cache
+def _inferred_schema(path: Path) -> pl.Schema:
+    return pl.read_json(path).schema
 
-    Params: `repo`, `files` (list of paths inside the repo).
+
+def scan_json(paths: list[Path], columns: list[str] | None = None) -> pl.LazyFrame:
+    """Scan JSON-array files one at a time (polars cannot scan them lazily, and they can be huge).
+
+    Given `columns`, only those are parsed, as text: nested columns the source does not use (whose
+    structure can differ from file to file) are skipped, which is also much faster and lighter.
+    Without it every column is inferred from the file.
     """
-    repo = source.params["repo"]
-    paths = [_download(repo, f) for f in source.params["files"]]
-    return pl.concat([_scan(p) for p in paths], how="diagonal")
+    schema = pl.Schema(dict.fromkeys(columns, pl.String)) if columns else None
+    return lazy_from_frames(
+        lambda: (pl.read_json(p, schema=schema) for p in paths), lambda: schema or _inferred_schema(paths[0])
+    )
 
 
-@loader("hf_dataset")
-def hf_dataset(source: Source) -> pl.LazyFrame:
-    """Load a dataset through the `datasets` library, every split concatenated (zero-copy from arrow).
+def scan_files(paths: list[Path], columns: list[str] | None = None) -> pl.LazyFrame:
+    """Scan data files of one kind (or a mix) into a single lazy frame; `columns` applies to JSON."""
+    if all(p.suffix == ".json" for p in paths):
+        return scan_json(paths, columns)
+    scans = []
+    for path in paths:
+        match path.suffix:
+            case ".parquet":
+                scans.append(pl.scan_parquet(path))
+            case ".csv":
+                scans.append(pl.scan_csv(path, infer_schema_length=10_000))
+            case ".jsonl":
+                scans.append(pl.scan_ndjson(path))
+            case ".json":
+                scans.append(scan_json([path], columns))
+            case _:
+                msg = f"don't know how to read {path}"
+                raise ValueError(msg)
+    return pl.concat(scans, how="diagonal")
 
-    Params: `repo`, and `subset` or `subsets` (a list; each becomes its own `dataset` value).
+
+@loader("files")
+def files(source: Source) -> pl.LazyFrame:
+    """Read files of a Hugging Face dataset repo. Params: `repo` and `files`.
+
+    `files` is a list of names or patterns. It can also be a table of `name = names`; each name
+    then labels its files in the `dataset` column (as `<repo>/<name>`), the way subsets of one
+    repo are told apart.
     """
-    from datasets import load_dataset
-
     repo = source.params["repo"]
     tail = repo.rsplit("/", maxsplit=1)[-1]
-    subsets = source.params.get("subsets") or [source.params.get("subset")]
+    spec = source.params["files"]
+    groups = spec.items() if isinstance(spec, dict) else [(None, spec)]
     frames = []
-    for subset in subsets:
-        splits = load_dataset(repo, subset) if subset else load_dataset(repo)
-        table = pl.concat([arrow_scan(split.data.table) for split in splits.values()], how="diagonal")
-        label = f"{tail}/{subset}" if subset and len(subsets) > 1 else None
-        frames.append(table.with_columns(dataset=pl.lit(label)) if label else table)
+    for name, patterns in groups:
+        names = expand(repo, [patterns] if isinstance(patterns, str) else patterns)
+        lf = scan_files([download(repo, n) for n in names], source.referenced_columns())
+        frames.append(lf.with_columns(dataset=pl.lit(f"{tail}/{name}")) if name else lf)
     return pl.concat(frames, how="diagonal")
 
 
 @loader("kaggle")
 def kaggle(source: Source) -> pl.LazyFrame:
-    """Load a file of a Kaggle dataset (needs Kaggle credentials). Params: `handle`, `file`."""
+    """Read a file of a Kaggle dataset (needs `KAGGLE_API_TOKEN`). Params: `handle`, `file`."""
     import kagglehub
-    from kagglehub import KaggleDatasetAdapter
 
-    return kagglehub.dataset_load(KaggleDatasetAdapter.POLARS, source.params["handle"], source.params["file"]).lazy()
+    directory = Path(kagglehub.dataset_download(source.params["handle"]))
+    return scan_files([directory / source.params["file"]])
 
 
 @loader("pairs")
 def pairs(source: Source) -> pl.LazyFrame:
-    """Datasets with one `human` and one `ai` column per row (a continuation of the same prompt).
+    """Read datasets with one `human` and one `ai` column per row (a continuation of the same prompt).
 
     Each pair becomes two rows that share a `group`, so both sides always land in the same split.
     """
-    lf = hf_dataset(source).with_row_index("pair")
     return (
-        lf
-        .select("pair", "human", "ai")
+        files(source)
+        .with_row_index("pair")
         .unpivot(index="pair", on=["human", "ai"], variable_name="side", value_name="text")
         .select(
             "text",
@@ -152,6 +201,7 @@ def pairs(source: Source) -> pl.LazyFrame:
 
 _STRING = r"""'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*\""""
 _NUMPY = re.compile(rf"(?P<string>{_STRING})|(?P<array>\barray\()|(?P<dtype>,\s*dtype=object\))", re.DOTALL)
+_BRACES = re.compile(rf"(?P<string>{_STRING})|(?P<open>\{{)|(?P<close>\}})", re.DOTALL)
 
 
 def _unwrap_numpy(text: str) -> str:
@@ -170,7 +220,7 @@ def _top_level_dicts(text: str) -> list[str]:
     found: list[str] = []
     depth = 0
     start = 0
-    for match in re.finditer(rf"(?P<string>{_STRING})|(?P<open>\{{)|(?P<close>\}})", text, re.DOTALL):
+    for match in _BRACES.finditer(text):
         if match.group("open"):
             if depth == 0:
                 start = match.start()
@@ -187,8 +237,6 @@ def parse_conversation(raw: str | None) -> list[dict[str, str]]:
 
     `content` is the concatenated text of the turn's text parts. Unparseable input gives `[]`.
     """
-    import ast
-
     if not raw:
         return []
     turns: list[dict[str, str]] = []
@@ -200,9 +248,8 @@ def parse_conversation(raw: str | None) -> list[dict[str, str]]:
         content = turn.get("content")
         if isinstance(content, tuple | list):
             parts = content[0] if len(content) == 1 and isinstance(content[0], list) else content
-            content = "\n".join(
-                p["text"] for p in parts if isinstance(p, dict) and p.get("type") == "text" and p.get("text")
-            )
+            texts = (p["text"] for p in parts if isinstance(p, dict) and p.get("type") == "text" and p.get("text"))
+            content = "\n".join(texts)
         turns.append({"role": str(turn.get("role", "")), "content": content or ""})
     return turns
 
@@ -210,45 +257,35 @@ def parse_conversation(raw: str | None) -> list[dict[str, str]]:
 _TURNS = pl.List(pl.Struct({"role": pl.Utf8, "content": pl.Utf8}))
 
 
-def _turns_from_strings(series: pl.Series) -> pl.Series:
-    return pl.Series(series.name, [parse_conversation(s) for s in series], dtype=_TURNS)
-
-
 def assistant_texts(lf: pl.LazyFrame, conversation: str) -> pl.LazyFrame:
-    """One row per assistant turn of `conversation`, from any of the arena message layouts.
+    """Explode `conversation` to one row per assistant turn, from any of the arena message layouts.
 
     Handles messages whose `content` is a string, or a list of `{type, text}` parts, or whose
     whole conversation is a stringified numpy repr. Keeps the other columns of `lf`.
     """
-    schema = lf.collect_schema()
-    column = pl.col(conversation)
-    if schema[conversation] == pl.Utf8:
-        lf = lf.with_columns(column.map_batches(_turns_from_strings, return_dtype=_TURNS))
+    if lf.collect_schema()[conversation] == pl.Utf8:
+        lf = lf.with_columns(pl.col(conversation).map_elements(parse_conversation, return_dtype=_TURNS))
     turns = lf.explode(conversation).unnest(conversation).filter(pl.col("role") == "assistant")
-    content_type = turns.collect_schema()["content"]
-    if isinstance(content_type, pl.List):
-        text = (
-            pl
-            .col("content")
-            .list.eval(pl.element().struct.field("text").filter(pl.element().struct.field("type") == "text"))
-            .list.join("\n")
+    if isinstance(turns.collect_schema()["content"], pl.List):
+        parts = pl.col("content").list.eval(
+            pl.element().struct.field("text").filter(pl.element().struct.field("type") == "text")
         )
-        return turns.with_columns(text=text)
+        return turns.with_columns(text=parts.list.join("\n"))
     return turns.with_columns(text=pl.col("content"))
 
 
 @loader("arena")
 def arena(source: Source) -> pl.LazyFrame:
-    """Two-model chat arenas: every assistant reply is an AI text, tagged with the model that wrote it.
+    """Read two-model chat arenas: every assistant reply is an AI text, tagged with the model that wrote it.
 
-    Params: `repo`, `files`, `sides` (list of `[conversation_column, model_column]` pairs),
-    optional `column_aliases`. Both replies to one prompt share a `group`.
+    Params: `repo`, `files` and `sides` (a list of `[conversation_column, model_column]` pairs).
+    Both replies to one prompt share a `group`.
     """
-    base = hf_files(source).with_row_index("convo")
-    out = []
+    base = files(source).with_row_index("convo")
+    sides = []
     for conversation, model in source.params["sides"]:
         side = base.select("convo", conversation, pl.col(model).alias("generator"))
-        out.append(
+        sides.append(
             assistant_texts(side, conversation).select(
                 "text",
                 pl.lit(AI, dtype=pl.Int8).alias("label"),
@@ -256,7 +293,7 @@ def arena(source: Source) -> pl.LazyFrame:
                 "generator",
             )
         )
-    return pl.concat(out)
+    return pl.concat(sides)
 
 
 # --------------------------------------------------------------------------------------------
@@ -268,10 +305,8 @@ def standardise(lf: pl.LazyFrame, source: Source) -> pl.LazyFrame:
     """Map a loader's output onto `COLUMNS`, applying the source's configured column choices."""
     schema = lf.collect_schema().names()
 
-    keep = source.params.get("keep")
-    if keep:
-        for column, values in keep.items():
-            lf = lf.filter(pl.col(column).is_in(values))
+    for column, values in (source.params.get("keep") or {}).items():
+        lf = lf.filter(pl.col(column).is_in(values))
 
     def column_or_null(name: str | None) -> pl.Expr:
         return pl.col(name).cast(pl.Utf8) if name and name in schema else pl.lit(None, dtype=pl.Utf8)
@@ -291,6 +326,7 @@ def standardise(lf: pl.LazyFrame, source: Source) -> pl.LazyFrame:
         generator = column_or_null(source.generator_column)
     else:
         generator = pl.col("generator").cast(pl.Utf8)  # supplied by the loader (arena)
+
     text_name = source.text_column if source.text_column in schema else "text"
     return (
         lf
@@ -320,3 +356,16 @@ def load_source(source: Source, limit: int | None = None) -> pl.LazyFrame:
     if limit:
         lf = lf.head(limit)
     return standardise(lf, source)
+
+
+def missing_credentials(requires: str | None) -> str | None:
+    """Say why a source's credentials are missing, or return `None` when it can be read."""
+    if requires == "hf_token":
+        from huggingface_hub import get_token
+
+        return None if get_token() else "gated on Hugging Face: set HF_TOKEN (in .env or the environment)"
+    if requires == "kaggle":
+        have = os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")
+        have = have or Path("~/.kaggle/kaggle.json").expanduser().exists()
+        return None if have else "needs Kaggle credentials: set KAGGLE_API_TOKEN (in .env or the environment)"
+    return None

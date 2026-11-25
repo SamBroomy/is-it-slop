@@ -2,8 +2,9 @@
 
 Pass one hashes each row (cheap, text is dropped straight away) and ranks rows within each label;
 quotas then slice that ranking into train / test / validation. Because ranks follow a hash, any
-slice is a random sample, the choice is reproducible, and rows sharing a `group` rank together so a
-document's variants stay in one split. Pass two (in `build`) fetches the text of only the picked rows.
+slice is a random sample and the choice is reproducible. Rows sharing a `group` rank together, so a
+document's variants stay in one split except where a quota boundary falls inside a group (at most
+one group per label per boundary; the overlap guards remove any leakage that causes). Pass two (in `build`) fetches the text of only the picked rows.
 """
 
 from __future__ import annotations
@@ -33,43 +34,39 @@ def key_rows(lf: pl.LazyFrame, seed: int) -> pl.LazyFrame:
 def assign_splits(keys: pl.DataFrame, source: Source, test_fraction: float) -> pl.DataFrame:
     """Pick rows for each split by quota. Returns `doc`, `label`, `split` for the picked rows only.
 
-    Exact duplicate texts inside the source are collapsed first. Primary rows (train + test) are
+    A text that appears more than once in the source is collapsed to one row ranked by its smallest
+    `h`, so the result never depends on the order rows arrive in. Primary rows (train + test) are
     taken before validation rows, and the two never overlap.
     """
-    keys = keys.unique(subset=["doc", "label"], keep="first", maintain_order=True)
+    keys = keys.group_by("doc", "label").agg(pl.col("h").min())
     available = dict(keys.group_by("label").len().iter_rows())
     primary = source.primary.resolve(available)
-    remaining = {label: n - primary.get(label, 0) for label, n in available.items()}
-    validation = source.validation.resolve(remaining)
+    validation = source.validation.resolve({label: n - primary.get(label, 0) for label, n in available.items()})
 
     plan = pl.DataFrame(
-        [
-            {
-                "label": label,
-                "n_test": round(test_fraction * primary.get(label, 0)),
-                "n_primary": primary.get(label, 0),
-                "n_validation": validation.get(label, 0),
-            }
-            for label in available
-        ],
-        schema={"label": keys.schema["label"], "n_test": pl.Int64, "n_primary": pl.Int64, "n_validation": pl.Int64},
-    )
-    rank = pl.int_range(pl.len()).over("label")
+        {
+            "label": list(available),
+            "n_primary": [primary.get(label, 0) for label in available],
+            "n_validation": [validation.get(label, 0) for label in available],
+        },
+        schema={"label": keys.schema["label"], "n_primary": pl.Int64, "n_validation": pl.Int64},
+    ).with_columns(n_test=(pl.col("n_primary") * test_fraction).round().cast(pl.Int64))
+    rank = pl.int_range(pl.len()).over("label", order_by=["h", "doc"])
     n_train = pl.col("n_primary") - pl.col("n_test")
     return (
         keys
-        .sort(["label", "h", "doc"])
-        .with_columns(rank=rank)
         .join(plan, on="label")
-        .with_columns(
+        .with_columns(rank=rank)
+        .select(
+            "doc",
+            "label",
             split=pl
             .when(pl.col("rank") < n_train)
             .then(pl.lit("train"))
             .when(pl.col("rank") < pl.col("n_primary"))
             .then(pl.lit("test"))
             .when(pl.col("rank") < pl.col("n_primary") + pl.col("n_validation"))
-            .then(pl.lit("validation"))
+            .then(pl.lit("validation")),
         )
-        .filter(pl.col("split").is_not_null())
-        .select("doc", "label", "split")
+        .drop_nulls("split")
     )

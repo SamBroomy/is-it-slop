@@ -1,0 +1,22 @@
+# Dataset curation. From the repo root: `just curation::build 4.0.0`.
+# These recipes run in the directory you call them from (the repo root), so `data/` lands there.
+
+package := "is-it-slop-curation"
+
+default:
+    @just --list
+
+# Build data/<version>/{train,test,validation}.parquet from the sources in sources.toml
+[no-cd]
+build version="4.0.0" *args:
+    uv run --package {{ package }} curation build --version {{ version }} {{ args }}
+
+# List the configured sources and whether their credentials are available
+[no-cd]
+sources:
+    uv run --package {{ package }} curation sources
+
+# Offline tests
+[no-cd]
+test:
+    uv run --package {{ package }} pytest python/curation/tests -q

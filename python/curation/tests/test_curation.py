@@ -2,27 +2,35 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import polars as pl
-import pyarrow as pa
 import pytest
-from curation import loaders
 from curation.build import build
 from curation.config import Config, Quota, Source
 from curation.guards import add_keys, apply_guards
-from curation.loaders import arrow_scan, parse_conversation, standardise
+from curation.loaders import lazy_from_frames, parse_conversation, scan_files, standardise
 from curation.select import assign_splits, key_rows
+
+from curation import loaders
 
 SEED = 42
 
 
-def source(name: str = "s", **kwargs) -> Source:  # ruff: ignore[missing-type-kwargs]
+def source(
+    name: str = "s",
+    *,
+    primary: Quota | str | int | dict | None = None,
+    validation: Quota | str | int | dict | None = None,
+    **fields: Any,  # ruff: ignore[any-type]
+) -> Source:
     """Build a source with sensible defaults for tests."""
-    defaults = {"loader": "frame", "primary": Quota(), "validation": Quota(), "label_column": "label"}
-    merged = {**defaults, **kwargs}
-    for key in ("primary", "validation"):
-        if not isinstance(merged[key], Quota):
-            merged[key] = Quota.parse(merged[key])
-    return Source(name=name, **merged)
+
+    def quota(value: Quota | str | int | dict | None) -> Quota:
+        return value if isinstance(value, Quota) else Quota.parse(value)
+
+    fields = {"loader": "frame", "label_column": "label", **fields}
+    return Source(name=name, primary=quota(primary), validation=quota(validation), **fields)
 
 
 def frame(n_per_label: int, *, prefix: str = "doc", groups: int | None = None) -> pl.DataFrame:
@@ -88,6 +96,22 @@ def test_selection_is_deterministic_and_row_order_independent() -> None:
     first = pick(df, src).sort("doc")
     shuffled = pick(df.sample(fraction=1.0, shuffle=True, seed=7), src).sort("doc")
     assert first.equals(shuffled)
+
+
+def test_selection_ignores_arrival_order_for_duplicate_texts() -> None:
+    # The same text twice with different groups (so different ranking hashes): which row arrives
+    # first must not change what is picked.
+    rows = [
+        {"text": f"duplicated text number {i} " + "x" * 20, "label": label, "group": f"g{i}-{copy}"}
+        for i in range(200)
+        for label in (0, 1)
+        for copy in range(2)
+    ]
+    df = pl.DataFrame(rows, schema={"text": pl.Utf8, "label": pl.Int8, "group": pl.Utf8})
+    src = source(primary={"each": 100}, validation={"each": 30})
+    reference = pick(df, src).sort("doc", "label")
+    for seed in (1, 2, 3):
+        assert reference.equals(pick(df.sample(fraction=1.0, shuffle=True, seed=seed), src).sort("doc", "label"))
 
 
 def test_variants_of_one_document_share_a_split() -> None:
@@ -208,15 +232,54 @@ def test_assistant_texts_handles_every_message_layout() -> None:
     ]
 
 
-def test_arrow_scan_streams_batches_and_honours_pushdown() -> None:
-    table = pa.table({"id": list(range(100)), "text": [f"t{i}" for i in range(100)]})
-    lf = arrow_scan(table, batch_size=7)  # batches that do not divide the table evenly
+def test_lazy_from_frames_streams_and_honours_pushdown() -> None:
+    chunks = [
+        pl.DataFrame({"id": list(range(i, i + 7)), "text": [f"t{n}" for n in range(i, i + 7)]}) for i in range(0, 70, 7)
+    ]
+    lf = lazy_from_frames(lambda: iter(chunks), lambda: chunks[0].schema)
 
-    assert lf.collect().equals(pl.from_arrow(table))
+    assert lf.collect().equals(pl.concat(chunks))
     assert lf.select("id").collect().columns == ["id"]
-    assert lf.filter(pl.col("id") % 10 == 0).collect()["id"].to_list() == list(range(0, 100, 10))
-    assert lf.head(25).collect()["id"].to_list() == list(range(25))
-    assert lf.filter(pl.col("id") > 90).select("text").collect()["text"].to_list() == [f"t{i}" for i in range(91, 100)]
+    assert lf.filter(pl.col("id") % 10 == 0).collect()["id"].to_list() == list(range(0, 70, 10))
+    assert lf.head(20).collect()["id"].to_list() == list(range(20))
+    assert lf.filter(pl.col("id") > 60).select("text").collect()["text"].to_list() == [f"t{i}" for i in range(61, 70)]
+
+
+def test_scan_files_reads_every_format(tmp_path) -> None:  # ruff: ignore[missing-type-function-argument]
+    df = pl.DataFrame({"text": ["a", "b"], "label": [0, 1]})
+    df.write_parquet(tmp_path / "x.parquet")
+    df.write_csv(tmp_path / "x.csv")
+    df.write_ndjson(tmp_path / "x.jsonl")
+    (tmp_path / "x.json").write_text(df.write_json())
+    (tmp_path / "y.json").write_text(pl.DataFrame({"text": ["c"], "label": [1], "extra": [1.5]}).write_json())
+
+    for name in ("x.parquet", "x.csv", "x.jsonl", "x.json"):
+        assert scan_files([tmp_path / name]).collect().sort("text").equals(df), name
+    both = scan_files([tmp_path / "x.json", tmp_path / "y.json"], ["text"]).collect()
+    assert both["text"].to_list() == ["a", "b", "c"], "JSON files are read one after another"
+    assert both.columns == ["text"], "only the requested columns are parsed"
+
+    # A column whose structure differs between files must not stop the columns we do use.
+    (tmp_path / "z1.json").write_text('[{"text": "p", "meta": {"a": 1}}]')
+    (tmp_path / "z2.json").write_text('[{"text": "q", "meta": {"b": "x", "c": [1]}}]')
+    assert scan_files([tmp_path / "z1.json", tmp_path / "z2.json"], ["text"]).collect()["text"].to_list() == ["p", "q"]
+
+
+def test_files_loader_resolves_patterns_and_labels_subsets(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # ruff: ignore[missing-type-function-argument]
+    names = ("data/a-1.csv", "data/a-2.csv", "b.csv", "README.md")
+    for name in names[:3]:
+        (tmp_path / name.replace("/", "_")).write_text("text,label\nx,0\n")
+    monkeypatch.setattr(loaders, "repo_files", lambda _repo: names)
+    monkeypatch.setattr(loaders, "download", lambda _repo, name: tmp_path / name.replace("/", "_"))
+
+    assert loaders.expand("o/r", ["data/a-*.csv", "b.csv"]) == ["data/a-1.csv", "data/a-2.csv", "b.csv"]
+    with pytest.raises(FileNotFoundError, match="nothing"):
+        loaders.expand("o/r", ["nothing*"])
+
+    plain = source(loader="files", params={"repo": "o/r", "files": ["data/a-*.csv"]})
+    assert loaders.files(plain).collect().height == 2
+    labelled = source(loader="files", params={"repo": "o/r", "files": {"first": "data/a-1.csv", "second": "b.csv"}})
+    assert loaders.files(labelled).collect()["dataset"].to_list() == ["r/first", "r/second"]
 
 
 def test_standardise_keeps_a_generator_the_loader_supplies() -> None:

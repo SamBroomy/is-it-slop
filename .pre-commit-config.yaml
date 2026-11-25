@@ -23,7 +23,7 @@ repos:
         stages: [pre-commit]
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.19
+    rev: 0.13.10
     hooks:
       - id: uv-sync
         args: ["--locked", "--all-packages"]
@@ -36,11 +36,11 @@ repos:
         args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]
         types_or: [python]
         stages: [pre-commit]
-        files: '^(python|curation|tests|scripts)/.*\.py$'
+        files: '^(python|scripts)/.*\.py$'
         types: [python]
       - id: ruff-format
         name: ruff format
-        files: '^(python|curation|tests|scripts)/.*\.py$'
+        files: '^(python|scripts)/.*\.py$'
         types: [python]
 
   - repo: local
