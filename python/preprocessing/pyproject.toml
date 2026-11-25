@@ -19,9 +19,9 @@ build-backend = "maturin"
 
 [tool.maturin]
 bindings = "pyo3"
-python-source = "src"
-manifest-path = "../../crates/is-it-slop-preprocessing-py/Cargo.toml"
-module-name = "is_it_slop_preprocessing._native"
+features = ["python"]
+manifest-path = "../../crates/is-it-slop-preprocessing/Cargo.toml"
+module-name = "is_it_slop_preprocessing"
 profile = "release"
 
 [tool.pytest.ini_options]

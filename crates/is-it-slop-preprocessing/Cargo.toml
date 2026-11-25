@@ -11,8 +11,12 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 bpe-openai = { workspace = true }
+pyo3 = { workspace = true, optional = true }
 rayon = { workspace = true }
 regex = { workspace = true }
 safetensors = { workspace = true }
@@ -22,6 +26,8 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [features]
+# Python bindings (built by python/preprocessing); internal, for the data pipeline.
+python = ["dep:pyo3"]
 all-testable = []
 
 [dev-dependencies]

@@ -4466,6 +4466,7 @@ name = "is-it-slop-preprocessing"
 version = "0.7.0-alpha.1"
 dependencies = [
  "bpe-openai",
+ "pyo3",
  "rayon",
  "regex",
  "safetensors 0.7.0",
@@ -4474,14 +4475,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
-]
-
-[[package]]
-name = "is-it-slop-preprocessing-py"
-version = "0.7.0-alpha.1"
-dependencies = [
- "is-it-slop-preprocessing",
- "pyo3",
 ]
 
 [[package]]

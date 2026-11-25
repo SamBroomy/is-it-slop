@@ -4,6 +4,10 @@
 [tool.uv.workspace]
 members = ["python/is-it-slop", "python/preprocessing", "python/curation"]
 
+# The compiled extension has no Python source; its type stub lives outside the package.
+[tool.ty.environment]
+extra-paths = ["python/preprocessing/stubs"]
+
 [dependency-groups]
 dev = [
     "maturin>=1.16.0",

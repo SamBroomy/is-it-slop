@@ -1,6 +1,0 @@
-# Type stubs for the compiled extension (crates/is-it-slop-preprocessing-py).
-
-__version__: str
-
-def clean_for_training(texts: list[str]) -> list[str]: ...
-def count_tokens(texts: list[str]) -> list[int]: ...

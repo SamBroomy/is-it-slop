@@ -12,6 +12,9 @@
 pub mod encoder;
 pub mod pre_processor;
 
+#[cfg(feature = "python")]
+mod python;
+
 /// Borrow any string slice as `&str`s.
 ///
 /// Public batch functions accept `impl AsRef<str>` for ergonomics but do their work on `&[&str]`,

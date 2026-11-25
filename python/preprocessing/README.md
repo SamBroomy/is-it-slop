@@ -11,5 +11,6 @@ clean_for_training(["  Some   raw text "])  # -> ["Some raw text"]
 count_tokens(["Some raw text"])  # -> [3]   (o200k_base)
 ```
 
-The Rust lives in `crates/is-it-slop-preprocessing-py` and wraps the published
-`is-it-slop-preprocessing` crate; the inference package `is-it-slop` does not include it.
+The bindings are the `python` feature of the `is-it-slop-preprocessing` crate
+(`crates/is-it-slop-preprocessing/src/python.rs`), built with maturin. Both functions take any iterable
+of strings. The inference package `is-it-slop` does not include them.
