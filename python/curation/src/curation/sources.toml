@@ -159,15 +159,30 @@ group_column = "source_id" # every model/attack variant of one source document s
 primary = { each = 75000 }
 validation = { each = 30000 }
 
+# Two files, each with its own documented generator (see the dataset card).
 [[source]]
-name = "human_vs_machine"
+name = "human_vs_machine-wiki"
 loader = "files"
 repo = "NicolaiSivesind/human-vs-machine"
-files = ["wiki-labeled.csv", "research-abstracts-labeled.csv"]
+files = ["wiki-labeled.csv"]
 label_column = "label"
-requires = "hf_token"                                          # gated dataset
-primary = { each = 15000 }
-validation = { each = 12000 }
+generator = "text-curie-001"
+domain = "wiki"
+requires = "hf_token"                     # gated dataset
+primary = { each = 7500 }
+validation = { each = 6000 }
+
+[[source]]
+name = "human_vs_machine-abstracts"
+loader = "files"
+repo = "NicolaiSivesind/human-vs-machine"
+files = ["research-abstracts-labeled.csv"]
+label_column = "label"
+generator = "gpt-3.5-turbo-0301"
+domain = "abstracts"
+requires = "hf_token"
+primary = { each = 7500 }
+validation = { each = 6000 }
 
 [[source]]
 name = "daigt-v2-train-dataset"
@@ -175,7 +190,7 @@ loader = "kaggle"
 handle = "thedrcat/daigt-v2-train-dataset"
 file = "train_v2_drcat_02.csv"
 label_column = "label"
-generator_column = "model"
+generator_column = "source"                # the model for AI rows (human rows are blanked)
 domain = "student_essay"
 requires = "kaggle"
 primary = { 0 = 25000, 1 = "all" }
