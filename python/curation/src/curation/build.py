@@ -13,7 +13,7 @@ from loguru import logger
 from . import stats
 from .guards import add_keys, apply_guards, clean
 from .loaders import load_source, missing_credentials
-from .select import SPLITS, assign_splits, key_rows
+from .select import PROPORTIONAL, SPLITS, assign_splits, key_rows
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,7 +29,7 @@ def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFra
     """Load one source and return only the rows its quotas select, cleaned, with a `split` column."""
     lf = load_source(source, limit)
     keys = key_rows(lf, config.seed).collect(engine="streaming")
-    chosen = assign_splits(keys, source, config.test_fraction)
+    chosen = assign_splits(keys, source, config.fractions)
     picked = (
         lf
         .with_columns(doc=pl.col("text").hash(config.seed))
@@ -41,7 +41,7 @@ def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFra
         .unique(subset=["doc", "label"], keep="first", maintain_order=True)
         .drop("doc")
     )
-    return clean(picked)
+    return clean(picked, markdown=config.strip_markdown, trim=source.trim_fragments)
 
 
 def build(
@@ -74,10 +74,8 @@ def build(
         picked = pick_source(source, config, limit)
         selected[source.name] = {s: int((picked["split"] == s).sum()) for s in SPLITS}
         counts = selected[source.name]
-        logger.info(
-            "    picked {:,} train / {:,} test / {:,} validation in {:.0f}s",
-            counts["train"], counts["test"], counts["validation"], time.monotonic() - started,
-        )  # fmt: skip
+        shown = " / ".join(f"{counts[s]:,} {s}" for s in SPLITS if counts[s])
+        logger.info("    picked {} in {:.0f}s", shown, time.monotonic() - started)
         frames.append(picked)
     if not frames:
         msg = "no source produced any rows"
@@ -92,6 +90,8 @@ def build(
     splits: dict[str, pl.DataFrame] = {}
     for split in SPLITS:
         part = df.filter(pl.col("split") == split).select(OUTPUT_COLUMNS)
+        if split not in PROPORTIONAL and part.is_empty():
+            continue  # no holdout sources, no holdout file
         splits[split] = part.sample(fraction=1.0, shuffle=True, seed=config.seed)
         splits[split].write_parquet(out_dir / f"{split}.parquet", compression="zstd")
 
@@ -125,6 +125,7 @@ def describe(
         "preprocessing_version": is_it_slop_preprocessing.__version__,
         "polars_version": pl.__version__,
         "seed": config.seed,
+        "strip_markdown": config.strip_markdown,
         "config_sha256": config.digest,
         "limit_per_source": limit,
         "sample_counts": {**{s: len(d) for s, d in splits.items()}, "total": sum(len(d) for d in splits.values())},
@@ -132,6 +133,7 @@ def describe(
         "class_balance": {s: stats.class_balance(d) for s, d in splits.items()},
         "statistics": {s: stats.length_stats(d, seed=config.seed) for s, d in splits.items()},
         "markdown_bias": stats.markdown_bias(splits["train"]),
+        "format_leaks": stats.format_leaks(splits["train"]),
         "selected_before_guards": selected,
         "guards_removed": guard_report,
         "skipped_sources": skipped,

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 HUMAN, AI = 0, 1
+_TOLERANCE = 1e-9
 ALL = "all"
 
 
@@ -80,24 +81,38 @@ class Quota:
 
 @dataclass(frozen=True)
 class Source:
-    """One dataset: where it comes from, how to read it and how much of it to use."""
+    """One dataset: where it comes from, how to read it, how much of it to use and how to repair it."""
 
     name: str
     loader: str
-    primary: Quota
-    validation: Quota
+    take: Quota = field(default_factory=Quota)
+    holdout: bool = False
     label: int | None = None
     label_column: str | None = None
-    human_value: str | None = None
+    human_value: str | int | None = None
     generator: str | None = None
     generator_column: str | None = None
+    generator_regex: str | None = None
     domain: str | None = None
     domain_column: str | None = None
+    domain_regex: str | None = None
     attack_column: str | None = None
     group_column: str | None = None
     text_column: str = "text"
     requires: str | None = None
     enabled: bool = True
+    # Repairs for how a source was collected (not for what its authors wrote):
+    unwrap_lines: bool = False  # join hard-wrapped lines, keep paragraph breaks
+    detokenise: bool = False  # undo pre-tokenised spacing ("it 's", "word .") and PTB quotes
+    flatten_paragraphs: bool = False  # collapse every run of whitespace, newlines included, to one space
+    remove_pattern: str | None = None  # delete everything matching this regex (boilerplate characters)
+    ascii_quotes: bool = False  # curly quotes to straight ones (when only one side of a source uses them)
+    trim_fragments: str | None = None  # "start", "end" or "both": cut text that begins or ends mid-sentence
+    strip_think: bool = (
+        False  # drop a leading <think>...</think> reasoning trace (rows with an unterminated one are dropped)
+    )
+    drop_pattern: str | None = None  # drop rows whose text matches this regex (contamination filter)
+    min_chars: int = 0  # drop rows shorter than this after repairs
     params: dict[str, Any] = field(default_factory=dict)
 
     def referenced_columns(self) -> list[str]:
@@ -114,10 +129,17 @@ class Source:
         return sorted({name for name in named if name})
 
     def validate(self) -> None:
-        """Reject sources whose label cannot be determined."""
-        has_label = self.label in {HUMAN, AI} or self.label_column is not None or self.loader in {"pairs", "arena"}
+        """Reject sources whose label cannot be determined or whose size is unspecified."""
+        has_label = (
+            self.label in {HUMAN, AI}
+            or self.label_column is not None
+            or self.loader in {"pairs", "arena", "chat", "answers", "stackexchange"}
+        )
         if not has_label:
             msg = f"source {self.name!r} needs `label` or `label_column`"
+            raise ValueError(msg)
+        if not self.holdout and self.take == Quota():
+            msg = f"source {self.name!r} needs `take` (or `holdout = true`)"
             raise ValueError(msg)
 
 
@@ -126,17 +148,20 @@ class Config:
     """Pipeline-wide settings plus the sources."""
 
     seed: int
-    test_fraction: float
+    fractions: tuple[float, float, float]  # train, test, validation
     prefix_chars: int
     sources: tuple[Source, ...]
     digest: str
+    strip_markdown: bool = False  # remove what markdown leaves behind in every source (an experiment)
 
 
 _SOURCE_KEYS = {
-    "name", "loader", "primary", "validation", "label", "label_column", "human_value", "generator",
-    "generator_column", "domain", "domain_column", "attack_column", "group_column", "text_column",
-    "requires", "enabled", "notes",
+    "name", "loader", "take", "holdout", "label", "label_column", "human_value", "generator",
+    "generator_column", "generator_regex", "domain", "domain_column", "domain_regex", "attack_column",
+    "group_column", "text_column", "requires", "enabled", "notes", "unwrap_lines", "detokenise",
+    "flatten_paragraphs", "strip_think", "ascii_quotes", "trim_fragments", "remove_pattern", "drop_pattern", "min_chars",
 }  # fmt: skip
+_REMOVED_KEYS = {"primary": "take", "validation": "[settings] train/test/validation fractions"}
 
 
 def load_config(path: Path | Traversable) -> Config:
@@ -144,11 +169,20 @@ def load_config(path: Path | Traversable) -> Config:
     raw_bytes = path.read_bytes()
     raw = tomllib.loads(raw_bytes.decode())
     settings = raw.get("settings", {})
+    train, test, validation = (
+        float(settings.get(k, d)) for k, d in (("train", 0.70), ("test", 0.15), ("validation", 0.15))
+    )
+    if abs(train + test + validation - 1.0) > _TOLERANCE:
+        msg = f"[settings] train + test + validation must be 1, got {train + test + validation}"
+        raise ValueError(msg)
     sources = []
     for entry in raw.get("source", []):
+        if removed := _REMOVED_KEYS.keys() & entry.keys():
+            key = min(removed)
+            msg = f"source {entry.get('name')!r}: `{key}` was replaced by {_REMOVED_KEYS[key]}"
+            raise ValueError(msg)
         known = {k: v for k, v in entry.items() if k in _SOURCE_KEYS and k != "notes"}
-        known["primary"] = Quota.parse(entry.get("primary"))
-        known["validation"] = Quota.parse(entry.get("validation"))
+        known["take"] = Quota.parse(entry.get("take"))
         known["params"] = {k: v for k, v in entry.items() if k not in _SOURCE_KEYS}
         source = Source(**known)
         source.validate()
@@ -159,8 +193,9 @@ def load_config(path: Path | Traversable) -> Config:
         raise ValueError(msg)
     return Config(
         seed=int(settings.get("seed", 42)),
-        test_fraction=float(settings.get("test_fraction", 0.2)),
+        fractions=(train, test, validation),
         prefix_chars=int(settings.get("prefix_chars", 200)),
+        strip_markdown=bool(settings.get("strip_markdown", False)),
         sources=tuple(sources),
         digest=hashlib.sha256(raw_bytes).hexdigest(),
     )

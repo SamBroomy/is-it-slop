@@ -89,3 +89,68 @@ def markdown_bias(df: pl.DataFrame) -> dict[str, Any]:
             name: {"ai": round(ai[name], 4), "human": round(human[name], 4)} for name in MARKDOWN_PATTERNS
         },
     }
+
+
+# --------------------------------------------------------------------------------------------
+# Formatting leaks: features that say "AI" without being about the writing
+# --------------------------------------------------------------------------------------------
+
+_TEXT = pl.col("text")
+FORMAT_FEATURES = {
+    "paragraph_breaks": _TEXT.str.contains("\n\n"),
+    "markdown": _TEXT.str.contains(r"(?m)(^#+\s|\*\*[^*]+\*\*|^\s*[-*\u2022]\s|^\s*\d+[.)]\s|^\s*\|.*\|)"),
+    "em_dash": _TEXT.str.contains("\u2014"),
+    "curly_quotes": _TEXT.str.contains(r"[\u2018\u2019\u201c\u201d]"),
+    "non_ascii": _TEXT.str.contains(r"[^\x00-\x7F]"),
+    "spaced_punctuation": _TEXT.str.contains(r"\w [.,;:!?](?:\s|$)|\w n't\b|\w 's\b"),
+    "starts_lowercase": _TEXT.str.contains(r"^[a-z]"),
+    "ends_with_punctuation": _TEXT.str.contains(r"[.!?\"')\]]$"),
+    "url": _TEXT.str.contains(r"https?://"),
+    "html_tag": _TEXT.str.contains(r"<[a-zA-Z/][^>]*>"),
+}
+BOTH = (0, 1)  # the two labels
+LEAK_GAP = 0.35  # a within-source human/AI difference in rate this large is flagged
+
+
+def format_leaks(df: pl.DataFrame, *, min_rows: int = 200) -> dict[str, Any]:
+    """Measure how much label signal formatting alone carries.
+
+    `overall` gives each feature's rate among human and AI rows and its AUC as a one-feature
+    classifier (0.5 means no signal, 1.0 means it alone separates the classes). `within_source`
+    lists, for every source that has both classes, the features whose rate differs by at least
+    `LEAK_GAP` between human and AI text: inside one source the writing is the only difference that
+    should exist, so a large gap is a collection artefact the model could learn instead of style.
+    """
+    features = df.select("label", "dataset", **{name: expr.cast(pl.Float64) for name, expr in FORMAT_FEATURES.items()})
+    by_label = features.group_by("label").agg(pl.col(name).mean() for name in FORMAT_FEATURES).sort("label")
+    rates = {row["label"]: row for row in by_label.to_dicts()}
+    overall: dict[str, Any] = {}
+    if 0 in rates and 1 in rates:
+        for name in FORMAT_FEATURES:
+            human, ai = rates[0][name], rates[1][name]
+            overall[name] = {"human": round(human, 4), "ai": round(ai, 4), "auc": round(0.5 + (ai - human) / 2, 4)}
+        lengths = df.select("label", n=_TEXT.str.len_chars()).with_columns(r=pl.col("n").rank("average"))
+        n_ai = int((lengths["label"] == 1).sum())
+        n_human = len(lengths) - n_ai
+        rank_sum = float(lengths.filter(pl.col("label") == 1)["r"].sum())
+        overall["length"] = {"auc": round((rank_sum - n_ai * (n_ai + 1) / 2) / (n_ai * n_human), 4)}
+
+    per_source = (
+        features
+        .with_columns(pl.col("dataset").cast(pl.Utf8))
+        .group_by("dataset", "label")
+        .agg(pl.len().alias("n"), *(pl.col(name).mean() for name in FORMAT_FEATURES))
+    )
+    within: dict[str, dict[str, list[float]]] = {}
+    for dataset in per_source["dataset"].unique().sort():
+        rows = {r["label"]: r for r in per_source.filter(pl.col("dataset") == dataset).to_dicts()}
+        if len(rows) < len(BOTH) or min(r["n"] for r in rows.values()) < min_rows:
+            continue
+        flagged = {
+            name: [round(rows[0][name], 3), round(rows[1][name], 3)]
+            for name in FORMAT_FEATURES
+            if abs(rows[1][name] - rows[0][name]) >= LEAK_GAP
+        }
+        if flagged:
+            within[dataset] = flagged
+    return {"overall": overall, "within_source": within}

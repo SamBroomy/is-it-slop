@@ -13,13 +13,22 @@ from .select import SPLITS
 NORMALISED = pl.col("text").str.to_lowercase().str.replace_all(r"\s+", " ").str.strip_chars()
 
 
-def clean(df: pl.DataFrame) -> pl.DataFrame:
-    """Run the Rust training cleaner over `text` and drop rows that clean to nothing."""
+def clean(df: pl.DataFrame, *, markdown: bool = False, trim: str | None = None) -> pl.DataFrame:
+    """Run the Rust training cleaner over `text`; with `markdown`, also strip the markdown it leaves.
+
+    The cleaner can itself leave a fragment (it removes some leading phrases), so `trim`, a
+    source's `trim_fragments`, is applied again here. Rows that clean to nothing are dropped.
+    """
     from is_it_slop_preprocessing import clean_for_training
 
-    return df.with_columns(pl.Series("text", clean_for_training(df["text"]), dtype=pl.Utf8)).filter(
-        pl.col("text").str.len_chars() > 0
-    )
+    from .loaders import has_whole_ends, strip_markdown, trim_fragments
+
+    df = df.with_columns(pl.Series("text", clean_for_training(df["text"]), dtype=pl.Utf8))
+    if markdown:
+        df = df.with_columns(strip_markdown(pl.col("text")))
+    if trim:
+        df = df.with_columns(trim_fragments(pl.col("text"), trim).str.strip_chars()).filter(has_whole_ends(trim))
+    return df.filter(pl.col("text").str.len_chars() > 0)
 
 
 def add_keys(df: pl.DataFrame, seed: int, prefix_chars: int) -> pl.DataFrame:
@@ -39,11 +48,12 @@ def apply_guards(df: pl.DataFrame, *, prefix_chars: int) -> tuple[pl.DataFrame, 
 
     * `label_conflict`: texts that appear with both labels (neither label can be trusted),
     * `duplicate`: an exact text already present, keeping the earliest split
-      (train, then test, then validation),
-    * `shared_normalised`: test or validation rows whose lower-cased, whitespace-collapsed text
-      already occurs in an earlier split,
-    * `shared_prefix`: test or validation rows whose first `prefix_chars` characters (normalised)
-      match an earlier split: near-duplicates such as re-wrapped or re-cased copies.
+      (train, then test, then validation, then holdout),
+    * `shared_normalised`: test, validation or holdout rows whose lower-cased, whitespace-collapsed
+      text already occurs in an earlier split,
+    * `shared_prefix`: test, validation or holdout rows whose first `prefix_chars` characters
+      (normalised) match an earlier split: near-duplicates such as re-wrapped or re-cased copies.
+      A holdout row that resembles training data is dropped, so the holdout stays honest.
 
     Variants of one document that sit in the *same* split are kept on purpose (RAID's attack
     variants, for example, are useful robustness training); only overlap between splits is a leak.

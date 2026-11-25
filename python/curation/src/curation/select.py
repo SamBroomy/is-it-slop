@@ -1,9 +1,9 @@
 """Choose which rows of a source go to which split, without holding the text.
 
 Pass one hashes each row (cheap, text is dropped straight away) and ranks rows within each label;
-quotas then slice that ranking into train / test / validation. Because ranks follow a hash, any
+the fractions then slice that ranking into train / test / validation. Because ranks follow a hash, any
 slice is a random sample and the choice is reproducible. Rows sharing a `group` rank together, so a
-document's variants stay in one split except where a quota boundary falls inside a group (at most
+document's variants stay in one split except where a slice boundary falls inside a group (at most
 one group per label per boundary; the overlap guards remove any leakage that causes). Pass two (in `build`) fetches the text of only the picked rows.
 """
 
@@ -16,7 +16,8 @@ import polars as pl
 if TYPE_CHECKING:
     from .config import Source
 
-SPLITS = ("train", "test", "validation")
+SPLITS = ("train", "test", "validation", "holdout")
+PROPORTIONAL = SPLITS[:3]
 
 
 def key_rows(lf: pl.LazyFrame, seed: int) -> pl.LazyFrame:
@@ -31,28 +32,32 @@ def key_rows(lf: pl.LazyFrame, seed: int) -> pl.LazyFrame:
     )
 
 
-def assign_splits(keys: pl.DataFrame, source: Source, test_fraction: float) -> pl.DataFrame:
-    """Pick rows for each split by quota. Returns `doc`, `label`, `split` for the picked rows only.
+def assign_splits(keys: pl.DataFrame, source: Source, fractions: tuple[float, float, float]) -> pl.DataFrame:
+    """Pick rows for each split. Returns `doc`, `label`, `split` for the picked rows only.
+
+    A holdout source puts every row in `holdout`. Any other source takes `source.take` rows per
+    label and cuts them by `fractions` (train, test, validation), so every split has the same mix of
+    sources: one random ranking per label, sliced three ways.
 
     A text that appears more than once in the source is collapsed to one row ranked by its smallest
-    `h`, so the result never depends on the order rows arrive in. Primary rows (train + test) are
-    taken before validation rows, and the two never overlap.
+    `h`, so the result never depends on the order rows arrive in.
     """
     keys = keys.group_by("doc", "label").agg(pl.col("h").min())
+    if source.holdout:
+        return keys.select("doc", "label", split=pl.lit("holdout"))
     available = dict(keys.group_by("label").len().iter_rows())
-    primary = source.primary.resolve(available)
-    validation = source.validation.resolve({label: n - primary.get(label, 0) for label, n in available.items()})
+    take = source.take.resolve(available)
+    train, test, _ = fractions
 
     plan = pl.DataFrame(
-        {
-            "label": list(available),
-            "n_primary": [primary.get(label, 0) for label in available],
-            "n_validation": [validation.get(label, 0) for label in available],
-        },
-        schema={"label": keys.schema["label"], "n_primary": pl.Int64, "n_validation": pl.Int64},
-    ).with_columns(n_test=(pl.col("n_primary") * test_fraction).round().cast(pl.Int64))
+        {"label": list(available), "n_take": [take.get(label, 0) for label in available]},
+        schema={"label": keys.schema["label"], "n_take": pl.Int64},
+    ).with_columns(
+        n_train=(pl.col("n_take") * train).round().cast(pl.Int64),
+        n_test=(pl.col("n_take") * test).round().cast(pl.Int64),
+    )
     rank = pl.int_range(pl.len()).over("label", order_by=["h", "doc"])
-    n_train = pl.col("n_primary") - pl.col("n_test")
+    n_train = pl.col("n_train")
     return (
         keys
         .join(plan, on="label")
@@ -63,9 +68,9 @@ def assign_splits(keys: pl.DataFrame, source: Source, test_fraction: float) -> p
             split=pl
             .when(pl.col("rank") < n_train)
             .then(pl.lit("train"))
-            .when(pl.col("rank") < pl.col("n_primary"))
+            .when(pl.col("rank") < n_train + pl.col("n_test"))
             .then(pl.lit("test"))
-            .when(pl.col("rank") < pl.col("n_primary") + pl.col("n_validation"))
+            .when(pl.col("rank") < pl.col("n_take"))
             .then(pl.lit("validation")),
         )
         .drop_nulls("split")

@@ -4,17 +4,29 @@
 # patterns (`data/*.parquet`); as a table (`name = files`) each name labels its files in the
 # `dataset` column.
 #
-# Quotas (`primary` feeds train + test, `validation` is drawn from rows left over after primary):
+# `take` is how many rows of the source go into the dataset; the settings below cut them into train,
+# test and validation in the same proportions for every source, so each split has the same mix:
 #   "all"                    every row            { each = n }       up to n rows of each label
 #   n                        n rows in total      { 0 = n, 1 = "all" }  explicit per label
+# `holdout = true` keeps a source out of training entirely: all its rows go to `holdout.parquet`
+# (for small benchmark sets), and any row that resembles training data is dropped.
 #
-# `generator` is the model that wrote the AI text (constant, or a column); it is only kept on AI
-# rows. `group_column` keeps rows that are variants of one document in the same split.
+# `generator` is the model that wrote the AI text (constant, column, or a regex on a column); it is
+# only kept on AI rows. `group_column` keeps rows that are variants of one document in the same split.
+#
+# Repairs for collection artefacts (never for what the author wrote): `unwrap_lines`, `detokenise`,
+# `flatten_paragraphs` (when the human and AI sides of a source differ in paragraph breaks only
+# because of how it was collected), `drop_pattern` (a contamination filter) and `min_chars`.
+#
+# Human text must be certainly human: before late 2022 (ChatGPT), or by construction. Text from after
+# that needs a filter or a reason, and sits in its own source so it can be dropped on its own.
 
 [settings]
 seed = 42
-test_fraction = 0.2 # of the primary rows
-prefix_chars = 200  # a test/validation row sharing this many leading characters with an earlier split is dropped
+train = 0.70
+test = 0.15
+validation = 0.15
+prefix_chars = 200 # a test/validation/holdout row sharing this many leading characters with an earlier split is dropped
 
 # ---------------------------------------------------------------------------------------------
 # Human text
@@ -27,7 +39,7 @@ repo = "Abirate/english_quotes"
 files = ["quotes.jsonl"]
 text_column = "quote"
 label = 0
-primary = "all"
+take = "all"
 
 [[source]]
 name = "newswire"
@@ -36,7 +48,7 @@ repo = "dell-research-harvard/newswire" # public-domain US newswire articles, 18
 files = ["*_data_clean.json"]
 text_column = "cleaned_article"
 label = 0
-primary = 50000
+take = 50000
 
 [[source]]
 name = "rotten_tomatoes"
@@ -44,7 +56,8 @@ loader = "files"
 repo = "cornell-movie-review-data/rotten_tomatoes"
 files = ["*.parquet"]
 label = 0
-primary = 7500
+take = 7500
+detokenise = true                                  # pre-tokenised: "the film 's ..."
 
 [[source]]
 name = "ag_news"
@@ -52,7 +65,7 @@ loader = "files"
 repo = "fancyzhx/ag_news"
 files = ["data/*.parquet"]
 label = 0
-primary = 20000
+take = 20000
 
 [[source]]
 name = "imdb"
@@ -60,7 +73,7 @@ loader = "files"
 repo = "stanfordnlp/imdb"
 files = ["plain_text/*.parquet"]
 label = 0
-primary = 10000
+take = 10000
 
 [[source]]
 name = "human-essays"
@@ -68,7 +81,95 @@ loader = "files"
 repo = "artfultom/human-essays"
 files = { "asap2 essays" = "asap2_essays.csv", "ivy panda essays" = "ivy_panda_essays.csv", "persuade essays" = "persuade_essays.csv" }
 label = 0
-primary = 40000                                                                                                                         # across the three subsets; avoids topic over-fitting
+take = 40000                                                                                                                            # across the three subsets; avoids topic over-fitting
+
+# Human text from before ChatGPT (Dec 2022), or filtered. Each of these is certainly or very probably human.
+
+[[source]]
+name = "stackexchange"
+loader = "stackexchange"
+repo = "HuggingFaceH4/stack-exchange-preferences"
+sites = [
+    "english.stackexchange.com",
+    "history.stackexchange.com",
+    "law.stackexchange.com",
+    "cooking.stackexchange.com",
+    "travel.stackexchange.com",
+    "workplace.stackexchange.com",
+    "philosophy.stackexchange.com",
+    "politics.stackexchange.com",
+    "skeptics.stackexchange.com",
+    "academia.stackexchange.com",
+    "worldbuilding.stackexchange.com",
+    "rpg.stackexchange.com",
+    "scifi.stackexchange.com",
+    "ell.stackexchange.com",
+    "christianity.stackexchange.com",
+    "judaism.stackexchange.com",
+    "islam.stackexchange.com",
+    "buddhism.stackexchange.com",
+    "hinduism.stackexchange.com",
+    "parenting.stackexchange.com",
+    "movies.stackexchange.com",
+    "interpersonal.stackexchange.com",
+    "linguistics.stackexchange.com",
+    "literature.stackexchange.com",
+    "money.stackexchange.com",
+    "economics.stackexchange.com",
+    "health.stackexchange.com",
+    "fitness.stackexchange.com",
+    "outdoors.stackexchange.com",
+    "pets.stackexchange.com",
+    "gardening.stackexchange.com",
+] # prose-heavy sites; the best-scored answer to each question asked before ChatGPT, no code
+before = "2022/12/01"
+domain_column = "site"
+min_score = 1
+min_chars = 200
+take = 60000
+
+[[source]]
+name = "arxiv-abstracts"
+loader = "files"
+repo = "gfissore/arxiv-abstracts-2021" # a 2021 snapshot: all human
+files = ["arxiv-abstracts.jsonl.gz"]
+text_column = "abstract"
+label = 0
+domain = "scientific_abstract"
+unwrap_lines = true                    # the abstracts are hard-wrapped at about 80 characters
+min_chars = 200
+take = 30000
+
+[[source]]
+name = "oasst2-prompter"
+loader = "files"
+repo = "OpenAssistant/oasst2"
+files = ["data/*.parquet"]
+keep = { lang = [
+    "en",
+], role = [
+    "prompter",
+], deleted = [
+    false,
+] } # volunteers writing prompts (2023)
+label = 0
+domain = "chat_prompt"
+min_chars = 30
+take = "all"
+
+# TRIAL: written by volunteers in an assistant register (about 10% mention ChatGPT-style phrasing,
+# so some are likely pasted from models). Strong AI phrases are dropped; the rest is treated as human.
+[[source]]
+name = "oasst2-assistant"
+loader = "files"
+repo = "OpenAssistant/oasst2"
+files = ["data/*.parquet"]
+keep = { lang = ["en"], role = ["assistant"], deleted = [false] }
+label = 0
+domain = "chat_assistant"
+drop_pattern = "(?i)\\b(as an ai|as a language model|language model|i'?m sorry,? but|i apologi[sz]e|openai|chatgpt|gpt-?[34]|large language)\\b"
+min_chars = 100
+take = 20000
 
 # ---------------------------------------------------------------------------------------------
 # AI text only
@@ -82,7 +183,7 @@ files = { "one prompt" = "*_essays_[123].csv", "two prompts" = "*_essays_[45].cs
 label = 1
 generator_column = "model"
 domain = "essay"
-primary = "all"
+take = "all"
 
 [[source]]
 name = "General-Knowledge"
@@ -91,7 +192,7 @@ repo = "MuskumPillerum/General-Knowledge"
 files = ["output.json"]
 text_column = "Answer"
 label = 1
-primary = 10000                           # capped: the answers are formulaic
+take = 10000                              # capped: the answers are formulaic
 
 [[source]]
 name = "search-arena-24k"
@@ -100,8 +201,7 @@ repo = "lmarena-ai/search-arena-24k"
 files = ["data/search-arena-chat-24k.parquet"]
 sides = [["messages_a", "model_a"], ["messages_b", "model_b"]]
 domain = "chat"
-primary = 30000
-validation = 8000
+take = 38000
 
 [[source]]
 name = "arena-expert-5k"
@@ -119,7 +219,7 @@ sides = [
     ],
 ] # stringified numpy repr
 domain = "chat"
-primary = "all"
+take = "all"
 
 [[source]]
 name = "arena-human-preference-140k"
@@ -128,8 +228,95 @@ repo = "lmarena-ai/arena-human-preference-140k"
 files = ["data/train-*.parquet"]
 sides = [["conversation_a", "model_a"], ["conversation_b", "model_b"]]
 domain = "chat"
-primary = 50000
-validation = 12000
+take = 62000
+
+[[source]]
+name = "WildChat-1M"
+loader = "chat"
+repo = "allenai/WildChat-1M"                        # real users talking to GPT-3.5 / GPT-4 in 2023
+files = ["data/train-*.parquet"]
+conversation = "conversation"
+model_column = "model"
+where = { language = ["English"], toxic = [false] }
+domain = "chat"
+min_chars = 100
+take = 50000
+
+# Newest generation. The uploaders' claims about the model are not verified (see ~/handoff/dataset-candidates.md);
+# what matters here is that all of this text is AI.
+[[source]]
+name = "opus5.5-doctor-patient"
+loader = "chat"
+repo = "nisten/opus5-5-doctor-patient-conversations-all-human-diseases"
+files = ["opus5-5diseaseconversations.jsonl"]
+conversation = "conversation"
+roles = [
+    "user",
+    "assistant",
+] # both sides of the simulated consultation were written by the model
+generator = "claude-opus-5.5"
+domain = "medical_dialogue"
+min_chars = 100
+take = 20000
+
+[[source]]
+name = "opus5.5-doctor-summaries"
+loader = "files"
+repo = "nisten/opus5-5-doctor-patient-conversations-all-human-diseases"
+files = ["opus5-5diseaseconversations.jsonl"]
+text_column = "executive_summary"
+label = 1
+generator = "claude-opus-5.5"
+domain = "medical_summary"
+min_chars = 200
+take = "all"
+
+[[source]]
+name = "creative-writing-sonnet4.6"
+loader = "chat"
+repo = "Crownelius/Creative-Writing-Sonnet4.6-Cleaned"
+files = ["data/train.jsonl"]
+conversation = "messages"
+generator = "claude-sonnet-4.6"
+domain = "fiction"
+min_chars = 500
+take = "all"
+
+[[source]]
+name = "creative-writing-kimi-k2.5"
+loader = "chat"
+strip_think = true                                    # the replies start with the model's <think> trace
+repo = "Crownelius/Creative-Writing-KimiK2.5-Cleaned"
+files = ["data/train.jsonl"]
+conversation = "messages"
+generator = "kimi-k2.5"
+domain = "fiction"
+min_chars = 500
+take = "all"
+
+[[source]]
+name = "creative-writing-qwen3.5-plus"
+loader = "files"
+repo = "Crownelius/Creative-Writing-Qwen3.5Plus-2000x"
+files = ["dataset.jsonl"]
+text_column = "response"
+label = 1
+generator = "qwen3.5-plus (unverified: row metadata says glm5_farmer)"
+domain = "fiction"
+min_chars = 500
+take = "all"
+
+[[source]]
+name = "creative-writing-gemini-3-pro"
+loader = "files"
+repo = "Crownelius/Creative-Writing-Gemini3Pro-2700x"
+files = ["dataset.jsonl"]
+text_column = "response"
+label = 1
+generator = "gemini-3-pro (unverified: row metadata says glm5_farmer)"
+domain = "fiction"
+min_chars = 500
+take = "all"
 
 # ---------------------------------------------------------------------------------------------
 # Mixed human/AI sources
@@ -156,8 +343,8 @@ generator_column = "model"
 domain_column = "domain"
 attack_column = "attack"
 group_column = "source_id" # every model/attack variant of one source document stays in one split
-primary = { each = 75000 }
-validation = { each = 30000 }
+take = { each = 50000 }
+flatten_paragraphs = true # human text has no paragraph breaks, the AI text does
 
 # Two files, each with its own documented generator (see the dataset card).
 [[source]]
@@ -169,8 +356,8 @@ label_column = "label"
 generator = "text-curie-001"
 domain = "wiki"
 requires = "hf_token"                     # gated dataset
-primary = { each = 7500 }
-validation = { each = 6000 }
+take = { each = 13500 }
+flatten_paragraphs = true
 
 [[source]]
 name = "human_vs_machine-abstracts"
@@ -181,8 +368,8 @@ label_column = "label"
 generator = "gpt-3.5-turbo-0301"
 domain = "abstracts"
 requires = "hf_token"
-primary = { each = 7500 }
-validation = { each = 6000 }
+take = { each = 13500 }
+flatten_paragraphs = true
 
 [[source]]
 name = "daigt-v2-train-dataset"
@@ -193,7 +380,7 @@ label_column = "label"
 generator_column = "source"                # the model for AI rows (human rows are blanked)
 domain = "student_essay"
 requires = "kaggle"
-primary = { 0 = 25000, 1 = "all" }
+take = { 0 = 25000, 1 = "all" }
 
 [[source]]
 name = "AI-and-Human-Generated-Text"
@@ -203,7 +390,8 @@ files = ["train.csv", "test.csv"]
 text_column = "abstract"
 label_column = "label"
 generator = "gpt-3"
-primary = "all"
+trim_fragments = "start"                    # 44% of the AI text starts mid-sentence, 1% of the human text
+take = "all"
 
 [[source]]
 name = "AI_Human_generated_movie_reviews"
@@ -213,7 +401,7 @@ files = ["data/*.parquet"]
 label_column = "labels"
 generator_column = "models"
 domain = "movie_review"
-primary = "all"
+take = "all"
 
 [[source]]
 name = "human_vs_ai_sentences"
@@ -221,7 +409,47 @@ loader = "files"
 repo = "shahxeebhassan/human_vs_ai_sentences"
 files = ["complete_dataset.csv"]
 label_column = "label"
-primary = { each = 7500 }
+take = { each = 7500 }
+
+[[source]]
+name = "MAGE"
+loader = "files"
+repo = "yaful/MAGE"                                                   # human and 27 older models over 10 domains; the text is normalised (ASCII)
+files = ["train.csv", "valid.csv", "test.csv"]
+label_column = "label"
+human_value = 1                                                       # MAGE labels human text 1 and machine text 0
+generator_column = "src"
+generator_regex = "_machine_(?:continuation|topical|specified)_(.+)$"
+domain_column = "src"
+domain_regex = "^(.+?)_(?:human|machine)"
+min_chars = 100
+take = { each = 40000 }
+
+[[source]]
+name = "HC3"
+loader = "answers"
+repo = "Hello-SimpleAI/HC3"                                                                                                                                     # human answers vs ChatGPT (Dec 2022) to the same questions
+files = { finance = "finance.jsonl", medicine = "medicine.jsonl", open_qa = "open_qa.jsonl", reddit_eli5 = "reddit_eli5.jsonl", wiki_csai = "wiki_csai.jsonl" }
+human = "human_answers"
+ai = "chatgpt_answers"
+generator = "gpt-3.5-turbo"
+detokenise = true                                                                                                                                               # the human answers come pre-tokenised ("it 's", "there .")
+flatten_paragraphs = true                                                                                                                                       # the human answers in two of the five subsets have no paragraph breaks
+trim_fragments = "end"                                                                                                                                          # half of the human medicine answers end without punctuation
+min_chars = 100
+take = { each = 25000 }
+
+[[source]]
+name = "detection-pile"
+loader = "files"
+repo = "artem9k/ai-text-detection-pile" # human web text, stories and older machine text; generators unknown
+files = ["data/*.parquet"]
+label_column = "source"
+human_value = "human"
+detokenise = true                       # some of the human stories use PTB quotes (`` '')
+trim_fragments = "end"                  # 30% of the human text ends mid-sentence (cut at a length limit), 4% of the AI text
+min_chars = 200
+take = { each = 60000 }
 
 # ---------------------------------------------------------------------------------------------
 # AI-vs-human continuation pairs (one human and one AI text per row)
@@ -234,8 +462,12 @@ repo = "ilyasoulk/ai-vs-human"
 files = ["data/*.parquet"]
 generator = "gpt-3.5-turbo"
 domain = "cnn_dailymail"
-primary = { each = 4500 }
-validation = "all"
+trim_fragments = "start"          # both sides are continuations: many begin mid-sentence
+ascii_quotes = true               # one side uses curly quotes, the other does not
+detokenise = true                 # the human side keeps the Daily Mail "By . Name ." byline spacing
+remove_pattern = "[\u00bb\u2022]" # Daily Mail "read more" and bullet characters on the human side
+take = "all"
+flatten_paragraphs = true
 
 [[source]]
 name = "ai-vs-human-HuggingFaceTB-SmolLM2-360M-Instruct"
@@ -244,7 +476,11 @@ repo = "zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-360M-Instruct"
 files = ["data/*.parquet"]
 generator = "SmolLM2-360M-Instruct"
 domain = "cnn_dailymail"
-primary = "all"
+trim_fragments = "start"                                       # both sides are continuations: many begin mid-sentence
+ascii_quotes = true                                            # one side uses curly quotes, the other does not
+detokenise = true                                              # the human side keeps the Daily Mail "By . Name ." byline spacing
+take = "all"
+flatten_paragraphs = true
 
 [[source]]
 name = "ai-vs-human-HuggingFaceTB-SmolLM2-1.7B-Instruct"
@@ -253,7 +489,11 @@ repo = "zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-1.7B-Instruct"
 files = ["data/*.parquet"]
 generator = "SmolLM2-1.7B-Instruct"
 domain = "cnn_dailymail"
-primary = "all"
+trim_fragments = "start"                                       # both sides are continuations: many begin mid-sentence
+ascii_quotes = true                                            # one side uses curly quotes, the other does not
+detokenise = true                                              # the human side keeps the Daily Mail "By . Name ." byline spacing
+take = "all"
+flatten_paragraphs = true
 
 [[source]]
 name = "ai-vs-human-Qwen-Qwen2.5-1.5B-Instruct"
@@ -262,7 +502,11 @@ repo = "zcamz/ai-vs-human-Qwen-Qwen2.5-1.5B-Instruct"
 files = ["data/*.parquet"]
 generator = "Qwen2.5-1.5B-Instruct"
 domain = "cnn_dailymail"
-primary = "all"
+trim_fragments = "start"                              # both sides are continuations: many begin mid-sentence
+ascii_quotes = true                                   # one side uses curly quotes, the other does not
+detokenise = true                                     # the human side keeps the Daily Mail "By . Name ." byline spacing
+take = "all"
+flatten_paragraphs = true
 
 [[source]]
 name = "ai-vs-human-google-gemma-2-2b-it"
@@ -271,7 +515,11 @@ repo = "zcamz/ai-vs-human-google-gemma-2-2b-it"
 files = ["data/*.parquet"]
 generator = "gemma-2-2b-it"
 domain = "cnn_dailymail"
-primary = "all"
+trim_fragments = "start"                        # both sides are continuations: many begin mid-sentence
+ascii_quotes = true                             # one side uses curly quotes, the other does not
+detokenise = true                               # the human side keeps the Daily Mail "By . Name ." byline spacing
+take = "all"
+flatten_paragraphs = true
 
 [[source]]
 name = "ai-vs-human-meta-llama-Llama-3.2-1B-Instruct"
@@ -280,7 +528,11 @@ repo = "zcamz/ai-vs-human-meta-llama-Llama-3.2-1B-Instruct"
 files = ["data/*.parquet"]
 generator = "Llama-3.2-1B-Instruct"
 domain = "cnn_dailymail"
-primary = "all"
+trim_fragments = "start"                                    # both sides are continuations: many begin mid-sentence
+ascii_quotes = true                                         # one side uses curly quotes, the other does not
+detokenise = true                                           # the human side keeps the Daily Mail "By . Name ." byline spacing
+take = "all"
+flatten_paragraphs = true
 
 [[source]]
 name = "ai-vs-human-meta-llama-Llama-3.1-8B-Instruct"
@@ -289,7 +541,10 @@ repo = "ilyasoulk/ai-vs-human-meta-llama-Llama-3.1-8B-Instruct"
 files = ["data/*.parquet"]
 generator = "Llama-3.1-8B-Instruct"
 domain = "openwebtext"
-primary = "all"
+trim_fragments = "start"                                        # both sides are continuations: many begin mid-sentence
+ascii_quotes = true                                             # one side uses curly quotes, the other does not
+take = "all"
+flatten_paragraphs = true
 
 # ---------------------------------------------------------------------------------------------
 # Loaded in the old pipeline but never used, kept here as a record
@@ -302,4 +557,29 @@ repo = "andythetechnerd03/AI-human-text"
 files = ["data/*.parquet"]
 label_column = "generated"
 enabled = false
-primary = "all"
+take = "all"
+
+# ---------------------------------------------------------------------------------------------
+# Holdout: small benchmark sets with named, current models. Never trained on or tuned against.
+# ---------------------------------------------------------------------------------------------
+
+[[source]]
+name = "coai-benchmark"
+loader = "files"
+repo = "coai/ai-text-detection-benchmark"    # arXiv abstracts: human vs GPT-5.2, Claude Sonnet/Opus 4.5, Gemini 3 Pro
+files = ["data/test-00000-of-00001.parquet"]
+label_column = "label"
+generator_column = "model_name"
+domain_column = "domain"
+holdout = true
+
+[[source]]
+name = "textsight-2026"
+loader = "files"
+repo = "textsightai/ai-text-detection-benchmark-2026" # human vs claude-opus-5, haiku-4.5, gpt-4.1, gpt-oss-120b, qwen-3.8
+files = ["data/*.jsonl"]
+label_column = "label"
+human_value = "human"
+generator_column = "source"
+domain_column = "genre"
+holdout = true

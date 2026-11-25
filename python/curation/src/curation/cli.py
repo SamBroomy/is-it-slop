@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from importlib import resources
 from pathlib import Path
 
@@ -33,6 +34,11 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--only", help="comma-separated source names to build")
     run.add_argument("--limit-per-source", type=int, help="read only the first N rows of every source (quick runs)")
     run.add_argument(
+        "--strip-markdown",
+        action="store_true",
+        help="also strip the markdown the cleaner leaves behind (an experiment: the shipped cleaner does not)",
+    )
+    run.add_argument(
         "--strict", action="store_true", help="fail instead of skipping sources whose credentials are missing"
     )
 
@@ -48,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv(find_dotenv(usecwd=True))  # HF_TOKEN, KAGGLE_API_TOKEN; never overrides the environment
 
     config = load_config(args.config or DEFAULT_CONFIG)
+    if args.command == "build" and args.strip_markdown:
+        config = replace(config, strip_markdown=True)
     if args.command == "sources":
         for source in config.sources:
             status = "disabled" if not source.enabled else missing_credentials(source.requires) or "ok"

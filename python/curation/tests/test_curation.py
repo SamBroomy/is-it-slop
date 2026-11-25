@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
+from pathlib import Path  # ruff: ignore[typing-only-standard-library-import]
 from typing import Any
 
 import polars as pl
 import pytest
 from curation.build import build
 from curation.config import Config, Quota, Source
-from curation.guards import add_keys, apply_guards
-from curation.loaders import lazy_from_frames, parse_conversation, scan_files, standardise
+from curation.guards import add_keys, apply_guards, clean
+from curation.loaders import (
+    ascii_quotes,
+    detokenise,
+    flatten_paragraphs,
+    lazy_from_frames,
+    parse_conversation,
+    scan_files,
+    standardise,
+    strip_markdown,
+    trim_fragments,
+    unwrap_lines,
+)
 from curation.select import assign_splits, key_rows
+from curation.stats import format_leaks
 
 from curation import loaders
 
@@ -20,17 +33,16 @@ SEED = 42
 def source(
     name: str = "s",
     *,
-    primary: Quota | str | int | dict | None = None,
-    validation: Quota | str | int | dict | None = None,
+    take: Quota | str | int | dict | None = "all",
     **fields: Any,  # ruff: ignore[any-type]
 ) -> Source:
     """Build a source with sensible defaults for tests."""
-
-    def quota(value: Quota | str | int | dict | None) -> Quota:
-        return value if isinstance(value, Quota) else Quota.parse(value)
-
+    quota = take if isinstance(take, Quota) else Quota.parse(take)
     fields = {"loader": "frame", "label_column": "label", **fields}
-    return Source(name=name, primary=quota(primary), validation=quota(validation), **fields)
+    known = {k: v for k, v in fields.items() if k in Source.__dataclass_fields__ and k != "params"}
+    params = {k: v for k, v in fields.items() if k not in Source.__dataclass_fields__ or k == "params"}
+    params = {**params.pop("params", {}), **params}
+    return Source(name=name, take=quota, params=params, **known)
 
 
 def frame(n_per_label: int, *, prefix: str = "doc", groups: int | None = None) -> pl.DataFrame:
@@ -75,23 +87,26 @@ def test_quota_rejects_nonsense(bad: object) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-def pick(df: pl.DataFrame, src: Source, test_fraction: float = 0.2) -> pl.DataFrame:
-    return assign_splits(key_rows(standardise(df.lazy(), src), SEED).collect(), src, test_fraction)
+FRACTIONS = (0.7, 0.15, 0.15)
+
+
+def pick(df: pl.DataFrame, src: Source, fractions: tuple[float, float, float] = FRACTIONS) -> pl.DataFrame:
+    return assign_splits(key_rows(standardise(df.lazy(), src), SEED).collect(), src, fractions)
 
 
 def test_splits_have_exact_sizes_and_never_overlap() -> None:
-    src = source(primary=Quota.parse({"each": 50}), validation=Quota.parse({"each": 20}))
+    src = source(take={"each": 100})
     chosen = pick(frame(200), src)
     counts = {(label, split): n for label, split, n in chosen.group_by("label", "split").len().iter_rows()}
     for label in (0, 1):
-        assert counts[label, "train"] == 40
-        assert counts[label, "test"] == 10
-        assert counts[label, "validation"] == 20
+        assert counts[label, "train"] == 70
+        assert counts[label, "test"] == 15
+        assert counts[label, "validation"] == 15
     assert chosen.select("doc").is_duplicated().sum() == 0, "a document is in exactly one split"
 
 
 def test_selection_is_deterministic_and_row_order_independent() -> None:
-    src = source(primary=Quota.parse(80), validation=Quota.parse(20))
+    src = source(take=100)
     df = frame(100)
     first = pick(df, src).sort("doc")
     shuffled = pick(df.sample(fraction=1.0, shuffle=True, seed=7), src).sort("doc")
@@ -108,7 +123,7 @@ def test_selection_ignores_arrival_order_for_duplicate_texts() -> None:
         for copy in range(2)
     ]
     df = pl.DataFrame(rows, schema={"text": pl.Utf8, "label": pl.Int8, "group": pl.Utf8})
-    src = source(primary={"each": 100}, validation={"each": 30})
+    src = source(take={"each": 130})
     reference = pick(df, src).sort("doc", "label")
     for seed in (1, 2, 3):
         assert reference.equals(pick(df.sample(fraction=1.0, shuffle=True, seed=seed), src).sort("doc", "label"))
@@ -123,7 +138,7 @@ def test_variants_of_one_document_share_a_split() -> None:
         for v in range(10)
     ]
     df = pl.DataFrame(rows, schema={"text": pl.Utf8, "label": pl.Int8, "group": pl.Utf8})
-    src = source(primary="all")
+    src = source(take="all")
     chosen = pick(df, src)
     texts = standardise(df.lazy(), src).with_columns(doc=pl.col("text").hash(SEED)).collect()
     joined = texts.join(chosen, on=["doc", "label"])
@@ -135,7 +150,7 @@ def test_variants_of_one_document_share_a_split() -> None:
 
 def test_exact_duplicates_inside_a_source_collapse() -> None:
     df = pl.concat([frame(10), frame(10)])
-    chosen = pick(df, source(primary="all"))
+    chosen = pick(df, source(take="all"))
     assert len(chosen) == 20
 
 
@@ -315,10 +330,10 @@ def synthetic(monkeypatch: pytest.MonkeyPatch) -> Config:
     frames = {"mixed": frame(300, prefix="mixed"), "ai_only": frame(150, prefix="ai").filter(pl.col("label") == 1)}
     monkeypatch.setitem(loaders.LOADERS, "frame", lambda src: frames[src.name].lazy())
     sources = (
-        source("mixed", primary=Quota.parse({"each": 100}), validation=Quota.parse({"each": 30})),
-        source("ai_only", label=1, primary=Quota.parse(60), generator="some-model"),
+        source("mixed", take=Quota.parse({"each": 130})),
+        source("ai_only", label=1, take=Quota.parse(60), generator="some-model"),
     )
-    return Config(seed=SEED, test_fraction=0.2, prefix_chars=0, sources=sources, digest="test")
+    return Config(seed=SEED, fractions=(0.7, 0.15, 0.15), prefix_chars=0, sources=sources, digest="test")
 
 
 def test_build_writes_disjoint_splits_with_provenance(synthetic: Config, tmp_path) -> None:  # ruff: ignore[missing-type-function-argument]
@@ -359,3 +374,202 @@ def test_sources_needing_credentials_are_skipped_not_fatal(synthetic: Config, tm
     assert "gated" in meta["skipped_sources"]
     with pytest.raises(RuntimeError, match="gated"):
         build(config, tmp_path / "strict", version="0.0.1", strict=True)
+
+
+# --------------------------------------------------------------------------------------------
+# Holdout, repairs and the newer loaders
+# --------------------------------------------------------------------------------------------
+
+
+def test_holdout_sources_put_every_row_in_the_holdout_split() -> None:
+    chosen = pick(frame(30), source(holdout=True, take=None))
+    assert set(chosen["split"].unique()) == {"holdout"}
+    assert len(chosen) == 60
+
+
+def test_a_holdout_row_that_repeats_training_text_is_dropped() -> None:
+    rows = [
+        ("A shared passage that appears in training and in the holdout.", 1, "train"),
+        ("A shared passage that appears in training and in the holdout.", 1, "holdout"),
+        ("Only the holdout has this one.", 1, "holdout"),
+    ]
+    out, report = apply_guards(
+        add_keys(pl.DataFrame(rows, schema=["text", "label", "split"], orient="row"), SEED, 0), prefix_chars=0
+    )
+    assert sorted(out["split"].to_list()) == ["holdout", "train"]
+    assert report["duplicate"]["holdout"] == 1
+
+
+def test_unwrap_lines_joins_hard_wraps_but_keeps_paragraphs() -> None:
+    text = "A fully differential\ncalculation is\npresented.\n\nSecond paragraph\nwraps too."
+    out = pl.select(unwrap_lines(pl.lit(text))).item()
+    assert out == "A fully differential calculation is presented.\n\nSecond paragraph wraps too."
+
+
+def test_detokenise_undoes_pretokenised_spacing_and_ptb_quotes() -> None:
+    text = "It has all the makings ( see below ) , but you ca n't buy it . She said ``No '' and it 's done ."
+    out = pl.select(detokenise(pl.lit(text))).item()
+    assert out == "It has all the makings (see below), but you can't buy it. She said \"No\" and it's done."
+
+
+def test_flatten_paragraphs_collapses_all_whitespace() -> None:
+    assert pl.select(flatten_paragraphs(pl.lit("One.\n\nTwo.\n  Three."))).item() == "One. Two. Three."
+
+
+def test_standardise_applies_repairs_and_filters() -> None:
+    df = pl.DataFrame({
+        "text": ["Hello there, friend of mine.", "As an AI language model, I cannot.", "tiny"],
+        "label": [0, 0, 0],
+    })
+    out = standardise(df.lazy(), source(drop_pattern=r"(?i)language model", min_chars=10)).collect()
+    assert out["text"].to_list() == ["Hello there, friend of mine."]
+
+
+def test_standardise_extracts_generator_and_domain_with_a_regex() -> None:
+    df = pl.DataFrame({
+        "text": ["human text", "machine text"],
+        "label": [1, 0],  # this source labels human text 1
+        "src": ["cmv_human", "wp_machine_topical_text-davinci-002"],
+    })
+    src = source(
+        human_value=1, generator_column="src", generator_regex="_machine_(?:continuation|topical|specified)_(.+)$",
+        domain_column="src", domain_regex="^(.+?)_(?:human|machine)",
+    )  # fmt: skip
+    out = standardise(df.lazy(), src).sort("text").collect()
+    assert out["label"].to_list() == [0, 1]  # "human text" first: MAGE's label 1 is human
+    assert out["generator"].to_list() == [None, "text-davinci-002"]
+    assert out["domain"].to_list() == ["cmv", "wp"]
+
+
+def test_chat_loader_takes_chosen_roles_and_filters_conversations(monkeypatch: pytest.MonkeyPatch) -> None:
+    turns = pl.List(pl.Struct({"role": pl.Utf8, "content": pl.Utf8}))
+    raw = pl.DataFrame(
+        {
+            "language": ["English", "French"],
+            "model": ["m1", "m2"],
+            "conversation": [
+                [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}],
+                [{"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}],
+            ],
+        },
+        schema={"language": pl.Utf8, "model": pl.Utf8, "conversation": turns},
+    )
+    monkeypatch.setattr(loaders, "files", lambda _s: raw.lazy())
+    base: dict[str, Any] = {"conversation": "conversation", "model_column": "model", "where": {"language": ["English"]}}
+    both = loaders.chat(
+        source(loader="chat", label=1, label_column=None, roles=["user", "assistant"], **base)
+    ).collect()
+    assert sorted(both["text"].to_list()) == ["a1", "q1"]
+    only = loaders.chat(source(loader="chat", label=1, label_column=None, **base)).collect()
+    assert only["text"].to_list() == ["a1"]
+    assert only["generator"].to_list() == ["m1"]
+
+
+def test_answers_loader_explodes_human_and_ai_lists_per_question(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = pl.DataFrame({"human_answers": [["h1", "h2"], ["h3"]], "chatgpt_answers": [["c1"], ["c2", "c3"]]})
+    monkeypatch.setattr(loaders, "files", lambda _s: raw.lazy())
+    out = loaders.answers(
+        source(loader="answers", label_column=None, human="human_answers", ai="chatgpt_answers")
+    ).collect()
+    assert out.group_by("label").len().sort("label")["len"].to_list() == [3, 3]
+    first = out.filter(pl.col("group") == "0")
+    assert sorted(first["text"].to_list()) == ["c1", "h1", "h2"]
+
+
+def test_stackexchange_loader_keeps_the_best_pre_cutoff_answer_as_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    answer = pl.Struct({"text": pl.Utf8, "pm_score": pl.Float64})
+    rows = pl.DataFrame(
+        {
+            "qid": [1, 2, 3, 4],
+            "date": ["2020/01/01", "2023/05/05", "2021/02/02", "2021/03/03"],
+            "answers": [
+                [
+                    {"text": "<p>Low.</p>", "pm_score": 1.0},
+                    {"text": "<p>Best &amp; <b>bold</b>.</p><p>Second paragraph.</p>", "pm_score": 4.0},
+                ],
+                [{"text": "<p>Too late.</p>", "pm_score": 9.0}],
+                [{"text": "<pre><code>x = 1</code></pre>", "pm_score": 5.0}],
+                [],
+            ],
+        },
+        schema={"qid": pl.Int64, "date": pl.Utf8, "answers": pl.List(answer)},
+    )
+    rows.write_parquet(tmp_path / "x.parquet")
+    monkeypatch.setattr(loaders, "expand", lambda _repo, _patterns: ["x"])
+    monkeypatch.setattr(loaders, "download", lambda _repo, _name: tmp_path / "x.parquet")
+    src = source(
+        loader="stackexchange", label_column=None, repo="r", sites=["writing.stackexchange.com"], before="2022/12/01"
+    )
+    out = loaders.stackexchange(src).collect()
+    assert [t.strip() for t in out["text"]] == ["Best &amp; bold.\n\nSecond paragraph."]
+    assert out["site"].to_list() == ["writing"]
+    assert out["group"].to_list() == ["1"]
+
+
+def test_format_leaks_flags_a_within_source_formatting_gap() -> None:
+    n = 400
+    human = [f"Human text number {i} without breaks." for i in range(n)]
+    ai = [f"AI text number {i} with.\n\nA second paragraph." for i in range(n)]
+    df = pl.DataFrame({"text": human + ai, "label": [0] * n + [1] * n, "dataset": ["leaky"] * (2 * n)})
+    report = format_leaks(df)
+    assert report["overall"]["paragraph_breaks"]["auc"] == pytest.approx(1.0)
+    assert report["within_source"]["leaky"]["paragraph_breaks"] == [0.0, 1.0]
+    assert report["overall"]["length"]["auc"] > 0.5
+
+
+def test_strip_think_removes_the_reasoning_trace_and_drops_unterminated_ones() -> None:
+    df = pl.DataFrame({
+        "text": [
+            "<think>\nplanning the story\n</think>\nThe real story begins.",
+            "No trace here.",
+            "<think> never closes",
+        ],
+        "label": [1, 1, 1],
+    })
+    out = standardise(df.lazy(), source(strip_think=True)).collect()
+    assert sorted(out["text"].to_list()) == ["No trace here.", "The real story begins."]
+
+
+def test_trim_fragments_cuts_partial_sentences_at_either_end() -> None:
+    text = "ing over the hill. The second sentence is whole. And a third that is cut off mid"
+    both = pl.select(trim_fragments(pl.lit(text), "both")).item()
+    assert both == "The second sentence is whole."
+    assert pl.select(trim_fragments(pl.lit(text), "start")).item().startswith("The second")
+    assert pl.select(trim_fragments(pl.lit(text), "end")).item().endswith("whole.")
+    whole = "A complete text. It ends properly."
+    assert pl.select(trim_fragments(pl.lit(whole), "both")).item() == whole
+
+
+def test_standardise_drops_fragments_it_cannot_repair() -> None:
+    df = pl.DataFrame({"text": ["no sentence boundary here at all", "Good start. Then more."], "label": [0, 0]})
+    out = standardise(df.lazy(), source(trim_fragments="both")).collect()
+    assert out["text"].to_list() == ["Good start. Then more."]
+
+
+def test_ascii_quotes() -> None:
+    assert pl.select(ascii_quotes(pl.lit("\u201cIt\u2019s fine,\u201d she said."))).item() == '"It\'s fine," she said.'
+
+
+def test_strip_markdown_removes_markers_and_keeps_the_words() -> None:
+    text = "# Title\n\n**Bold** and *italic* and `code`.\n\n- first\n- second\n1. numbered\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+    out = pl.select(strip_markdown(pl.lit(text))).item()
+    for marker in ("#", "**", "`", "|", "---"):
+        assert marker not in out
+    for word in ("Title", "Bold", "italic", "code", "first", "second", "numbered"):
+        assert word in out
+    assert "- first" not in out
+    assert "5 * 3 = 15" in pl.select(strip_markdown(pl.lit("math: 5 * 3 = 15"))).item()
+
+
+def test_clean_trims_a_fragment_the_cleaner_leaves_behind() -> None:
+    df = pl.DataFrame({"text": ["leftover words here. A whole sentence follows. And another one."], "label": [1]})
+    assert clean(df, trim="start")["text"].to_list() == ["A whole sentence follows. And another one."]
+    assert clean(df)["text"].to_list() == ["leftover words here. A whole sentence follows. And another one."]
+
+
+def test_remove_pattern_deletes_boilerplate_characters() -> None:
+    df = pl.DataFrame({"text": ["Read more \u00bb the story \u2022 continues."], "label": [0]})
+    out = standardise(df.lazy(), source(remove_pattern="[\u00bb\u2022]")).collect()
+    assert out["text"].to_list() == ["Read more  the story  continues."]
