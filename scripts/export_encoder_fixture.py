@@ -7,7 +7,7 @@ from the original Python pipeline's cache, which defined the encoding every trai
 depends on; the fixture's job now is to freeze that contract, not to track Python. Changing the
 encoding deliberately means regenerating this fixture and versioning the artifact format.
 
-    uv run --with safetensors python notebooks/export_encoder_fixture.py
+    uv run --with safetensors python scripts/export_encoder_fixture.py
 
 Reads the v8192 cache and bundle; the outputs are committed.
 """
@@ -36,16 +36,12 @@ CHUNK_SIZE = 192
 
 
 def main() -> None:
+    """Write the encoder golden fixture from the Python pipeline's cache."""
     feats = np.memmap(CACHE, dtype=np.uint16, mode="r").reshape(-1, MAX_CHUNKS, CHUNK_SIZE)
     idx = np.linspace(0, len(feats) - 1, N_DOCS, dtype=np.int64)
     grids = np.asarray(feats[idx], dtype=np.int64).copy()
 
-    texts = (
-        pl.scan_parquet(ARTIFACTS / "data" / "3.0.0" / "test.parquet")
-        .select("text")
-        .collect()["text"]
-        .to_list()
-    )
+    texts = pl.scan_parquet(ARTIFACTS / "data" / "3.0.0" / "test.parquet").select("text").collect()["text"].to_list()
 
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "encoder_texts.json").write_text(

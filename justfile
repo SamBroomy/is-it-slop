@@ -26,8 +26,13 @@ install-pre-commit:
 model-pipeline: && dataset-curation training-pipeline build-bindings build-cli-release
     uv sync --all-extras --all-groups
 
-dataset-curation: sync-notebooks
-    uv run python notebooks/dataset_curation.py --force-retrain-vectorizer --bump-major
+# Build data/<version>/{train,test,validation}.parquet from the sources in curation/sources.toml
+dataset-curation version="4.0.0":
+    uv run python -m curation build --version {{ version }}
+
+# Offline tests for the curation pipeline
+test-curation:
+    uv run pytest tests -q
 
 # Train the model with the Rust training crate (`--backend` picks cuda/wgpu/flex; see its --help)
 training-pipeline:
@@ -589,52 +594,6 @@ rust-lint-fix:
 # =============================================================================
 # Notebook Management
 # =============================================================================
-
-# Convert notebooks to Python scripts (for version control)
-[group('notebooks')]
-notebooks-to-scripts:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Converting notebooks to Python scripts..."
-    for nb in notebooks/*.ipynb; do
-        if [ -f "$nb" ]; then
-            echo "  Converting $(basename "$nb")..."
-            uv run jupyter nbconvert --to script "$nb" --output-dir notebooks/
-        fi
-    done
-    echo "✅ All notebooks converted"
-
-# Convert Python scripts back to notebooks (restore dev environment)
-[group('notebooks')]
-scripts-to-notebooks:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Converting Python scripts to notebooks..."
-    for py in notebooks/*.py; do
-        if [ -f "$py" ] && [ "$(basename "$py")" != "__init__.py" ]; then
-            nb="${py%.py}.ipynb"
-            if [ ! -f "$nb" ]; then
-                echo "  Converting $(basename "$py") -> $(basename "$nb")..."
-                uv run jupytext --to notebook "$py" --output "$nb"
-            else
-                echo "  Skipping $(basename "$py") (notebook exists)"
-            fi
-        fi
-    done
-    echo "✅ Scripts converted to notebooks"
-
-# Sync notebooks: convert to scripts and strip outputs for cleaner diffs
-[group('notebooks')]
-[group('precommit')]
-sync-notebooks: notebooks-to-scripts
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Optionally strip outputs from notebooks to reduce size
-    if command -v nbstripout &> /dev/null; then
-        echo "Stripping notebook outputs..."
-        nbstripout notebooks/*.ipynb 2>/dev/null || true
-    fi
-    echo "✅ Notebooks synced"
 
 # We can see if an essay is AI-generated or not.
 is-the-essay-slop:

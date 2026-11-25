@@ -1,0 +1,277 @@
+# Sources for the curated human/AI text dataset. Label 0 is human, 1 is AI.
+#
+# Quotas (`primary` feeds train + test, `validation` is drawn from rows left over after primary):
+#   "all"                    every row            { each = n }       up to n rows of each label
+#   n                        n rows in total      { 0 = n, 1 = "all" }  explicit per label
+#
+# `generator` is the model that wrote the AI text (constant, or a column); it is only kept on AI
+# rows. `group_column` keeps rows that are variants of one document in the same split.
+
+[settings]
+seed = 42
+test_fraction = 0.2 # of the primary rows
+prefix_chars = 200  # a test/validation row sharing this many leading characters with an earlier split is dropped
+
+# ---------------------------------------------------------------------------------------------
+# Human text
+# ---------------------------------------------------------------------------------------------
+
+[[source]]
+name = "english_quotes"
+loader = "hf_dataset"
+repo = "Abirate/english_quotes"
+text_column = "quote"
+label = 0
+primary = "all"
+
+[[source]]
+name = "newswire"
+loader = "hf_dataset"
+repo = "dell-research-harvard/newswire" # public-domain US newswire articles, 1878-1977
+text_column = "cleaned_article"
+label = 0
+primary = 50000
+
+[[source]]
+name = "rotten_tomatoes"
+loader = "hf_dataset"
+repo = "cornell-movie-review-data/rotten_tomatoes"
+label = 0
+primary = 7500
+
+[[source]]
+name = "ag_news"
+loader = "hf_dataset"
+repo = "fancyzhx/ag_news"
+label = 0
+primary = 20000
+
+[[source]]
+name = "imdb"
+loader = "hf_dataset"
+repo = "stanfordnlp/imdb"
+label = 0
+primary = 10000
+
+[[source]]
+name = "human-essays"
+loader = "hf_dataset"
+repo = "artfultom/human-essays"
+subsets = ["asap2 essays", "ivy panda essays", "persuade essays"]
+label = 0
+primary = 40000                                                   # across the three subsets; avoids topic over-fitting
+
+# ---------------------------------------------------------------------------------------------
+# AI text only
+# ---------------------------------------------------------------------------------------------
+
+[[source]]
+name = "llm-generated-essays"
+loader = "hf_dataset"
+repo = "artfultom/llm-generated-essays"
+subsets = ["one prompt", "two prompts"]
+label = 1
+generator_column = "model"
+domain = "essay"
+primary = "all"
+
+[[source]]
+name = "General-Knowledge"
+loader = "hf_dataset"
+repo = "MuskumPillerum/General-Knowledge"
+text_column = "Answer"
+label = 1
+primary = 10000                           # capped: the answers are formulaic
+
+[[source]]
+name = "search-arena-24k"
+loader = "arena"
+repo = "lmarena-ai/search-arena-24k"
+files = ["data/search-arena-chat-24k.parquet"]
+sides = [["messages_a", "model_a"], ["messages_b", "model_b"]]
+domain = "chat"
+primary = 30000
+validation = 8000
+
+[[source]]
+name = "arena-expert-5k"
+loader = "arena"
+repo = "lmarena-ai/arena-expert-5k"
+files = ["data/train-00000-of-00001.parquet"]
+sides = [
+    [
+        "conversation_a",
+        "model_a",
+    ],
+    [
+        "conversation_b",
+        "model_b",
+    ],
+] # stringified numpy repr
+domain = "chat"
+primary = "all"
+
+[[source]]
+name = "arena-human-preference-140k"
+loader = "arena"
+repo = "lmarena-ai/arena-human-preference-140k"
+files = [
+    "data/train-00000-of-00007.parquet",
+    "data/train-00001-of-00007.parquet",
+    "data/train-00002-of-00007.parquet",
+    "data/train-00003-of-00007.parquet",
+    "data/train-00004-of-00007.parquet",
+    "data/train-00005-of-00007.parquet",
+    "data/train-00006-of-00007.parquet",
+]
+sides = [["conversation_a", "model_a"], ["conversation_b", "model_b"]]
+domain = "chat"
+primary = 50000
+validation = 12000
+
+# ---------------------------------------------------------------------------------------------
+# Mixed human/AI sources
+# ---------------------------------------------------------------------------------------------
+
+[[source]]
+name = "raid"
+loader = "hf_files"
+repo = "liamdugan/raid"
+files = ["train.csv"]
+text_column = "generation"
+keep = { model = [
+    "human",
+    "gpt4",
+    "cohere-chat",
+    "chatgpt",
+    "gpt3",
+    "llama-chat",
+    "mistral-chat",
+] }
+label_column = "model"
+human_value = "human"
+generator_column = "model"
+domain_column = "domain"
+attack_column = "attack"
+group_column = "source_id" # every model/attack variant of one source document stays in one split
+primary = { each = 75000 }
+validation = { each = 30000 }
+
+[[source]]
+name = "human_vs_machine"
+loader = "hf_files"
+repo = "NicolaiSivesind/human-vs-machine"
+files = ["wiki-labeled.csv", "research-abstracts-labeled.csv"]
+label_column = "label"
+requires = "hf_token"                                          # gated dataset
+primary = { each = 15000 }
+validation = { each = 12000 }
+
+[[source]]
+name = "daigt-v2-train-dataset"
+loader = "kaggle"
+handle = "thedrcat/daigt-v2-train-dataset"
+file = "train_v2_drcat_02.csv"
+label_column = "label"
+generator_column = "model"
+domain = "student_essay"
+requires = "kaggle"
+primary = { 0 = 25000, 1 = "all" }
+
+[[source]]
+name = "AI-and-Human-Generated-Text"
+loader = "hf_dataset"
+repo = "Ateeqq/AI-and-Human-Generated-Text"
+text_column = "abstract"
+label_column = "label"
+generator = "gpt-3"
+primary = "all"
+
+[[source]]
+name = "AI_Human_generated_movie_reviews"
+loader = "hf_dataset"
+repo = "Milkyway-islander/AI_Human_generated_movie_reviews"
+label_column = "labels"
+generator_column = "models"
+domain = "movie_review"
+primary = "all"
+
+[[source]]
+name = "human_vs_ai_sentences"
+loader = "hf_dataset"
+repo = "shahxeebhassan/human_vs_ai_sentences"
+label_column = "label"
+primary = { each = 7500 }
+
+# ---------------------------------------------------------------------------------------------
+# AI-vs-human continuation pairs (one human and one AI text per row)
+# ---------------------------------------------------------------------------------------------
+
+[[source]]
+name = "ai-vs-human"
+loader = "pairs"
+repo = "ilyasoulk/ai-vs-human"
+generator = "gpt-3.5-turbo"
+domain = "cnn_dailymail"
+primary = { each = 4500 }
+validation = "all"
+
+[[source]]
+name = "ai-vs-human-HuggingFaceTB-SmolLM2-360M-Instruct"
+loader = "pairs"
+repo = "zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-360M-Instruct"
+generator = "SmolLM2-360M-Instruct"
+domain = "cnn_dailymail"
+primary = "all"
+
+[[source]]
+name = "ai-vs-human-HuggingFaceTB-SmolLM2-1.7B-Instruct"
+loader = "pairs"
+repo = "zcamz/ai-vs-human-HuggingFaceTB-SmolLM2-1.7B-Instruct"
+generator = "SmolLM2-1.7B-Instruct"
+domain = "cnn_dailymail"
+primary = "all"
+
+[[source]]
+name = "ai-vs-human-Qwen-Qwen2.5-1.5B-Instruct"
+loader = "pairs"
+repo = "zcamz/ai-vs-human-Qwen-Qwen2.5-1.5B-Instruct"
+generator = "Qwen2.5-1.5B-Instruct"
+domain = "cnn_dailymail"
+primary = "all"
+
+[[source]]
+name = "ai-vs-human-google-gemma-2-2b-it"
+loader = "pairs"
+repo = "zcamz/ai-vs-human-google-gemma-2-2b-it"
+generator = "gemma-2-2b-it"
+domain = "cnn_dailymail"
+primary = "all"
+
+[[source]]
+name = "ai-vs-human-meta-llama-Llama-3.2-1B-Instruct"
+loader = "pairs"
+repo = "zcamz/ai-vs-human-meta-llama-Llama-3.2-1B-Instruct"
+generator = "Llama-3.2-1B-Instruct"
+domain = "cnn_dailymail"
+primary = "all"
+
+[[source]]
+name = "ai-vs-human-meta-llama-Llama-3.1-8B-Instruct"
+loader = "pairs"
+repo = "ilyasoulk/ai-vs-human-meta-llama-Llama-3.1-8B-Instruct"
+generator = "Llama-3.1-8B-Instruct"
+domain = "openwebtext"
+primary = "all"
+
+# ---------------------------------------------------------------------------------------------
+# Loaded in the old pipeline but never used, kept here as a record
+# ---------------------------------------------------------------------------------------------
+
+[[source]]
+name = "AI-human-text"
+loader = "hf_dataset"
+repo = "andythetechnerd03/AI-human-text"
+label_column = "generated"
+enabled = false
+primary = "all"

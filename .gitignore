@@ -26,14 +26,11 @@
 !/NEXT_RELEASE.md
 !/EXPERIMENTS.md
 !/LICENSE
-!notebooks/**/*.ipynb
-!/notebooks/**/*.py
 !/plots/*.png
 !/plots/*.svg
 !/python/**/*.py
 !/python/**/py.typed
 !/python/**/LICENSE
-!/notebooks/__init__.py
 !/.cargo/config.toml
 !/python/**/README.md
 !.pre-commit-config.yaml
@@ -41,7 +38,6 @@
 !/.github/workflows/**/*.md
 !release-plz.toml
 !/crates/**/CHANGELOG.md
-/notebooks/raid_bench.*
 !.taplo.toml
 !.vscode/settings.json
 !assets/pink-307853.svg
@@ -70,3 +66,9 @@
 /android/**/.gradle/
 /android/**/.kotlin/
 /android/local.properties
+
+# Dataset curation pipeline and its tests
+!/curation/**/*.py
+!/curation/*.toml
+!/tests/**/*.py
+!/scripts/*.py

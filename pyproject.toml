@@ -50,20 +50,15 @@ dependencies = [
     "datasets>=5.2.0",
     "huggingface-hub>=2.4.0",
     "kagglehub>=1.0.0",
-    "loguru>=0.8.0",
     "numpy>=2",
     "polars>=2",
+    "python-dotenv>=1.0",
     "safetensors>=0.8.0",
-    "semver>=3.0.4",
 ]
 
 [dependency-groups]
 dev = [
-    "ipykernel>=7",
-    "jupytext>=1.18.1",
     "maturin>=1.10.2",
-    "nbconvert>=7.16.6",
-    "nbstripout>=0.8.2",
     "prek>=0.3.8",
     "pytest>=9.0.1",
     "ruff>=0.14.0",
@@ -76,6 +71,10 @@ Documentation = "https://github.com/SamBroomy/is-it-slop/blob/main/README.md"
 Repository = "https://github.com/SamBroomy/is-it-slop"
 Issues = "https://github.com/SamBroomy/is-it-slop/issues"
 
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.uv]
 package = false

@@ -5,7 +5,7 @@
 //! freezes that contract — raw fixture texts must encode to the committed grids bit-for-bit, so
 //! any drift in trimming, tokenization, vocabulary application, or chunking fails CI instead of
 //! silently skewing a shipped model. Changing the encoding deliberately means regenerating the
-//! fixture (`notebooks/export_encoder_fixture.py`) and versioning the artifact format.
+//! fixture (`scripts/export_encoder_fixture.py`) and versioning the artifact format.
 
 use std::path::Path;
 

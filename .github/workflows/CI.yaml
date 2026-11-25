@@ -5,6 +5,10 @@ on:
     branches: [main, master]
     paths:
       - "python/**"
+      - "curation/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -64,6 +68,12 @@ jobs:
           uv run maturin develop --uv -q
           uv run ruff check
           uv run pytest tests/ -q
+
+      - name: Dataset curation pipeline
+        run: |
+          uv sync --all-packages --locked -q
+          uv run ruff check
+          uv run pytest tests -q
 
       - name: Minimize uv cache
         run: uv cache prune --ci
