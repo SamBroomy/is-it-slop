@@ -16,9 +16,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # flex-simd: compiles for all four ABIs; SIMD kernels are picked at run time with a scalar fallback.
-is-it-slop = { workspace = true, default-features = false, features = [
-    "flex-simd",
-] }
+is-it-slop = { workspace = true, features = ["flex-simd"] }
 jni = { workspace = true }
 
 [lints]

@@ -11,7 +11,7 @@ members = [
 [workspace.package]
 version = "0.7.0-alpha.1"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.100"
 authors = ["SamBroomy <36888606+SamBroomy@users.noreply.github.com>"]
 license = "MIT"
 repository = "https://github.com/SamBroomy/is-it-slop"
@@ -33,7 +33,9 @@ keywords = [
 
 
 [workspace.dependencies]
-is-it-slop = { path = "crates/is-it-slop", version = "=0.7.0-alpha.1" }
+# default-features = false here, not on the member: Cargo 1.96 rejects a member that tries to
+# override its workspace dependency (found by building on Windows). The Android crate is the only user.
+is-it-slop = { path = "crates/is-it-slop", version = "=0.7.0-alpha.1", default-features = false }
 is-it-slop-model = { path = "crates/is-it-slop-model", version = "=0.7.0-alpha.1" }
 is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version = "=0.7.0-alpha.1" }
 
