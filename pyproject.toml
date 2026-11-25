@@ -4,10 +4,6 @@
 [tool.uv.workspace]
 members = ["python/is-it-slop", "python/curation"]
 
-# scripts/ are standalone PEP 723 scripts: their dependencies are not in this environment.
-[tool.ty.src]
-exclude = ["scripts"]
-
 [dependency-groups]
 dev = [
     "maturin>=1.16.0",

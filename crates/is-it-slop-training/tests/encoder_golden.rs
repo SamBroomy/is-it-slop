@@ -4,8 +4,9 @@
 //! work if text becomes the same grid of compact ids at training and inference time. This test
 //! freezes that contract — raw fixture texts must encode to the committed grids bit-for-bit, so
 //! any drift in trimming, tokenization, vocabulary application, or chunking fails CI instead of
-//! silently skewing a shipped model. Changing the encoding deliberately means regenerating the
-//! fixture (`scripts/export_encoder_fixture.py`) and versioning the artifact format.
+//! silently skewing a shipped model. The fixture is frozen: it was exported once from the original
+//! Python pipeline (which defined the encoding). Changing the encoding deliberately means writing
+//! new vectors from this crate's encoder and versioning the artifact format.
 
 use std::path::Path;
 

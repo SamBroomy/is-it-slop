@@ -1,6 +1,6 @@
 """Dataset curation: turn many public human/AI text sources into train, test and validation splits.
 
-    uv run python -m curation build --version 4.0.0
+    just curation::build 4.0.0
 
 What it does, in order:
 

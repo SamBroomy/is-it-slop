@@ -1,4 +1,4 @@
-# is-it-slop-curation
+# curation
 
 Builds the human/AI text dataset the model is trained and evaluated on, from the public sources
 listed in [`src/curation/sources.toml`](src/curation/sources.toml).

@@ -56,8 +56,12 @@ def repo_files(repo: str) -> tuple[str, ...]:
 def download(repo: str, filename: str) -> Path:
     """Download one file of a dataset repo (cached by `huggingface_hub`) and return its path."""
     from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
 
-    return Path(hf_hub_download(repo, filename, repo_type="dataset"))
+    try:  # a cached file is used as is: no request to the Hub at all
+        return Path(hf_hub_download(repo, filename, repo_type="dataset", local_files_only=True))
+    except LocalEntryNotFoundError:
+        return Path(hf_hub_download(repo, filename, repo_type="dataset"))
 
 
 def expand(repo: str, patterns: list[str]) -> list[str]:

@@ -1,5 +1,5 @@
 [project]
-name = "is-it-slop-curation"
+name = "curation"
 version = "0.1.0"
 description = "Builds the human/AI text dataset the is-it-slop model is trained and evaluated on."
 authors = [
@@ -14,6 +14,7 @@ dependencies = [
     "huggingface-hub>=2.4.0",
     "kagglehub>=1.0.3",
     "python-dotenv>=1.2.4",
+    "loguru>=0.7.3",
 ]
 
 [project.scripts]
@@ -23,11 +24,8 @@ curation = "curation.cli:main"
 dev = ["pytest>=9.2.0"]
 
 [build-system]
-requires = ["uv_build>=0.13.9,<0.14"]
+requires = ["uv_build>=0.13.10,<0.14"]
 build-backend = "uv_build"
-
-[tool.uv.build-backend]
-module-name = "curation"
 
 [tool.uv.sources]
 is-it-slop = { workspace = true }

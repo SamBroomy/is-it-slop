@@ -335,7 +335,7 @@ class TestApiShape:
         assert a == b
         assert hash(a) == hash(b)
         with pytest.raises(AttributeError):
-            a.ai_probability = 0.0  # ty: ignore[invalid-assignment]
+            a.ai_probability = 0.0  # ty: ignore[invalid-assignment]  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_batch_accepts_any_iterable(self) -> None:
         """Batch takes generators and tuples, not just lists."""

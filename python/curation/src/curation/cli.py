@@ -7,19 +7,18 @@ curation sources                      list the configured sources and whether th
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from importlib import resources
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
+from loguru import logger
 
 from .build import build
 from .config import load_config
 from .loaders import missing_credentials
 
 DEFAULT_CONFIG = resources.files("curation") / "sources.toml"
-QUIET_LOGGERS = ("httpx", "httpcore", "huggingface_hub", "filelock", "urllib3", "fsspec")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -44,9 +43,8 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the command line and return the process exit code."""
     args = parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    for noisy in QUIET_LOGGERS:
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    logger.remove()
+    logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> <level>{message}</level>")
     load_dotenv(find_dotenv(usecwd=True))  # HF_TOKEN, KAGGLE_API_TOKEN; never overrides the environment
 
     config = load_config(args.config or DEFAULT_CONFIG)
@@ -70,8 +68,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     counts = metadata["sample_counts"]
     print(f"train={counts['train']:,} test={counts['test']:,} validation={counts['validation']:,}")
-    for name, reason in metadata["skipped_sources"].items():
-        print(f"skipped {name}: {reason}")
     return 0
 
 

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import logging
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
+from loguru import logger
 
 from . import stats
 from .guards import add_keys, apply_guards, clean
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 
     from .config import Config, Source
 
-log = logging.getLogger("curation")
+DISABLED = "disabled in sources.toml"
 
 OUTPUT_COLUMNS = ("text", "label", "dataset", "generator", "domain", "attack", "doc_id")
 
@@ -56,23 +57,27 @@ def build(
     frames: list[pl.DataFrame] = []
     skipped: dict[str, str] = {}
     selected: dict[str, dict[str, int]] = {}
-    for source in config.sources:
-        if only and source.name not in only:
-            continue
+    todo = [source for source in config.sources if not only or source.name in only]
+    for number, source in enumerate(todo, 1):
         if not source.enabled:
-            skipped[source.name] = "disabled in sources.toml"
+            skipped[source.name] = DISABLED
             continue
         if reason := missing_credentials(source.requires):
             if strict:
                 msg = f"{source.name}: {reason}"
                 raise RuntimeError(msg)
             skipped[source.name] = reason
-            log.warning("skipping %s: %s", source.name, reason)
+            logger.warning("[{}/{}] skipping {}: {}", number, len(todo), source.name, reason)
             continue
-        log.info("loading %s", source.name)
+        logger.info("[{}/{}] {}", number, len(todo), source.name)
+        started = time.monotonic()
         picked = pick_source(source, config, limit)
         selected[source.name] = {s: int((picked["split"] == s).sum()) for s in SPLITS}
-        log.info("  %s -> %s", source.name, selected[source.name])
+        counts = selected[source.name]
+        logger.info(
+            "    picked {:,} train / {:,} test / {:,} validation in {:.0f}s",
+            counts["train"], counts["test"], counts["validation"], time.monotonic() - started,
+        )  # fmt: skip
         frames.append(picked)
     if not frames:
         msg = "no source produced any rows"
@@ -92,7 +97,13 @@ def build(
 
     metadata = describe(config, version, splits, guard_report, selected, skipped, limit)
     (out_dir / "dataset_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    log.info("wrote %s", out_dir)
+    logger.success("wrote {}", out_dir)
+    if missing := {name: why for name, why in skipped.items() if why != DISABLED}:
+        logger.warning(
+            "This dataset is INCOMPLETE: {} source(s) were skipped. Set the credentials to get all of it:\n{}",
+            len(missing),
+            "\n".join(f"  - {name}: {why}" for name, why in missing.items()),
+        )
     return metadata
 
 

@@ -1,7 +1,7 @@
 # Dataset curation. From the repo root: `just curation::build 4.0.0`.
 # These recipes run in the directory you call them from (the repo root), so `data/` lands there.
 
-package := "is-it-slop-curation"
+package := "curation"
 
 default:
     @just --list
