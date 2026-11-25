@@ -2,7 +2,7 @@
 # holds the tooling shared across the repo.
 
 [tool.uv.workspace]
-members = ["python/is-it-slop", "python/curation"]
+members = ["python/is-it-slop", "python/preprocessing", "python/curation"]
 
 [dependency-groups]
 dev = [

@@ -163,30 +163,6 @@ fn is_this_slop_each(
     }))
 }
 
-/// Clean texts with the training-time cleaner (the one the shipped model's data went through).
-///
-/// Internal: the data pipeline uses it to build datasets; it is not part of the supported API.
-/// A text that cleans to nothing comes back as an empty string.
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-fn clean_for_training(py: Python<'_>, texts: Vec<String>) -> Vec<String> {
-    py.detach(|| {
-        is_it_slop_preprocessing::pre_processor::text_cleaner_for_training().clean_batch(&texts)
-    })
-}
-
-/// Number of `o200k_base` tokens in each text. Internal, for dataset statistics.
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-fn count_tokens(py: Python<'_>, texts: Vec<String>) -> Vec<usize> {
-    py.detach(|| {
-        is_it_slop_preprocessing::pre_processor::tokenize(&texts)
-            .into_iter()
-            .map(|tokens| tokens.len())
-            .collect()
-    })
-}
-
 /// CLI entry point for Python console scripts.
 ///
 /// Parses arguments from `env::args()` and runs the CLI.
@@ -252,8 +228,6 @@ fn is_it_slop(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_this_slop, m)?)?;
     m.add_function(wrap_pyfunction!(is_this_slop_batch, m)?)?;
     m.add_function(wrap_pyfunction!(is_this_slop_each, m)?)?;
-    m.add_function(wrap_pyfunction!(clean_for_training, m)?)?;
-    m.add_function(wrap_pyfunction!(count_tokens, m)?)?;
 
     #[cfg(feature = "cli")]
     m.add_function(wrap_pyfunction!(cli_main, m)?)?;

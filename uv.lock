@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 members = [
     "curation",
     "is-it-slop",
+    "is-it-slop-preprocessing",
 ]
 
 [manifest.dependency-groups]
@@ -194,7 +195,7 @@ version = "0.1.0"
 source = { editable = "python/curation" }
 dependencies = [
     { name = "huggingface-hub" },
-    { name = "is-it-slop" },
+    { name = "is-it-slop-preprocessing" },
     { name = "kagglehub" },
     { name = "loguru" },
     { name = "polars" },
@@ -209,7 +210,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "huggingface-hub", specifier = ">=2.4.0" },
-    { name = "is-it-slop", editable = "python/is-it-slop" },
+    { name = "is-it-slop-preprocessing", editable = "python/preprocessing" },
     { name = "kagglehub", specifier = ">=1.0.3" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "polars", specifier = "==2.2.0" },
@@ -366,6 +367,20 @@ dev = [
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "ruff", specifier = ">=0.17.6" },
 ]
+
+[[package]]
+name = "is-it-slop-preprocessing"
+source = { editable = "python/preprocessing" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.2.0" }]
 
 [[package]]
 name = "kagglehub"

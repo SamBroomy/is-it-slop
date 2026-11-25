@@ -4,6 +4,7 @@ members = [
     "crates/is-it-slop",
     "crates/is-it-slop-model",
     "crates/is-it-slop-preprocessing",
+    "crates/is-it-slop-preprocessing-py",
     "crates/is-it-slop-training",
     "android/library/rust",
 ]

@@ -9,8 +9,8 @@ requires-python = ">=3.12"
 readme = "README.md"
 license = { text = "MIT" }
 dependencies = [
-    "is-it-slop",
-    "polars==2.2.0",          # pinned: hash() (which picks the rows) is only stable within a version
+    "is-it-slop-preprocessing",
+    "polars==2.2.0",            # pinned: hash() (which picks the rows) is only stable within a version
     "huggingface-hub>=2.4.0",
     "kagglehub>=1.0.3",
     "python-dotenv>=1.2.4",
@@ -28,7 +28,7 @@ requires = ["uv_build>=0.13.10,<0.14"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-is-it-slop = { workspace = true }
+is-it-slop-preprocessing = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

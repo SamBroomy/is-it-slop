@@ -53,7 +53,7 @@ def summarise(values: pl.Expr) -> list[pl.Expr]:
 
 def length_stats(df: pl.DataFrame, *, seed: int, sample: int = 50_000) -> dict[str, dict[str, Any]]:
     """Summarise text length in characters and in o200k tokens (tokens on a sample, for speed)."""
-    from is_it_slop.preprocessing import count_tokens
+    from is_it_slop_preprocessing import count_tokens
 
     if df.is_empty():
         return {}

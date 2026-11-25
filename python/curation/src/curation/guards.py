@@ -15,7 +15,7 @@ NORMALISED = pl.col("text").str.to_lowercase().str.replace_all(r"\s+", " ").str.
 
 def clean(df: pl.DataFrame) -> pl.DataFrame:
     """Run the Rust training cleaner over `text` and drop rows that clean to nothing."""
-    from is_it_slop.preprocessing import clean_for_training
+    from is_it_slop_preprocessing import clean_for_training
 
     return df.with_columns(pl.Series("text", clean_for_training(df["text"]), dtype=pl.Utf8)).filter(
         pl.col("text").str.len_chars() > 0

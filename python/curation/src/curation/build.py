@@ -117,12 +117,12 @@ def describe(
     limit: int | None,
 ) -> dict[str, Any]:
     """Build the metadata file: provenance of the run plus what is in each split."""
-    import is_it_slop
+    import is_it_slop_preprocessing
 
     return {
         "dataset_version": version,
         "created_timestamp": datetime.now(UTC).isoformat(),
-        "preprocessing_version": is_it_slop.__version__,
+        "preprocessing_version": is_it_slop_preprocessing.__version__,
         "polars_version": pl.__version__,
         "seed": config.seed,
         "config_sha256": config.digest,

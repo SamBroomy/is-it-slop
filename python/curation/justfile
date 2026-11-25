@@ -19,4 +19,4 @@ sources:
 # Offline tests
 [no-cd]
 test:
-    uv run --package {{ package }} pytest python/curation/tests -q
+    uv run --package {{ package }} pytest python/preprocessing/tests python/curation/tests -q

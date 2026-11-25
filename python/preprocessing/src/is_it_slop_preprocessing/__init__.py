@@ -1,20 +1,16 @@
-"""Text preprocessing helpers for the dataset pipeline.
-
-Internal and unstable: these exist so the data pipeline cleans text with exactly the Rust cleaner the
-model is trained and evaluated with. They are not part of the supported public API.
-"""
+"""The is-it-slop training-time text cleaner and tokenizer (internal, unstable)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._is_it_slop_rust_bindings import clean_for_training as _clean_for_training
-from ._is_it_slop_rust_bindings import count_tokens as _count_tokens
+from . import _native
+from ._native import __version__
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-__all__ = ["clean_for_training", "count_tokens"]
+__all__ = ["__version__", "clean_for_training", "count_tokens"]
 
 
 def clean_for_training(texts: Iterable[str]) -> list[str]:
@@ -27,7 +23,7 @@ def clean_for_training(texts: Iterable[str]) -> list[str]:
         list[str]: One cleaned text per input, in order. A text that cleans to nothing is "".
 
     """
-    return _clean_for_training(list(texts))
+    return _native.clean_for_training(list(texts))
 
 
 def count_tokens(texts: Iterable[str]) -> list[int]:
@@ -40,4 +36,4 @@ def count_tokens(texts: Iterable[str]) -> list[int]:
         list[int]: Token count per input, in order.
 
     """
-    return _count_tokens(list(texts))
+    return _native.count_tokens(list(texts))

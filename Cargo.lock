@@ -4477,6 +4477,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-it-slop-preprocessing-py"
+version = "0.7.0-alpha.1"
+dependencies = [
+ "is-it-slop-preprocessing",
+ "pyo3",
+]
+
+[[package]]
 name = "is-it-slop-training"
 version = "0.7.0-alpha.1"
 dependencies = [

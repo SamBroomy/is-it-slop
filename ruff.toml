@@ -47,6 +47,7 @@ split-on-trailing-comma = false
 ]
 "scripts/**" = ["docstring-missing-returns", "print"]
 "python/**/tests/**" = [
+    "implicit-namespace-package",         # test folders are not packages (one pytest run covers several)
     "import-outside-top-level",           # tests import what they exercise lazily
     "undocumented-public-module",         # Missing docstring in public module
     "undocumented-public-class",          # Missing docstring in public class

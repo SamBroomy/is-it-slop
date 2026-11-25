@@ -1,0 +1,28 @@
+[project]
+name = "is-it-slop-preprocessing"
+dynamic = ["version"]
+description = "The is-it-slop text cleaner and tokenizer, for building training data (internal)."
+authors = [
+    { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
+]
+requires-python = ">=3.12"
+license = { text = "MIT" }
+readme = "README.md"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=9.2.0"]
+
+[build-system]
+requires = ["maturin>=1.10,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+bindings = "pyo3"
+python-source = "src"
+manifest-path = "../../crates/is-it-slop-preprocessing-py/Cargo.toml"
+module-name = "is_it_slop_preprocessing._native"
+profile = "release"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
