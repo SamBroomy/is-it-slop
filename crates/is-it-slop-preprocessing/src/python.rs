@@ -38,7 +38,7 @@ fn count_tokens(py: Python<'_>, iterable: &Bound<'_, PyAny>) -> PyResult<Vec<usi
 }
 
 #[pymodule]
-#[pyo3(name = "is_it_slop_preprocessing")]
+#[pyo3(name = "_is_it_slop_preprocessing_rust_bindings")]
 fn bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(clean_for_training, m)?)?;

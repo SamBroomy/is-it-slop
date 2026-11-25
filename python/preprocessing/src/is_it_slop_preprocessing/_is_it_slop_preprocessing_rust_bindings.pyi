@@ -1,4 +1,4 @@
-# Type stubs for the extension module (crates/is-it-slop-preprocessing/src/python.rs).
+# Type stubs for the compiled extension module (crates/is-it-slop-preprocessing/src/python.rs).
 from collections.abc import Iterable
 
 __version__: str

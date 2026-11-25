@@ -6,12 +6,26 @@ authors = [
     { name = "SamBroomy", email = "36888606+SamBroomy@users.noreply.github.com" },
 ]
 requires-python = ">=3.12"
+keywords = ["pyo3", "rust", "text-cleaning", "tokenization"]
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
 license = { text = "MIT" }
-readme = "README.md"
+readme = { file = "./README.md", content-type = "text/markdown" }
+
 dependencies = []
 
 [dependency-groups]
 dev = ["pytest>=9.2.0"]
+
+[project.urls]
+Repository = "https://github.com/SamBroomy/is-it-slop"
 
 [build-system]
 requires = ["maturin>=1.10,<2.0"]
@@ -20,8 +34,9 @@ build-backend = "maturin"
 [tool.maturin]
 bindings = "pyo3"
 features = ["python"]
+python-source = "src"
 manifest-path = "../../crates/is-it-slop-preprocessing/Cargo.toml"
-module-name = "is_it_slop_preprocessing"
+module-name = "is_it_slop_preprocessing._is_it_slop_preprocessing_rust_bindings"
 profile = "release"
 
 [tool.pytest.ini_options]
