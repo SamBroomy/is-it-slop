@@ -1,18 +1,4 @@
 repos:
-  - repo: https://github.com/kynan/nbstripout
-    rev: 0.9.1
-    hooks:
-      - id: nbstripout
-
-  - repo: local
-    hooks:
-      - id: sync-notebooks
-        name: Sync notebooks to scripts
-        entry: just sync-notebooks
-        language: system
-        files: \.ipynb$
-        pass_filenames: false
-
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -31,12 +17,10 @@ repos:
         stages: [pre-commit]
       - id: end-of-file-fixer
         stages: [pre-commit]
-        exclude: '^notebooks/.*\.py$' # Exclude synced notebook scripts
       - id: mixed-line-ending
         stages: [pre-commit]
       - id: trailing-whitespace
         stages: [pre-commit]
-        exclude: '^notebooks/.*\.py$' # Exclude synced notebook scripts
 
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.11.19
@@ -46,17 +30,17 @@ repos:
       - id: uv-lock
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.16
+    rev: v0.17.6  # keep in step with ruff in uv.lock
     hooks:
       - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]
         types_or: [python]
         stages: [pre-commit]
-        files: '^python/.*\.py$'
+        files: '^(python|curation|tests|scripts)/.*\.py$'
         types: [python]
       - id: ruff-format
         name: ruff format
-        files: '^python/.*\.py$'
+        files: '^(python|curation|tests|scripts)/.*\.py$'
         types: [python]
 
   - repo: local

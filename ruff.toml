@@ -37,26 +37,17 @@ ignore = [
 split-on-trailing-comma = false
 
 [lint.per-file-ignores]
-"notebooks/*.{ipynb,py}" = [
-    "useless-expression",                 # Useless expression
-    "undocumented-public-module",         # Missing docstring in public module
-    "undocumented-public-class",          # Missing docstring in public class
-    "undocumented-public-method",         # Missing docstring in public method
-    "undocumented-public-function",       # Missing docstring in public function
-    "undocumented-public-package",        # Missing docstring in public package
-    "docstring-missing-returns",          # Return is not documented in the docstring
-    "commented-out-code",                 # Commented-out code
-    "shebang-not-executable",             # Shebang is present but file is not executableetected
-    "boolean-positional-value-in-call",   # Boolean position value in function
-    "invalid-argument-name",              # Argument name should be lowercase
-    "non-lowercase-variable-in-function", # Variable in function should be lowercase
-    "too-many-locals",                    # Too many branches in function
-    "too-many-statements",                # Too many statements in function
-    "magic-value-comparison",             # Magic value
-    "print",                              # Use of print detected
-    "utf8-encoding-declaration",          # UTF-8 encoding declaration is unnecessary
+"curation/**" = [
+    "docstring-missing-returns",   # one-line summaries plus type hints say enough here
+    "docstring-missing-exception",
+    "import-outside-top-level",    # datasets, kagglehub, huggingface_hub and the Rust bindings load lazily on purpose
 ]
-"python/**/tests/**" = [
+"curation/__main__.py" = [
+    "print", # the command line reports its result on stdout
+]
+"scripts/**" = ["docstring-missing-returns", "print"]
+"{python/**/tests,tests}/**" = [
+    "import-outside-top-level",           # tests import what they exercise lazily
     "undocumented-public-module",         # Missing docstring in public module
     "undocumented-public-class",          # Missing docstring in public class
     "undocumented-public-method",         # Missing docstring in public method
