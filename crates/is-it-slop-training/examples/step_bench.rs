@@ -2,9 +2,10 @@
 //!
 //! Times a raw loop over one resident synthetic batch — no dataloader, no Learner, no metrics —
 //! so the full pipeline's iteration time can be apportioned between model compute and harness.
-//! `notebooks/step_bench.py` is the torch-MPS mirror; results from both live in EXPERIMENTS.md
-//! ("Training throughput"). Variants, each 50 warmup + 300 timed iterations
-//! (`STEP_BENCH_WARMUP`/`STEP_BENCH_ITERS` override, `STEP_BENCH_ONLY` picks one):
+//! `notebooks/step_bench.py` (removed; last present at commit e1384e6, see git history) is the
+//! torch-MPS mirror; results from both live in EXPERIMENTS.md ("Training throughput"). Variants,
+//! each 50 warmup + 300 timed iterations (`STEP_BENCH_WARMUP`/`STEP_BENCH_ITERS` override,
+//! `STEP_BENCH_ONLY` picks one):
 //!
 //! - `fwd`: train-mode forward + loss, synced per iteration via `loss.into_scalar::<f32>()`. Broken
 //!   in Burn 0.21: a forward-only loop under `Autodiff` leaks until macOS SIGKILLs the process

@@ -9,12 +9,12 @@ preview = true
 select = ["ALL"]
 ignore = [
     # --- modules ---
-    "CPY",    # Flake8-copyright
-    "RUF067", # non-empty-init-module
+    "CPY",                   # Flake8-copyright
+    "non-empty-init-module", # non-empty-init-module
     # # --- specific rules ---
     # "ASYNC240", # Async functions should not use pathlib.Path methods
     # "N999",     # Invalid module name
-    "COM812", # Commas should be used to separate items in a list
+    "missing-trailing-comma", # Commas should be used to separate items in a list
     # "D100",     # Missing docstring in public module
     # "D101",     # Missing docstring in public class
     # "D102",     # Missing docstring in public method
@@ -22,8 +22,8 @@ ignore = [
     # "D104",     # Missing docstring in public package
     # "D105",     # Missing docstring in magic method
     # "D107",     # Missing docstring in __init__
-    "D203", # 1 blank line required before class docstring
-    "D213", # Multi-line docstring closing quotes should be on a separate line
+    "incorrect-blank-line-before-class", # 1 blank line required before class docstring
+    "multi-line-summary-second-line",    # Multi-line docstring closing quotes should be on a separate line
     # "D401",   # First line should be in imperative mood
     # "DOC201", # Return is not documented in the docstring
     # "DOC501", # Raised exception missing from docstring
@@ -38,46 +38,46 @@ split-on-trailing-comma = false
 
 [lint.per-file-ignores]
 "notebooks/*.{ipynb,py}" = [
-    "B018",    # Useless expression
-    "D100",    # Missing docstring in public module
-    "D101",    # Missing docstring in public class
-    "D102",    # Missing docstring in public method
-    "D103",    # Missing docstring in public function
-    "D104",    # Missing docstring in public package
-    "DOC201",  # Return is not documented in the docstring
-    "ERA001",  # Commented-out code
-    "EXE001",  # Shebang is present but file is not executableetected
-    "FBT003",  # Boolean position value in function
-    "N803",    # Argument name should be lowercase
-    "N806",    # Variable in function should be lowercase
-    "PLR0914", # Too many branches in function
-    "PLR0915", # Too many statements in function
-    "PLR2004", # Magic value
-    "T201",    # Use of print detected
-    "UP009",   # UTF-8 encoding declaration is unnecessary
+    "useless-expression",                 # Useless expression
+    "undocumented-public-module",         # Missing docstring in public module
+    "undocumented-public-class",          # Missing docstring in public class
+    "undocumented-public-method",         # Missing docstring in public method
+    "undocumented-public-function",       # Missing docstring in public function
+    "undocumented-public-package",        # Missing docstring in public package
+    "docstring-missing-returns",          # Return is not documented in the docstring
+    "commented-out-code",                 # Commented-out code
+    "shebang-not-executable",             # Shebang is present but file is not executableetected
+    "boolean-positional-value-in-call",   # Boolean position value in function
+    "invalid-argument-name",              # Argument name should be lowercase
+    "non-lowercase-variable-in-function", # Variable in function should be lowercase
+    "too-many-locals",                    # Too many branches in function
+    "too-many-statements",                # Too many statements in function
+    "magic-value-comparison",             # Magic value
+    "print",                              # Use of print detected
+    "utf8-encoding-declaration",          # UTF-8 encoding declaration is unnecessary
 ]
 "python/**/tests/**" = [
-    "D100",    # Missing docstring in public module
-    "D101",    # Missing docstring in public class
-    "D102",    # Missing docstring in public method
-    "D103",    # Missing docstring in public function
-    "D104",    # Missing docstring in public package
-    "DOC201",  # Return is not documented in the docstring
-    "ERA001",  # Commented-out code
-    "EXE001",  # Shebang is present but file is not executableetected
-    "FBT003",  # Boolean position value in function
-    "N803",    # Argument name should be lowercase
-    "N806",    # Variable in function should be lowercase
-    "PLR0914", # Too many branches in function
-    "PLR0915", # Too many statements in function
-    "PLR2004", # Magic value
-    "T201",    # Use of print detected
-    "S101",    # Use of assert detected
-    "S301",    # Use of unsafe pickle load detected
-    "S403",    # Use of insecure pickle module
-    "RUF069",
-    "PLR6301",
-    "PT011",
+    "undocumented-public-module",         # Missing docstring in public module
+    "undocumented-public-class",          # Missing docstring in public class
+    "undocumented-public-method",         # Missing docstring in public method
+    "undocumented-public-function",       # Missing docstring in public function
+    "undocumented-public-package",        # Missing docstring in public package
+    "docstring-missing-returns",          # Return is not documented in the docstring
+    "commented-out-code",                 # Commented-out code
+    "shebang-not-executable",             # Shebang is present but file is not executableetected
+    "boolean-positional-value-in-call",   # Boolean position value in function
+    "invalid-argument-name",              # Argument name should be lowercase
+    "non-lowercase-variable-in-function", # Variable in function should be lowercase
+    "too-many-locals",                    # Too many branches in function
+    "too-many-statements",                # Too many statements in function
+    "magic-value-comparison",             # Magic value
+    "print",                              # Use of print detected
+    "assert",                             # Use of assert detected
+    "suspicious-pickle-usage",            # Use of unsafe pickle load detected
+    "suspicious-pickle-import",           # Use of insecure pickle module
+    "float-equality-comparison",
+    "no-self-use",
+    "pytest-raises-too-broad",
 ]
 
 

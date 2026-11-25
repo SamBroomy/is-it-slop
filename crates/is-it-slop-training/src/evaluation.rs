@@ -1,9 +1,10 @@
 //! The sklearn-checked evaluation oracle: AUC, threshold fitting, and threshold metrics.
 //!
-//! Ports the evaluation half of `notebooks/hierarchical_train.py` (`roc_auc_score`,
-//! `precision_recall_curve`, `threshold_at_precision`, `threshold_at_best_f1`, `score`), each
-//! unit-tested against values computed by the sklearn implementation it replaces. Labels are
-//! `{0.0, 1.0}` floats and scores are probabilities (or anything monotone in them, for AUC).
+//! Ports the evaluation half of `notebooks/hierarchical_train.py` (removed; last present at commit
+//! e1384e6, see git history) (`roc_auc_score`, `precision_recall_curve`, `threshold_at_precision`,
+//! `threshold_at_best_f1`, `score`), each unit-tested against values computed by the sklearn
+//! implementation it replaces. Labels are `{0.0, 1.0}` floats and scores are probabilities (or
+//! anything monotone in them, for AUC).
 
 /// Area under the ROC curve via the Mann-Whitney U statistic, with average ranks for ties.
 ///

@@ -29,12 +29,9 @@ model-pipeline: && dataset-curation training-pipeline build-bindings build-cli-r
 dataset-curation: sync-notebooks
     uv run python notebooks/dataset_curation.py --force-retrain-vectorizer --bump-major
 
-training-pipeline: sync-notebooks
-    uv run python notebooks/train.py --force-retrain-vectorizer --bump-major
-
-# Generate additional visualizations from trained model
-generate-extra-plots: sync-notebooks
-    uv run python notebooks/generate_extra_plots.py
+# Train the model with the Rust training crate (`--backend` picks cuda/wgpu/flex; see its --help)
+training-pipeline:
+    cargo run --release -p is-it-slop-training -- train
 
 build-bindings:
     uv run --directory python/is-it-slop maturin develop --release --uv

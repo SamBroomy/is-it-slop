@@ -1,11 +1,11 @@
 //! The training recipe on Burn's `Learner` harness.
 //!
-//! Ports the pieces of `notebooks/hierarchical_train.py` the campaign froze, each unit-tested
-//! against values computed by the PyTorch/sklearn implementation it replaces, and plugs them into
-//! `SupervisedTraining` at its trait seams: [`WarmupCosine`] as the `LrScheduler`, and
-//! [`RankGatedAdamW`] as the single optimizer, with [`losses`] inside the model's train step.
-//! Metrics and early stopping are Burn's built-ins; the sklearn-checked evaluation oracle lives
-//! in [`crate::evaluation`].
+//! Ports the pieces of `notebooks/hierarchical_train.py` (removed; last present at commit e1384e6,
+//! see git history) the campaign froze, each unit-tested against values computed by the
+//! PyTorch/sklearn implementation it replaces, and plugs them into `SupervisedTraining` at its
+//! trait seams: [`WarmupCosine`] as the `LrScheduler`, and [`RankGatedAdamW`] as the single
+//! optimizer, with [`losses`] inside the model's train step. Metrics and early stopping are Burn's
+//! built-ins; the sklearn-checked evaluation oracle lives in [`crate::evaluation`].
 
 use std::sync::Arc;
 

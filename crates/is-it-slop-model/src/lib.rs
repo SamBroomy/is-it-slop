@@ -1,9 +1,9 @@
 //! The hierarchical slop classifier: a shared per-chunk trunk, a chunk head, and an
 //! attention-pooled document head.
 //!
-//! Port of `HierarchicalSlopClassifier` in `notebooks/hierarchical_train.py`. The grouped trunk
-//! and masked max pooling are Magika's design; the hierarchy on top — a chunk level and a
-//! document level trained jointly — is ours.
+//! Port of `HierarchicalSlopClassifier` in `notebooks/hierarchical_train.py` (removed; last present
+//! at commit e1384e6, see git history). The grouped trunk and masked max pooling are Magika's
+//! design; the hierarchy on top — a chunk level and a document level trained jointly — is ours.
 //!
 //! Input is `[batch, chunks, chunk_size]` compact token ids from the data layer (the vocabulary
 //! already mapped rare tokens to the OOV row and padding to the pad row). The forward pass, with
