@@ -7,6 +7,7 @@ from typing import Any
 
 import polars as pl
 import pytest
+from curation.balance import balance
 from curation.build import build
 from curation.config import Config, Quota, Source
 from curation.guards import add_keys, apply_guards, clean
@@ -573,3 +574,38 @@ def test_remove_pattern_deletes_boilerplate_characters() -> None:
     df = pl.DataFrame({"text": ["Read more \u00bb the story \u2022 continues."], "label": [0]})
     out = standardise(df.lazy(), source(remove_pattern="[\u00bb\u2022]")).collect()
     assert out["text"].to_list() == ["Read more  the story  continues."]
+
+
+def test_normalise_breaks_and_ascii_punctuation() -> None:
+    df = pl.DataFrame({"text": ["One\u2014two \u201cquoted\u201d\u2026\nNext paragraph.\n\n\nLast."], "label": [0]})
+    out = standardise(df.lazy(), source(normalise_breaks=True, ascii_punctuation=True)).collect()
+    assert out["text"].to_list() == ['One-two "quoted"...\n\nNext paragraph.\n\nLast.']
+
+
+def test_holdout_each_reserves_rows_per_label() -> None:
+    keys = pl.DataFrame({"doc": list(range(200)), "label": [0, 1] * 100, "h": list(range(200))}).cast({
+        "doc": pl.UInt64,
+        "h": pl.UInt64,
+        "label": pl.Int8,
+    })
+    out = assign_splits(keys, source(holdout_each=5, take="all"), (0.7, 0.15, 0.15))
+    counts = out.group_by("split", "label").len()
+    held = counts.filter(pl.col("split") == "holdout")
+    assert sorted(held["len"].to_list()) == [5, 5]
+    assert out.height == 200
+
+
+def test_balance_limits_the_majority_class_in_a_cell_and_keeps_small_cells() -> None:
+    long_text = "word " * 300
+    rows = (
+        [{"text": f"# Title\n\n{long_text}{i}", "label": 1, "split": "train", "dataset": "a"} for i in range(300)]
+        + [{"text": f"# Title\n\n{long_text}x{i}", "label": 0, "split": "train", "dataset": "b"} for i in range(100)]
+        + [{"text": f"{long_text}{i}", "label": 0, "split": "train", "dataset": "b"} for i in range(40)]
+    )
+    df = pl.DataFrame(rows).with_row_index("doc_id")
+    kept, report = balance(df, ratio=1.5, seed=1)
+    cell = kept.filter(pl.col("text").str.starts_with("#"))
+    assert (cell["label"] == 0).sum() == 100  # the minority class is kept whole
+    assert (cell["label"] == 1).sum() == 150  # the majority class is cut to 1.5 x
+    assert (kept["label"] == 0).sum() == 140  # the 40 plain rows sit in a small cell and are untouched
+    assert report["dropped"]["train"] == {"human": 0, "ai": 150}

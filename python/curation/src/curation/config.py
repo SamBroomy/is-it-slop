@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -87,6 +87,7 @@ class Source:
     loader: str
     take: Quota = field(default_factory=Quota)
     holdout: bool = False
+    holdout_each: int = 0  # reserve this many rows per label (at most 10%) for the holdout; the rest is split as usual
     label: int | None = None
     label_column: str | None = None
     human_value: str | int | None = None
@@ -106,6 +107,10 @@ class Source:
     detokenise: bool = False  # undo pre-tokenised spacing ("it 's", "word .") and PTB quotes
     flatten_paragraphs: bool = False  # collapse every run of whitespace, newlines included, to one space
     remove_pattern: str | None = None  # delete everything matching this regex (boilerplate characters)
+    normalise_breaks: bool = (
+        False  # every newline (run) becomes one paragraph break (sources that mark paragraphs with \n)
+    )
+    ascii_punctuation: bool = False  # curly quotes, en/em dashes and ellipses to ASCII (when only one side keeps them)
     ascii_quotes: bool = False  # curly quotes to straight ones (when only one side of a source uses them)
     trim_fragments: str | None = None  # "start", "end" or "both": cut text that begins or ends mid-sentence
     strip_think: bool = (
@@ -152,15 +157,13 @@ class Config:
     prefix_chars: int
     sources: tuple[Source, ...]
     digest: str
+    balance: float = (
+        0.0  # keep at most this many majority-class rows per minority-class row in each formatting cell (0 = off)
+    )
     strip_markdown: bool = False  # remove what markdown leaves behind in every source (an experiment)
 
 
-_SOURCE_KEYS = {
-    "name", "loader", "take", "holdout", "label", "label_column", "human_value", "generator",
-    "generator_column", "generator_regex", "domain", "domain_column", "domain_regex", "attack_column",
-    "group_column", "text_column", "requires", "enabled", "notes", "unwrap_lines", "detokenise",
-    "flatten_paragraphs", "strip_think", "ascii_quotes", "trim_fragments", "remove_pattern", "drop_pattern", "min_chars",
-}  # fmt: skip
+_SOURCE_KEYS = {f.name for f in fields(Source) if f.name != "params"} | {"notes"}  # keys that are not `params`  # fmt: skip
 _REMOVED_KEYS = {"primary": "take", "validation": "[settings] train/test/validation fractions"}
 
 
@@ -196,6 +199,7 @@ def load_config(path: Path | Traversable) -> Config:
         fractions=(train, test, validation),
         prefix_chars=int(settings.get("prefix_chars", 200)),
         strip_markdown=bool(settings.get("strip_markdown", False)),
+        balance=float(settings.get("balance", 0.0)),
         sources=tuple(sources),
         digest=hashlib.sha256(raw_bytes).hexdigest(),
     )

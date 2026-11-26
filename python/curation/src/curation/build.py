@@ -11,6 +11,7 @@ import polars as pl
 from loguru import logger
 
 from . import stats
+from .balance import balance
 from .guards import add_keys, apply_guards, clean
 from .loaders import load_source, missing_credentials
 from .select import PROPORTIONAL, SPLITS, assign_splits, key_rows
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 DISABLED = "disabled in sources.toml"
 
-OUTPUT_COLUMNS = ("text", "label", "dataset", "generator", "domain", "attack", "doc_id")
+OUTPUT_COLUMNS = ("text", "label", "dataset", "generator", "domain", "attack", "doc_id", "split")
 
 
 def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFrame:
@@ -42,6 +43,16 @@ def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFra
         .drop("doc")
     )
     return clean(picked, markdown=config.strip_markdown, trim=source.trim_fragments)
+
+
+def _balance(df: pl.DataFrame, config: Config) -> tuple[pl.DataFrame, dict[str, Any] | None]:
+    """Balance formatting between the classes in train, test and validation when `config.balance` asks; the holdout is untouched."""
+    if config.balance <= 0:
+        return df, None
+    is_proportional = pl.col("split").cast(pl.Utf8).is_in(PROPORTIONAL)
+    balanced, report = balance(df.filter(is_proportional), ratio=config.balance, seed=config.seed)
+    logger.info("balance {}: dropped {}", config.balance, report["dropped"])
+    return pl.concat([balanced, df.filter(~is_proportional)]), report
 
 
 def build(
@@ -84,7 +95,8 @@ def build(
     df = pl.concat(frames, how="diagonal")
     del frames
     df, guard_report = apply_guards(add_keys(df, config.seed, config.prefix_chars), prefix_chars=config.prefix_chars)
-    df = df.with_columns(pl.col("dataset").cast(pl.Categorical))
+    df = df.with_columns(pl.col("dataset", "split").cast(pl.Categorical))
+    df, balance_report = _balance(df, config)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     splits: dict[str, pl.DataFrame] = {}
@@ -95,7 +107,7 @@ def build(
         splits[split] = part.sample(fraction=1.0, shuffle=True, seed=config.seed)
         splits[split].write_parquet(out_dir / f"{split}.parquet", compression="zstd")
 
-    metadata = describe(config, version, splits, guard_report, selected, skipped, limit)
+    metadata = describe(config, version, splits, guard_report, selected, skipped, limit, balance_report)
     (out_dir / "dataset_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     logger.success("wrote {}", out_dir)
     if missing := {name: why for name, why in skipped.items() if why != DISABLED}:
@@ -115,6 +127,7 @@ def describe(
     selected: dict[str, dict[str, int]],
     skipped: dict[str, str],
     limit: int | None,
+    balance_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the metadata file: provenance of the run plus what is in each split."""
     import is_it_slop_preprocessing
@@ -126,6 +139,7 @@ def describe(
         "polars_version": pl.__version__,
         "seed": config.seed,
         "strip_markdown": config.strip_markdown,
+        "balance": balance_report,
         "config_sha256": config.digest,
         "limit_per_source": limit,
         "sample_counts": {**{s: len(d) for s, d in splits.items()}, "total": sum(len(d) for d in splits.values())},

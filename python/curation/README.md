@@ -4,7 +4,7 @@ Builds the human/AI text dataset the model is trained and evaluated on, from the
 listed in [`src/curation/sources.toml`](src/curation/sources.toml).
 
 ```sh
-just curation::build 5.0.0       # data/5.0.0/{train,test,validation,holdout}.parquet + dataset_metadata.json
+just curation::build 5.1.0       # data/5.1.0/{train,test,validation,holdout}.parquet + dataset_metadata.json
 just curation::sources           # every source and whether it can be read (credentials)
 just curation::test              # offline tests
 ```
@@ -39,11 +39,25 @@ incomplete and which variable unlocks which source; `--strict` fails instead.
 4. Exact duplicates, label conflicts and normalised or shared-prefix overlap between splits are
    removed with joins; `dataset_metadata.json` records what each guard removed.
 
-### Holdout
+### Splits and holdout
 
-A source with `holdout = true` is never trained on: all its rows go to `holdout.parquet`. It is for small
-benchmark sets with named current models. The overlap guards treat the holdout as the last split, so a
-holdout row that repeats or closely resembles any training row is dropped.
+Every output file has a `split` column, so the four files can be concatenated into one table and cut again.
+`train`, `test` and `validation` are 70/15/15 of every source and label. The `holdout` is never trained on or
+tuned against, and comes from two places:
+
+- a source with `holdout = true` goes there whole (small benchmark sets with named current models);
+- a source with `holdout_each = n` reserves `n` rows of each label (at most 10% of the source) before the
+  rest is split, so the holdout has a small, varied slice of every domain and generator.
+
+The overlap guards treat the holdout as the last split, so a holdout row that repeats or closely resembles
+any training row is dropped.
+
+### Balancing formatting
+
+`--balance RATIO` (or `balance = RATIO` under `[settings]`) compares human and AI rows inside every
+combination ("cell") of length bin, markdown, paragraph breaks, non-ASCII and em dashes. It keeps the
+minority class whole and cuts the majority class to `RATIO` times as many rows. The dropped rows are
+listed per source in `dataset_metadata.json`. The holdout is never balanced.
 
 ### Repairs
 
@@ -53,6 +67,10 @@ Sources are repaired for *how they were collected*, never for what their authors
 | --- | --- |
 | `unwrap_lines` | hard-wrapped text (arXiv abstracts are wrapped at about 80 characters) |
 | `detokenise` | pre-tokenised text (`it 's`, `word .`, `` `` '' `` quotes) |
+| `normalise_breaks` | one class marks paragraphs with a single newline and the other with two |
+| `ascii_punctuation` | curly quotes, en/em dashes and ellipses kept by only one side of a source |
+| `remove_pattern` | boilerplate characters (applied before `detokenise`: removing one can leave a gap) |
+| `trim_fragments` | text that begins or ends mid-sentence (also re-applied after the Rust cleaner) |
 | `flatten_paragraphs` | a source whose human text has no paragraph breaks while its AI text does, only because of collection |
 | `strip_think` | a leading `<think>...</think>` reasoning trace |
 | `drop_pattern` | contamination: rows matching a regex are dropped |

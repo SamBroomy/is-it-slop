@@ -46,31 +46,38 @@ def assign_splits(keys: pl.DataFrame, source: Source, fractions: tuple[float, fl
     if source.holdout:
         return keys.select("doc", "label", split=pl.lit("holdout"))
     available = dict(keys.group_by("label").len().iter_rows())
-    take = source.take.resolve(available)
+    reserved = {label: min(source.holdout_each, n // 10) for label, n in available.items()}
+    take = source.take.resolve({label: n - reserved[label] for label, n in available.items()})
     train, test, _ = fractions
 
     plan = pl.DataFrame(
-        {"label": list(available), "n_take": [take.get(label, 0) for label in available]},
-        schema={"label": keys.schema["label"], "n_take": pl.Int64},
+        {
+            "label": list(available),
+            "n_hold": [reserved[label] for label in available],
+            "n_take": [take.get(label, 0) for label in available],
+        },
+        schema={"label": keys.schema["label"], "n_hold": pl.Int64, "n_take": pl.Int64},
     ).with_columns(
         n_train=(pl.col("n_take") * train).round().cast(pl.Int64),
         n_test=(pl.col("n_take") * test).round().cast(pl.Int64),
     )
+    # The first `n_hold` ranks of each label are the holdout; the next `n_take` are cut into the splits.
     rank = pl.int_range(pl.len()).over("label", order_by=["h", "doc"])
-    n_train = pl.col("n_train")
     return (
         keys
         .join(plan, on="label")
-        .with_columns(rank=rank)
+        .with_columns(shifted=rank - pl.col("n_hold"))
         .select(
             "doc",
             "label",
             split=pl
-            .when(pl.col("rank") < n_train)
+            .when(pl.col("shifted") < 0)
+            .then(pl.lit("holdout"))
+            .when(pl.col("shifted") < pl.col("n_train"))
             .then(pl.lit("train"))
-            .when(pl.col("rank") < n_train + pl.col("n_test"))
+            .when(pl.col("shifted") < pl.col("n_train") + pl.col("n_test"))
             .then(pl.lit("test"))
-            .when(pl.col("rank") < pl.col("n_take"))
+            .when(pl.col("shifted") < pl.col("n_take"))
             .then(pl.lit("validation")),
         )
         .drop_nulls("split")

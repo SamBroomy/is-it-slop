@@ -420,6 +420,21 @@ def detokenise(text: pl.Expr) -> pl.Expr:
     return text
 
 
+def normalise_breaks(text: pl.Expr) -> pl.Expr:
+    """Make every newline, or run of blank space around one, a single paragraph break."""
+    return text.str.replace_all(r"[ \t]*\n\s*", "\n\n")
+
+
+def ascii_punctuation(text: pl.Expr) -> pl.Expr:
+    """Straight quotes, hyphens for en/em dashes, three dots for an ellipsis, plain spaces."""
+    return (
+        ascii_quotes(text)
+        .str.replace_all(r"[\u2013\u2014\u2012\u2015]", "-")
+        .str.replace_all("\u2026", "...", literal=True)
+        .str.replace_all(r"[\u00a0\u2009\u202f]", " ")
+    )
+
+
 def ascii_quotes(text: pl.Expr) -> pl.Expr:
     """Turn curly quotes into straight ones."""
     return text.str.replace_all(r"[\u2018\u2019]", "'").str.replace_all(r"[\u201c\u201d]", '"')
@@ -496,12 +511,16 @@ def _text_expression(source: Source, schema: list[str]) -> pl.Expr:
         text = text.str.replace(r"(?s)^\s*<think>.*?</think>\s*", "")
     if source.unwrap_lines:
         text = unwrap_lines(text)
+    if source.remove_pattern:  # before detokenise: removing a character can leave a gap behind
+        text = text.str.replace_all(source.remove_pattern, "")
     if source.detokenise:
         text = detokenise(text)
-    if source.remove_pattern:
-        text = text.str.replace_all(source.remove_pattern, "")
-    if source.ascii_quotes:
+    if source.ascii_punctuation:
+        text = ascii_punctuation(text)
+    elif source.ascii_quotes:
         text = ascii_quotes(text)
+    if source.normalise_breaks:
+        text = normalise_breaks(text)
     if source.flatten_paragraphs:
         text = flatten_paragraphs(text)
     if source.trim_fragments:

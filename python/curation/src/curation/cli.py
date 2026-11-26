@@ -39,6 +39,12 @@ def parser() -> argparse.ArgumentParser:
         help="also strip the markdown the cleaner leaves behind (an experiment: the shipped cleaner does not)",
     )
     run.add_argument(
+        "--balance",
+        type=float,
+        metavar="RATIO",
+        help="in every formatting cell keep at most RATIO majority-class rows per minority-class row (try 2)",
+    )
+    run.add_argument(
         "--strict", action="store_true", help="fail instead of skipping sources whose credentials are missing"
     )
 
@@ -54,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv(find_dotenv(usecwd=True))  # HF_TOKEN, KAGGLE_API_TOKEN; never overrides the environment
 
     config = load_config(args.config or DEFAULT_CONFIG)
+    if args.command == "build" and args.balance:
+        config = replace(config, balance=args.balance)
     if args.command == "build" and args.strip_markdown:
         config = replace(config, strip_markdown=True)
     if args.command == "sources":

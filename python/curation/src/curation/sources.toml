@@ -49,6 +49,7 @@ files = ["*_data_clean.json"]
 text_column = "cleaned_article"
 label = 0
 take = 50000
+holdout_each = 150
 
 [[source]]
 name = "rotten_tomatoes"
@@ -74,6 +75,7 @@ repo = "stanfordnlp/imdb"
 files = ["plain_text/*.parquet"]
 label = 0
 take = 10000
+holdout_each = 100
 
 [[source]]
 name = "human-essays"
@@ -127,6 +129,7 @@ domain_column = "site"
 min_score = 1
 min_chars = 200
 take = 60000
+holdout_each = 300
 
 [[source]]
 name = "arxiv-abstracts"
@@ -139,6 +142,7 @@ domain = "scientific_abstract"
 unwrap_lines = true                    # the abstracts are hard-wrapped at about 80 characters
 min_chars = 200
 take = 30000
+holdout_each = 300
 
 [[source]]
 name = "oasst2-prompter"
@@ -156,9 +160,12 @@ label = 0
 domain = "chat_prompt"
 min_chars = 30
 take = "all"
+holdout_each = 200
 
-# TRIAL: written by volunteers in an assistant register (about 10% mention ChatGPT-style phrasing,
-# so some are likely pasted from models). Strong AI phrases are dropped; the rest is treated as human.
+# OFF (2026-11 analysis, ~/handoff/audit/oasst-*.txt): written by volunteers in an assistant register. A classifier trained
+# without any oasst2 data scores it P(AI)=0.74 (77% of rows above 0.5; real human sources 0.06-0.50), a language model finds
+# it more predictable than every AI group, and even trained as human it is called AI 60% of the time on the holdout.
+# Whatever the volunteers' intent, it behaves like AI text, so it is not used as human text.
 [[source]]
 name = "oasst2-assistant"
 loader = "files"
@@ -169,7 +176,9 @@ label = 0
 domain = "chat_assistant"
 drop_pattern = "(?i)\\b(as an ai|as a language model|language model|i'?m sorry,? but|i apologi[sz]e|openai|chatgpt|gpt-?[34]|large language)\\b"
 min_chars = 100
+enabled = false
 take = 20000
+holdout_each = 200
 
 # ---------------------------------------------------------------------------------------------
 # AI text only
@@ -184,6 +193,7 @@ label = 1
 generator_column = "model"
 domain = "essay"
 take = "all"
+holdout_each = 150
 
 [[source]]
 name = "General-Knowledge"
@@ -202,6 +212,7 @@ files = ["data/search-arena-chat-24k.parquet"]
 sides = [["messages_a", "model_a"], ["messages_b", "model_b"]]
 domain = "chat"
 take = 38000
+holdout_each = 150
 
 [[source]]
 name = "arena-expert-5k"
@@ -229,6 +240,7 @@ files = ["data/train-*.parquet"]
 sides = [["conversation_a", "model_a"], ["conversation_b", "model_b"]]
 domain = "chat"
 take = 62000
+holdout_each = 200
 
 [[source]]
 name = "WildChat-1M"
@@ -241,6 +253,7 @@ where = { language = ["English"], toxic = [false] }
 domain = "chat"
 min_chars = 100
 take = 50000
+holdout_each = 300
 
 # Newest generation. The uploaders' claims about the model are not verified (see ~/handoff/dataset-candidates.md);
 # what matters here is that all of this text is AI.
@@ -258,6 +271,7 @@ generator = "claude-opus-5.5"
 domain = "medical_dialogue"
 min_chars = 100
 take = 20000
+holdout_each = 200
 
 [[source]]
 name = "opus5.5-doctor-summaries"
@@ -281,6 +295,7 @@ generator = "claude-sonnet-4.6"
 domain = "fiction"
 min_chars = 500
 take = "all"
+holdout_each = 40
 
 [[source]]
 name = "creative-writing-kimi-k2.5"
@@ -293,6 +308,7 @@ generator = "kimi-k2.5"
 domain = "fiction"
 min_chars = 500
 take = "all"
+holdout_each = 40
 
 [[source]]
 name = "creative-writing-qwen3.5-plus"
@@ -305,6 +321,7 @@ generator = "qwen3.5-plus (unverified: row metadata says glm5_farmer)"
 domain = "fiction"
 min_chars = 500
 take = "all"
+holdout_each = 100
 
 [[source]]
 name = "creative-writing-gemini-3-pro"
@@ -317,6 +334,7 @@ generator = "gemini-3-pro (unverified: row metadata says glm5_farmer)"
 domain = "fiction"
 min_chars = 500
 take = "all"
+holdout_each = 100
 
 # ---------------------------------------------------------------------------------------------
 # Mixed human/AI sources
@@ -344,6 +362,7 @@ domain_column = "domain"
 attack_column = "attack"
 group_column = "source_id" # every model/attack variant of one source document stays in one split
 take = { each = 50000 }
+holdout_each = 300
 flatten_paragraphs = true # human text has no paragraph breaks, the AI text does
 
 # Two files, each with its own documented generator (see the dataset card).
@@ -357,6 +376,7 @@ generator = "text-curie-001"
 domain = "wiki"
 requires = "hf_token"                     # gated dataset
 take = { each = 13500 }
+holdout_each = 150
 flatten_paragraphs = true
 
 [[source]]
@@ -369,6 +389,7 @@ generator = "gpt-3.5-turbo-0301"
 domain = "abstracts"
 requires = "hf_token"
 take = { each = 13500 }
+holdout_each = 150
 flatten_paragraphs = true
 
 [[source]]
@@ -381,6 +402,7 @@ generator_column = "source"                # the model for AI rows (human rows a
 domain = "student_essay"
 requires = "kaggle"
 take = { 0 = 25000, 1 = "all" }
+holdout_each = 200
 
 [[source]]
 name = "AI-and-Human-Generated-Text"
@@ -392,6 +414,7 @@ label_column = "label"
 generator = "gpt-3"
 trim_fragments = "start"                    # 44% of the AI text starts mid-sentence, 1% of the human text
 take = "all"
+holdout_each = 150
 
 [[source]]
 name = "AI_Human_generated_movie_reviews"
@@ -424,6 +447,7 @@ domain_column = "src"
 domain_regex = "^(.+?)_(?:human|machine)"
 min_chars = 100
 take = { each = 40000 }
+holdout_each = 300
 
 [[source]]
 name = "HC3"
@@ -438,6 +462,7 @@ flatten_paragraphs = true                                                       
 trim_fragments = "end"                                                                                                                                          # half of the human medicine answers end without punctuation
 min_chars = 100
 take = { each = 25000 }
+holdout_each = 100
 
 [[source]]
 name = "detection-pile"
@@ -450,6 +475,7 @@ detokenise = true                       # some of the human stories use PTB quot
 trim_fragments = "end"                  # 30% of the human text ends mid-sentence (cut at a length limit), 4% of the AI text
 min_chars = 200
 take = { each = 60000 }
+holdout_each = 300
 
 # ---------------------------------------------------------------------------------------------
 # AI-vs-human continuation pairs (one human and one AI text per row)
@@ -467,6 +493,7 @@ ascii_quotes = true               # one side uses curly quotes, the other does n
 detokenise = true                 # the human side keeps the Daily Mail "By . Name ." byline spacing
 remove_pattern = "[\u00bb\u2022]" # Daily Mail "read more" and bullet characters on the human side
 take = "all"
+holdout_each = 150
 flatten_paragraphs = true
 
 [[source]]
@@ -558,6 +585,137 @@ files = ["data/*.parquet"]
 label_column = "generated"
 enabled = false
 take = "all"
+
+# ---------------------------------------------------------------------------------------------
+# Added 2026-11: matched human/AI sets with named current models, and more human domains
+# ---------------------------------------------------------------------------------------------
+
+# Human text is chunks of documents (PMC, PLOS, arXiv, OpenStax, Project Gutenberg) vs text from deepseek-v4,
+# gemini-3.6, qwen3.6, kimi-k3 and gpt-6-class models written about the same documents. Wikipedia, Stack Overflow
+# and the blogs are left out: their human text cannot be dated before late 2022.
+[[source]]
+name = "human-vs-ai-50k"
+loader = "files"
+repo = "rasbt/human-vs-ai-50k"
+files = ["data/*.parquet"]
+keep = { source_collection = ["pmc", "plos", "arxiv", "openstax", "gutenberg"] }
+label_column = "label"
+generator_column = "generator_model"
+domain_column = "source_collection"
+flatten_paragraphs = true                                                        # the human chunks have no paragraph breaks and the AI text does
+trim_fragments = "both"                                                          # the human chunks begin and end mid-sentence
+min_chars = 200
+detokenise = true                                                                # PMC citation numbers are spaced ("world, 1 , 2") on the human side only
+take = "all"
+holdout_each = 300
+
+# M4GT (inside the COLING 2025 shared-task English set): human vs GPT-4/4o, Llama 3, Gemma 2, Mixtral and older models.
+# The set also repackages MAGE and HC3, which are used directly above, so only the M4GT rows are read.
+[[source]]
+name = "m4gt"
+loader = "files"
+repo = "Jinyan1/COLING_2025_MGT_en"
+files = ["data/*.parquet"]
+keep = { source = ["m4gt"] }
+label_column = "label"
+generator_column = "model"
+domain_column = "sub_source"
+unwrap_lines = true                 # the arXiv and PeerRead human text is hard-wrapped
+min_chars = 200
+detokenise = true
+trim_fragments = "end"              # a quarter of the human text ends mid-sentence
+take = { each = 40000 }
+holdout_each = 300
+
+# Ghostbuster (2023): human essays, Reuters news and WritingPrompts stories vs ChatGPT and Claude.
+[[source]]
+name = "ghostbuster-essay"
+loader = "files"
+repo = "acmc/ghostbuster_essay"
+files = ["data/*.parquet"]
+label_column = "generated"
+generator_column = "model"
+domain = "essay"
+min_chars = 200
+detokenise = true
+normalise_breaks = true         # the human text marks paragraphs with one newline, the AI text with two
+ascii_punctuation = true        # the human essays keep curly quotes and dashes the AI side lost
+take = "all"
+holdout_each = 100
+
+[[source]]
+name = "ghostbuster-reuter"
+loader = "files"
+repo = "acmc/ghostbuster_reuter"
+files = ["data/*.parquet"]
+label_column = "generated"
+generator_column = "model"
+domain = "news"
+min_chars = 200
+detokenise = true
+normalise_breaks = true
+ascii_punctuation = true
+take = "all"
+holdout_each = 100
+
+[[source]]
+name = "ghostbuster-wp"
+loader = "files"
+repo = "acmc/ghostbuster_wp"
+files = ["data/*.parquet"]
+label_column = "generated"
+generator_column = "model"
+domain = "fiction"
+min_chars = 200
+detokenise = true
+normalise_breaks = true
+ascii_punctuation = true
+take = "all"
+holdout_each = 100
+
+# AI half only (the human half is withheld, text is null): replies to r/ELI5 questions and r/AITA posts written by
+# gpt-5.6, gemini-3.7, glm-5.3, grok-4.6, qwen3.8, deepseek-v4 and nemotron-3.5, with the usual tells post-processed away.
+[[source]]
+name = "eli5-modern-models"
+loader = "files"
+repo = "mild-rgb/eli5-human-vs-ai"
+files = ["dataset.jsonl"]
+keep = { label = ["ai"] }
+label = 1
+generator_column = "model"
+domain = "reddit_eli5"
+min_chars = 200
+take = "all"
+holdout_each = 150
+
+[[source]]
+name = "aita-modern-models"
+loader = "files"
+repo = "mild-rgb/aita-human-vs-ai"
+files = ["dataset.jsonl"]
+keep = { label = ["ai"] }
+label = 1
+generator_column = "generator"
+domain = "reddit_aita"
+min_chars = 200
+take = "all"
+holdout_each = 150
+
+# Human short stories from r/WritingPrompts (2018 and earlier): the human counterpart of the AI fiction (creative-writing, ghostbuster-wp).
+[[source]]
+name = "writingprompts"
+loader = "files"
+repo = "euclaise/writingprompts"
+files = ["data/*.parquet"]
+text_column = "story"
+label = 0
+domain = "fiction"
+detokenise = true                # pre-tokenised: `` quotes '' and "world 's"
+normalise_breaks = true          # paragraphs are marked with a single newline
+trim_fragments = "end"
+min_chars = 500
+take = 25000
+holdout_each = 200
 
 # ---------------------------------------------------------------------------------------------
 # Holdout: small benchmark sets with named, current models. Never trained on or tuned against.
