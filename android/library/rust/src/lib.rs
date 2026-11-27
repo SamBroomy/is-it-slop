@@ -17,8 +17,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use is_it_slop::{CLASSIFICATION_THRESHOLD, MODEL_VERSION, Predictor};
 use jni::{
-    JNIEnv,
+    Env, EnvUnowned,
+    errors::ThrowRuntimeExAndDefault,
+    jni_str,
     objects::{JClass, JObjectArray, JString},
+    strings::JNIString,
     sys::{jfloat, jfloatArray, jstring},
 };
 
@@ -47,9 +50,9 @@ pub fn predict_rows<T: AsRef<str>>(texts: &[T]) -> Vec<f32> {
 /// Run `body`, converting an `Err` or a panic into a thrown `IllegalStateException` and a null
 /// return.
 fn guarded<R>(
-    env: &mut JNIEnv<'_>,
+    env: &mut Env<'_>,
     null: R,
-    body: impl FnOnce(&mut JNIEnv<'_>) -> Result<R, String>,
+    body: impl FnOnce(&mut Env<'_>) -> Result<R, String>,
 ) -> R {
     let outcome = catch_unwind(AssertUnwindSafe(|| body(env)));
     let message = match outcome {
@@ -65,20 +68,22 @@ fn guarded<R>(
             ),
     };
     // If throwing itself fails there is nothing more we can do.
-    let _ = env.throw_new("java/lang/IllegalStateException", message);
+    let _ = env.throw_new(
+        jni_str!("java/lang/IllegalStateException"),
+        JNIString::new(message),
+    );
     null
 }
 
-fn read_texts(env: &mut JNIEnv<'_>, texts: &JObjectArray<'_>) -> Result<Vec<String>, String> {
-    let len = env.get_array_length(texts).map_err(|e| e.to_string())?;
+fn read_texts(
+    env: &mut Env<'_>,
+    texts: &JObjectArray<'_, JString<'_>>,
+) -> Result<Vec<String>, String> {
+    let len = texts.len(env).map_err(|e| e.to_string())?;
     (0..len)
         .map(|i| {
-            let element = env
-                .get_object_array_element(texts, i)
-                .map_err(|e| e.to_string())?;
-            env.get_string(&JString::from(element))
-                .map(String::from)
-                .map_err(|e| e.to_string())
+            let element = texts.get_element(env, i).map_err(|e| e.to_string())?;
+            element.try_to_string(env).map_err(|e| e.to_string())
         })
         .collect()
 }
@@ -86,39 +91,42 @@ fn read_texts(env: &mut JNIEnv<'_>, texts: &JObjectArray<'_>) -> Result<Vec<Stri
 /// `NativeBridge.predictEach(texts: Array<String>): FloatArray`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_sambroomy_isitslop_NativeBridge_predictEach<'local>(
-    mut env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    texts: JObjectArray<'local>,
+    texts: JObjectArray<'local, JString<'local>>,
 ) -> jfloatArray {
-    guarded(&mut env, std::ptr::null_mut(), |env| {
-        let texts = read_texts(env, &texts)?;
-        let rows = predict_rows(&texts);
-        let array = env
-            .new_float_array(i32::try_from(rows.len()).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        env.set_float_array_region(&array, 0, &rows)
-            .map_err(|e| e.to_string())?;
-        Ok(array.into_raw())
+    env.with_env(|env| -> jni::errors::Result<jfloatArray> {
+        Ok(guarded(env, std::ptr::null_mut(), |env| {
+            let texts = read_texts(env, &texts)?;
+            let rows = predict_rows(&texts);
+            let array = env.new_float_array(rows.len()).map_err(|e| e.to_string())?;
+            array.set_region(env, 0, &rows).map_err(|e| e.to_string())?;
+            Ok(array.into_raw())
+        }))
     })
+    .resolve::<ThrowRuntimeExAndDefault>()
 }
 
 /// `NativeBridge.modelVersion(): String`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_sambroomy_isitslop_NativeBridge_modelVersion<'local>(
-    mut env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
 ) -> jstring {
-    guarded(&mut env, std::ptr::null_mut(), |env| {
-        env.new_string(MODEL_VERSION)
-            .map(JString::into_raw)
-            .map_err(|e| e.to_string())
+    env.with_env(|env| -> jni::errors::Result<jstring> {
+        Ok(guarded(env, std::ptr::null_mut(), |env| {
+            env.new_string(MODEL_VERSION)
+                .map(JString::into_raw)
+                .map_err(|e| e.to_string())
+        }))
     })
+    .resolve::<ThrowRuntimeExAndDefault>()
 }
 
 /// `NativeBridge.defaultThreshold(): Float`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_sambroomy_isitslop_NativeBridge_defaultThreshold<'local>(
-    _env: JNIEnv<'local>,
+    _env: EnvUnowned<'local>,
     _class: JClass<'local>,
 ) -> jfloat {
     CLASSIFICATION_THRESHOLD
