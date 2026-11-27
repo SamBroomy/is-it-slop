@@ -180,7 +180,7 @@ Run `is-it-slop --help` for all options.
 from is_it_slop import is_this_slop
 
 result = is_this_slop("Your text here")
-print(result.classification)     # 'Human' or 'AI'
+print(result.classification)  # 'Human' or 'AI'
 print(f"AI: {result.ai_probability:.1%}")  # AI: 8.8%
 ```
 

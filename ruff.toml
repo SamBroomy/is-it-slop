@@ -30,7 +30,6 @@ ignore = [
     # "ERA001", # Found commented-out code
     # "S404",   # Use of subprocess module is possibly insecure
     # "TRY003", # Try/except block does not specify the exception type
-
     # "T201", # Use of print detected
 ]
 [lint.isort]
@@ -40,7 +39,6 @@ split-on-trailing-comma = false
 "python/curation/src/**" = [
     "docstring-missing-returns",   # one-line summaries plus type hints say enough here
     "docstring-missing-exception",
-    "import-outside-top-level",    # datasets, kagglehub, huggingface_hub and the Rust bindings load lazily on purpose
 ]
 "python/curation/src/curation/cli.py" = [
     "print", # the command line reports its result on stdout

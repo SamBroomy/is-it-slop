@@ -17,7 +17,10 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import kagglehub
 import polars as pl
+from huggingface_hub import HfApi, get_token, hf_hub_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 from polars.io.plugins import register_io_source
 
 from .config import AI, HUMAN, Source
@@ -48,16 +51,11 @@ def loader(name: str) -> Callable[[Callable[[Source], pl.LazyFrame]], Callable[[
 @functools.cache
 def repo_files(repo: str) -> tuple[str, ...]:
     """Every file in a Hugging Face dataset repo."""
-    from huggingface_hub import HfApi
-
     return tuple(HfApi().list_repo_files(repo, repo_type="dataset"))
 
 
 def download(repo: str, filename: str) -> Path:
     """Download one file of a dataset repo (cached by `huggingface_hub`) and return its path."""
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import LocalEntryNotFoundError
-
     try:  # a cached file is used as is: no request to the Hub at all
         return Path(hf_hub_download(repo, filename, repo_type="dataset", local_files_only=True))
     except LocalEntryNotFoundError:
@@ -175,8 +173,6 @@ def files(source: Source) -> pl.LazyFrame:
 @loader("kaggle")
 def kaggle(source: Source) -> pl.LazyFrame:
     """Read a file of a Kaggle dataset (needs `KAGGLE_API_TOKEN`). Params: `handle`, `file`."""
-    import kagglehub
-
     directory = Path(kagglehub.dataset_download(source.params["handle"]))
     return scan_files([directory / source.params["file"]])
 
@@ -590,8 +586,6 @@ def load_source(source: Source, limit: int | None = None) -> pl.LazyFrame:
 def missing_credentials(requires: str | None) -> str | None:
     """Say why a source's credentials are missing, or return `None` when it can be read."""
     if requires == "hf_token":
-        from huggingface_hub import get_token
-
         return None if get_token() else "gated on Hugging Face: set HF_TOKEN (in .env or the environment)"
     if requires == "kaggle":
         have = os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")

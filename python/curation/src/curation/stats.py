@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import polars as pl
+from is_it_slop_preprocessing import count_tokens
 
 MARKDOWN_PATTERNS = {
     "heading": r"(?m)^#+\s+",
@@ -53,8 +54,6 @@ def summarise(values: pl.Expr) -> list[pl.Expr]:
 
 def length_stats(df: pl.DataFrame, *, seed: int, sample: int = 50_000) -> dict[str, dict[str, Any]]:
     """Summarise text length in characters and in o200k tokens (tokens on a sample, for speed)."""
-    from is_it_slop_preprocessing import count_tokens
-
     if df.is_empty():
         return {}
     texts = df["text"] if len(df) <= sample else df.sample(sample, seed=seed)["text"]

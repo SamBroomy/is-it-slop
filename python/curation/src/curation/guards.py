@@ -6,8 +6,10 @@ Every comparison is a join on 64-bit hashes of the text, never a Python collecti
 from __future__ import annotations
 
 import polars as pl
+from is_it_slop_preprocessing import clean_for_training
 
-from .select import SPLITS
+from curation.loaders import has_whole_ends, strip_markdown, trim_fragments
+from curation.select import SPLITS
 
 # Lower-cased with whitespace collapsed: "Same  text" and "same text" are one document.
 NORMALISED = pl.col("text").str.to_lowercase().str.replace_all(r"\s+", " ").str.strip_chars()
@@ -19,10 +21,6 @@ def clean(df: pl.DataFrame, *, markdown: bool = False, trim: str | None = None) 
     The cleaner can itself leave a fragment (it removes some leading phrases), so `trim`, a
     source's `trim_fragments`, is applied again here. Rows that clean to nothing are dropped.
     """
-    from is_it_slop_preprocessing import clean_for_training
-
-    from .loaders import has_whole_ends, strip_markdown, trim_fragments
-
     df = df.with_columns(pl.Series("text", clean_for_training(df["text"]), dtype=pl.Utf8))
     if markdown:
         df = df.with_columns(strip_markdown(pl.col("text")))

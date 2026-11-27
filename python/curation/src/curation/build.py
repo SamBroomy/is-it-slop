@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import is_it_slop_preprocessing
 import polars as pl
 from loguru import logger
 
@@ -130,8 +131,6 @@ def describe(
     balance_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the metadata file: provenance of the run plus what is in each split."""
-    import is_it_slop_preprocessing
-
     return {
         "dataset_version": version,
         "created_timestamp": datetime.now(UTC).isoformat(),
