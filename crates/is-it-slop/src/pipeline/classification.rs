@@ -15,19 +15,21 @@ pub enum Classification {
 impl Classification {
     /// Returns `true` if this classification is `Human`.
     #[must_use]
-    pub fn is_human(&self) -> bool {
+    pub const fn is_human(&self) -> bool {
         matches!(self, Self::Human)
     }
 
     /// Returns `true` if this classification is `AI`.
     #[must_use]
-    pub fn is_ai(&self) -> bool {
+    pub const fn is_ai(&self) -> bool {
         matches!(self, Self::AI)
     }
+}
 
-    /// Returns the opposite classification.
-    #[must_use]
-    pub fn opposite(&self) -> Self {
+impl std::ops::Not for Classification {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
         match self {
             Self::Human => Self::AI,
             Self::AI => Self::Human,

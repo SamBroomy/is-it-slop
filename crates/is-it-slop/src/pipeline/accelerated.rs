@@ -26,10 +26,10 @@
 //! Flex ties Metal at 8 documents, ndarray at 256, and ndarray + Accelerate only at 512. The
 //! numbers are hardware-specific (an Apple M-series GPU and CPU); a discrete GPU will cross lower.
 
-use super::{Strategy, UnifiedPrediction, cpu, forward, schedule};
+use super::{Concurrency, Strategy, UnifiedPrediction, cpu, forward, schedule};
 
 /// Many documents per forward pass, passes one after another.
-pub const STRATEGY: Strategy = Strategy::new(64, false);
+pub const STRATEGY: Strategy = Strategy::new(64, Concurrency::Sequential);
 
 /// Calls with fewer documents than this run on the CPU instead: the tie point of the compiled CPU
 /// backend against the GPU in the table above.

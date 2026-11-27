@@ -66,13 +66,13 @@ impl Prediction {
 
     /// Get the probability that the text is human-written (0.0 to 1.0).
     #[must_use]
-    pub fn human_probability(&self) -> f32 {
+    pub const fn human_probability(&self) -> f32 {
         self.0
     }
 
     /// Get the probability that the text is AI-generated (0.0 to 1.0).
     #[must_use]
-    pub fn ai_probability(&self) -> f32 {
+    pub const fn ai_probability(&self) -> f32 {
         self.1
     }
 
@@ -92,7 +92,7 @@ impl Prediction {
 
     /// Get probabilities as an array: [P(Human), P(AI)]
     #[must_use]
-    pub fn probabilities(&self) -> [f32; 2] {
+    pub const fn probabilities(&self) -> [f32; 2] {
         [self.0, self.1]
     }
 }
@@ -137,19 +137,19 @@ impl UnifiedPrediction {
 
     /// Calibrated probability that the document is AI-generated, in `[0.0, 1.0]`.
     #[must_use]
-    pub fn ai_probability(&self) -> f32 {
+    pub const fn ai_probability(&self) -> f32 {
         self.prediction.ai_probability()
     }
 
     /// Calibrated probability that the document is human-written, in `[0.0, 1.0]`.
     #[must_use]
-    pub fn human_probability(&self) -> f32 {
+    pub const fn human_probability(&self) -> f32 {
         self.prediction.human_probability()
     }
 
     /// Number of chunks the document was split into.
     #[must_use]
-    pub fn num_chunks(&self) -> usize {
+    pub const fn num_chunks(&self) -> usize {
         self.chunk_predictions.len()
     }
 
@@ -164,6 +164,11 @@ impl UnifiedPrediction {
     ///
     /// High dispersion is the mixed-content signal: some chunks look AI, others human.
     /// `None` for single-chunk documents.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the document has more than `u16::MAX` chunks; the encoder caps chunks far below
+    /// that.
     #[must_use]
     pub fn chunk_dispersion(&self) -> Option<f32> {
         if self.chunk_predictions.len() < 2 {
@@ -174,8 +179,9 @@ impl UnifiedPrediction {
             .iter()
             .map(Prediction::ai_probability)
             .collect();
-        let mean = probs.iter().sum::<f32>() / probs.len() as f32;
-        let variance = probs.iter().map(|p| (p - mean).powi(2)).sum::<f32>() / probs.len() as f32;
+        let count = f32::from(u16::try_from(probs.len()).expect("chunk count fits u16"));
+        let mean = probs.iter().sum::<f32>() / count;
+        let variance = probs.iter().map(|p| (p - mean).powi(2)).sum::<f32>() / count;
         Some(variance.sqrt())
     }
 

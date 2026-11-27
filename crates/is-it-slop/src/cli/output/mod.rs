@@ -43,9 +43,17 @@ impl Scored {
     }
 
     /// Attach the chunk texts, index for index with `prediction.chunk_predictions`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_texts` is not the same length as `prediction.chunk_predictions`.
     #[must_use]
     pub fn with_chunk_texts(mut self, chunk_texts: Vec<String>) -> Self {
-        debug_assert_eq!(chunk_texts.len(), self.prediction.chunk_predictions.len());
+        assert_eq!(
+            chunk_texts.len(),
+            self.prediction.chunk_predictions.len(),
+            "chunk texts must match the prediction chunk count"
+        );
         self.chunk_texts = Some(chunk_texts);
         self
     }
@@ -57,15 +65,27 @@ pub type Item = Result<Scored, anyhow::Error>;
 /// Writes results in one output format.
 pub trait Sink {
     /// Called once before the first item.
+    ///
+    /// # Errors
+    ///
+    /// The default implementation is infallible; implementations may fail while writing.
     fn begin(&mut self, out: &mut dyn Write) -> io::Result<()> {
         let _ = out;
         Ok(())
     }
 
     /// Write one scored document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to `out` fails.
     fn emit(&mut self, out: &mut dyn Write, id: &DocumentId, scored: &Scored) -> io::Result<()>;
 
     /// Report one document that could not be scored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to `out` fails.
     fn emit_error(
         &mut self,
         out: &mut dyn Write,
@@ -74,6 +94,10 @@ pub trait Sink {
     ) -> io::Result<()>;
 
     /// Called once after the last item.
+    ///
+    /// # Errors
+    ///
+    /// The default implementation is infallible; implementations may fail while flushing.
     fn finish(&mut self, out: &mut dyn Write, summary: &RunSummary) -> io::Result<()> {
         let _ = (out, summary);
         Ok(())
@@ -109,21 +133,6 @@ pub enum Detail {
     Normal,
     /// Everything, plus the chunk analysis.
     Verbose,
-}
-
-impl Detail {
-    /// From the mutually exclusive `--verbose` and `--quiet` flags.
-    #[must_use]
-    pub fn from_flags(verbose: bool, quiet: bool) -> Self {
-        debug_assert!(!(verbose && quiet), "clap rejects --verbose with --quiet");
-        if verbose {
-            Self::Verbose
-        } else if quiet {
-            Self::Quiet
-        } else {
-            Self::Normal
-        }
-    }
 }
 
 /// The output formats `--output` offers.
@@ -183,6 +192,22 @@ impl ColorChoice {
     }
 }
 
+/// How the process exit code reports on the documents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExitPolicy {
+    /// 0 on success, 1 if any document failed.
+    #[default]
+    Standard,
+    /// With `--exit-status`: 0 if any document is AI, 1 if none are, 2 if any failed.
+    Classification,
+}
+
+impl ExitPolicy {
+    const fn is_classification(self) -> bool {
+        matches!(self, Self::Classification)
+    }
+}
+
 /// Counts of how the run's documents came out; decides the exit code.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RunSummary {
@@ -196,7 +221,7 @@ pub struct RunSummary {
 
 impl RunSummary {
     /// Count one document's outcome.
-    pub fn record(&mut self, item: &Item) {
+    pub const fn record(&mut self, item: &Item) {
         match item {
             Ok(Scored {
                 class: Classification::AI,
@@ -212,18 +237,22 @@ impl RunSummary {
 
     /// Every document seen, scored or not.
     #[must_use]
-    pub fn documents(&self) -> usize {
+    pub const fn documents(&self) -> usize {
         self.ai + self.human + self.errors
     }
 
-    /// Any error is a failure (1). With `--exit-status`, 0 means at least one document was AI,
-    /// 1 means none were, and 2 means a document failed.
+    /// Any error is a failure (1). With [`ExitPolicy::Classification`], 0 means at least one
+    /// document was AI, 1 means none were, and 2 means a document failed.
     #[must_use]
-    pub fn exit_code(&self, exit_status: bool) -> u8 {
+    pub const fn exit_code(&self, policy: ExitPolicy) -> u8 {
+        let classification = policy.is_classification();
         if self.errors > 0 {
-            return if exit_status { 2 } else { 1 };
+            if classification { 2 } else { 1 }
+        } else if classification && self.ai == 0 {
+            1
+        } else {
+            0
         }
-        u8::from(exit_status && self.ai == 0)
     }
 }
 
@@ -263,6 +292,10 @@ fn error_row(id: &DocumentId, error: &anyhow::Error) -> serde_json::Value {
 }
 
 /// The stderr line for a failed document in the human-readable formats.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "private formatting helper; the flag is named at every call site"
+)]
 fn report_error(labelled: bool, id: &DocumentId, error: &anyhow::Error) {
     if labelled {
         eprintln!("{id}: {error:#}");
@@ -272,6 +305,10 @@ fn report_error(labelled: bool, id: &DocumentId, error: &anyhow::Error) {
 }
 
 /// `"{id}: "` when results need their id, otherwise nothing.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "private formatting helper; the flag is named at every call site"
+)]
 fn prefix(labelled: bool, id: &DocumentId) -> String {
     if labelled {
         format!("{id}: ")
@@ -287,11 +324,11 @@ pub(super) mod tests {
     use super::*;
     use crate::cli::input::Source;
 
-    pub fn scored(ai: f32, chunks: &[f32]) -> Scored {
+    pub(crate) fn scored(ai: f32, chunks: &[f32]) -> Scored {
         Scored::new(UnifiedPrediction::new(ai, chunks), Threshold::new(0.5))
     }
 
-    pub fn file_id(index: usize) -> DocumentId {
+    pub(crate) fn file_id(index: usize) -> DocumentId {
         DocumentId::Record {
             source: Source::File(PathBuf::from("texts.txt")),
             index,
@@ -299,12 +336,12 @@ pub(super) mod tests {
         }
     }
 
-    pub fn failed() -> anyhow::Error {
+    pub(crate) fn failed() -> anyhow::Error {
         anyhow::anyhow!("boom")
     }
 
     /// Drive a sink over `items` into a buffer, returning the text it wrote.
-    pub fn render(sink: &mut dyn Sink, items: &[(DocumentId, Item)]) -> String {
+    pub(crate) fn render(sink: &mut dyn Sink, items: &[(DocumentId, Item)]) -> String {
         let mut out = Vec::new();
         let mut summary = RunSummary::default();
         sink.begin(&mut out).unwrap();
@@ -322,15 +359,19 @@ pub(super) mod tests {
     #[test]
     fn summary_counts_and_exit_codes() {
         let mut summary = RunSummary::default();
-        assert_eq!(summary.exit_code(false), 0);
-        assert_eq!(summary.exit_code(true), 1, "no documents means no AI found");
+        assert_eq!(summary.exit_code(ExitPolicy::Standard), 0);
+        assert_eq!(
+            summary.exit_code(ExitPolicy::Classification),
+            1,
+            "no documents means no AI found"
+        );
 
         summary.record(&Ok(scored(0.1, &[0.1])));
-        assert_eq!(summary.exit_code(false), 0);
-        assert_eq!(summary.exit_code(true), 1);
+        assert_eq!(summary.exit_code(ExitPolicy::Standard), 0);
+        assert_eq!(summary.exit_code(ExitPolicy::Classification), 1);
 
         summary.record(&Ok(scored(0.9, &[0.9])));
-        assert_eq!(summary.exit_code(true), 0);
+        assert_eq!(summary.exit_code(ExitPolicy::Classification), 0);
 
         summary.record(&Err(failed()));
         assert_eq!(
@@ -342,8 +383,8 @@ pub(super) mod tests {
             }
         );
         assert_eq!(summary.documents(), 3);
-        assert_eq!(summary.exit_code(false), 1);
-        assert_eq!(summary.exit_code(true), 2);
+        assert_eq!(summary.exit_code(ExitPolicy::Standard), 1);
+        assert_eq!(summary.exit_code(ExitPolicy::Classification), 2);
     }
 
     #[test]

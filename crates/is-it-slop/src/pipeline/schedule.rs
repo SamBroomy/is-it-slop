@@ -8,7 +8,16 @@ use rayon::prelude::*;
 use super::{MAX_CHUNKS_PER_DOCUMENT, UnifiedPrediction, forward::Forward};
 use crate::model::ENCODER;
 
-/// How many documents share a forward pass, and whether passes run concurrently.
+/// Whether forward passes run one after another or concurrently on rayon's pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Concurrency {
+    /// One pass at a time.
+    Sequential,
+    /// Passes run on rayon's global pool.
+    Concurrent,
+}
+
+/// How many documents share a forward pass, and how those passes are scheduled.
 ///
 /// Built with [`Strategy::new`], which enforces at least one document per pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,27 +25,31 @@ use crate::model::ENCODER;
 pub struct Strategy {
     /// Documents per forward pass; a pass is padded to its longest document.
     pub docs_per_forward: usize,
-    /// Run the passes on rayon's global pool instead of one after another.
-    pub concurrent: bool,
+    /// How the passes are scheduled.
+    pub concurrency: Concurrency,
 }
 
 impl Strategy {
     /// One document per pass, passes one after another.
-    pub const SEQUENTIAL: Self = Self::new(1, false);
+    pub const SEQUENTIAL: Self = Self::new(1, Concurrency::Sequential);
 
     /// Build a strategy; `docs_per_forward` must be at least one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `docs_per_forward` is zero.
     #[must_use]
-    pub const fn new(docs_per_forward: usize, concurrent: bool) -> Self {
+    pub const fn new(docs_per_forward: usize, concurrency: Concurrency) -> Self {
         assert!(docs_per_forward > 0, "a forward pass needs a document");
         Self {
             docs_per_forward,
-            concurrent,
+            concurrency,
         }
     }
 }
 
 /// Score non-blank texts under `strategy`, one `forward` per group, results in input order.
-pub fn run(texts: &[&str], strategy: Strategy, forward: Forward) -> Vec<UnifiedPrediction> {
+pub(crate) fn run(texts: &[&str], strategy: Strategy, forward: Forward) -> Vec<UnifiedPrediction> {
     let chunk_size = ENCODER.chunk_size();
     let mut docs = ENCODER.encode_batch_chunks(texts);
     for doc in &mut docs {
@@ -53,11 +66,12 @@ pub fn run(texts: &[&str], strategy: Strategy, forward: Forward) -> Vec<UnifiedP
         let batch: Vec<&[u16]> = group.iter().map(|&i| docs[i].as_slice()).collect();
         forward(&batch)
     };
-    let scored: Vec<Vec<UnifiedPrediction>> = if strategy.concurrent {
-        groups.par_iter().map(|group| score(group)).collect()
-    } else {
-        groups.iter().map(|group| score(group)).collect()
-    };
+    let scored: Vec<Vec<UnifiedPrediction>> =
+        if matches!(strategy.concurrency, Concurrency::Concurrent) {
+            groups.par_iter().map(|group| score(group)).collect()
+        } else {
+            groups.iter().map(|group| score(group)).collect()
+        };
 
     let mut out: Vec<Option<UnifiedPrediction>> = vec![None; texts.len()];
     for (group, predictions) in groups.iter().zip(scored) {

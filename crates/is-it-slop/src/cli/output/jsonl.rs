@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use super::{Scored, Sink, error_row, ok_row};
 use crate::cli::input::DocumentId;
 
-pub struct Jsonl;
+pub(crate) struct Jsonl;
 
 fn write_line(out: &mut dyn Write, row: &serde_json::Value) -> io::Result<()> {
     serde_json::to_writer(&mut *out, row)?;

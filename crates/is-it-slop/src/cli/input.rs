@@ -467,7 +467,7 @@ mod tests {
             locations: vec![
                 Location::File(a.clone()),
                 Location::File(missing.clone()),
-                Location::File(b.clone()),
+                Location::File(b),
             ],
             framing: Framing::Text,
         };

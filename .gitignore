@@ -18,6 +18,7 @@
 !install.ps1
 !rust-toolchain.toml
 !rustfmt.toml
+!clippy.toml
 !ruff.toml
 !pyproject.toml
 !uv.lock

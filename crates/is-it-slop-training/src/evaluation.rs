@@ -8,11 +8,19 @@
 
 /// Area under the ROC curve via the Mann-Whitney U statistic, with average ranks for ties.
 ///
-/// Matches `sklearn.metrics.roc_auc_score`. Panics if either class is absent — an AUC over one
-/// class is meaningless and a corrupted validation split should fail loudly.
+/// Matches `sklearn.metrics.roc_auc_score`.
+///
+/// # Panics
+///
+/// Panics if `labels` and `scores` have different lengths, or if either class is absent — an AUC
+/// over one class is meaningless and a corrupted validation split should fail loudly.
 #[must_use]
 pub fn roc_auc(labels: &[f32], scores: &[f32]) -> f64 {
-    assert_eq!(labels.len(), scores.len());
+    assert_eq!(
+        labels.len(),
+        scores.len(),
+        "AUC needs exactly one score per label"
+    );
     let mut order: Vec<usize> = (0..scores.len()).collect();
     order.sort_by(|&a, &b| scores[a].total_cmp(&scores[b]));
 
@@ -20,7 +28,10 @@ pub fn roc_auc(labels: &[f32], scores: &[f32]) -> f64 {
     // is deliberately exact: only bitwise-equal scores are a tie, matching sklearn.
     let mut ranks = vec![0.0f64; scores.len()];
     let mut i = 0;
-    #[allow(clippy::float_cmp)]
+    #[expect(
+        clippy::float_cmp,
+        reason = "ties are defined by bitwise-equal scores, as in sklearn"
+    )]
     while i < order.len() {
         let mut j = i;
         while j + 1 < order.len() && scores[order[j + 1]] == scores[order[i]] {
@@ -58,7 +69,11 @@ struct PrPoint {
 /// Matches `sklearn.metrics.precision_recall_curve` minus its trailing `(1, 0)` sentinel, which
 /// corresponds to no threshold.
 fn pr_curve(labels: &[f32], probs: &[f32]) -> Vec<PrPoint> {
-    assert_eq!(labels.len(), probs.len());
+    assert_eq!(
+        labels.len(),
+        probs.len(),
+        "the PR curve needs exactly one probability per label"
+    );
     let mut order: Vec<usize> = (0..probs.len()).collect();
     order.sort_by(|&a, &b| probs[b].total_cmp(&probs[a]));
     let total_pos = labels.iter().filter(|&&l| l > 0.5).count();
@@ -69,7 +84,10 @@ fn pr_curve(labels: &[f32], probs: &[f32]) -> Vec<PrPoint> {
 
     let mut points = Vec::new();
     let (mut tp, mut fp) = (0.0f64, 0.0f64);
-    #[allow(clippy::float_cmp)]
+    #[expect(
+        clippy::float_cmp,
+        reason = "ties are defined by bitwise-equal scores, as in sklearn"
+    )]
     for (i, &idx) in order.iter().enumerate() {
         if labels[idx] > 0.5 {
             tp += 1.0;
@@ -137,9 +155,17 @@ pub fn threshold_at_best_f1(labels: &[f32], probs: &[f32]) -> f32 {
 /// `sigmoid(logit / T)` approximates the probability of being right, which makes
 /// distance-from-threshold a meaningful confidence. Golden-section search over `ln T`; the NLL
 /// is smooth and unimodal in `T` for a fixed score ranking.
+///
+/// # Panics
+///
+/// Panics if `labels` and `logits` have different lengths.
 #[must_use]
 pub fn fit_temperature(labels: &[f32], logits: &[f32]) -> f64 {
-    assert_eq!(labels.len(), logits.len());
+    assert_eq!(
+        labels.len(),
+        logits.len(),
+        "temperature scaling needs exactly one logit per label"
+    );
     let nll = |t: f64| -> f64 {
         labels
             .iter()
@@ -298,6 +324,11 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "p is in [0, 1], so the product is in [0, 1000]"
+    )]
     fn fit_temperature_recovers_a_known_scale() {
         // Logits that are exactly 2x the calibrated log-odds: for each raw logit z, the fraction
         // of positives is sigmoid(z / 2), so the NLL-optimal temperature is 2 (up to count

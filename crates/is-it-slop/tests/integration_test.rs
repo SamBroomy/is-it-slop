@@ -55,7 +55,6 @@ fn test_predict_single_text() {
 
 /// Test prediction with short text (single chunk)
 #[test]
-#[allow(clippy::float_cmp)]
 fn test_predict_short_text() {
     let short_text = "Hello world";
     let predictor = Predictor::new();
@@ -166,7 +165,6 @@ fn test_predict_batch_empty() {
 
 /// Test prediction determinism
 #[test]
-#[allow(clippy::float_cmp)]
 fn test_predict_deterministic() {
     let text = "Deterministic prediction test.";
     let predictor = Predictor::new();
@@ -194,7 +192,6 @@ fn test_predict_deterministic() {
 
 /// Test batch vs single consistency
 #[test]
-#[allow(clippy::float_cmp)]
 fn test_batch_vs_single_consistency() {
     let texts = vec!["Test one.", "Test two."];
     let predictor = Predictor::new();

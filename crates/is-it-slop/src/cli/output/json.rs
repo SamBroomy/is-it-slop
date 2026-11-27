@@ -6,7 +6,7 @@ use super::{RunSummary, Scored, Sink, error_row, ok_row};
 use crate::cli::input::DocumentId;
 
 #[derive(Default)]
-pub struct Json {
+pub(crate) struct Json {
     written: usize,
 }
 

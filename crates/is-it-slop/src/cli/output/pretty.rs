@@ -21,7 +21,7 @@ const BAR_WIDTH: usize = 20;
 /// Characters of each chunk's text shown in the chunk list.
 const CHUNK_PREVIEW_CHARS: usize = 60;
 
-pub struct Pretty {
+pub(crate) struct Pretty {
     labelled: bool,
     color: bool,
     detail: Detail,
@@ -29,7 +29,7 @@ pub struct Pretty {
 }
 
 impl Pretty {
-    pub fn new(options: SinkOptions) -> Self {
+    pub(crate) const fn new(options: SinkOptions) -> Self {
         Self {
             labelled: options.labelled,
             color: options.color,
@@ -71,10 +71,8 @@ impl Pretty {
         let left_pct = format!("{:.1}%", bar_value * 100.0);
         let right_pct = format!("{:.1}%", (1.0 - bar_value) * 100.0);
         let left_label = self.class_label(scored.class, &format!("{:>LABEL_WIDTH$}", scored.class));
-        let right_label = self.class_label(
-            scored.class.opposite(),
-            &format!("{:<LABEL_WIDTH$}", scored.class.opposite()),
-        );
+        let right_label =
+            self.class_label(!scored.class, &format!("{:<LABEL_WIDTH$}", !scored.class));
 
         writeln!(out)?;
         writeln!(out, "  {left_label}  [{bar}]  {right_label}")?;
@@ -93,7 +91,8 @@ impl Pretty {
             let chunk_dispersion = prediction.chunk_dispersion();
             writeln!(out)?;
             writeln!(out, "{}", self.paint("Chunk Analysis", STYLE_HEADER))?;
-            let chunks_t = ((num_chunks as f32 - 4.0) / 6.0).clamp(0.0, 1.0);
+            let chunks_f = f32::from(u16::try_from(num_chunks).expect("chunk count fits u16"));
+            let chunks_t = ((chunks_f - 4.0) / 6.0).clamp(0.0, 1.0);
             writeln!(
                 out,
                 "  {:<12} {}",
@@ -251,25 +250,52 @@ impl Sink for Pretty {
     }
 }
 
-fn render_bar(value: f32) -> String {
-    let filled = ((value * BAR_WIDTH as f32).round() as usize).min(BAR_WIDTH);
-    format!("{}{}", "█".repeat(filled), "░".repeat(BAR_WIDTH - filled))
+/// Round an interpolated channel value and clamp it to a byte.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "value is rounded and clamped to [0, 255] before the cast"
+)]
+const fn channel(value: f32) -> u8 {
+    value.round().clamp(0.0, 255.0) as u8
+}
+
+/// Linear interpolation between two channel endpoints.
+fn mix(from: f32, to: f32, t: f32) -> f32 {
+    from + t * (to - from)
 }
 
 fn confidence_rgb(value: f32) -> (u8, u8, u8) {
     let t = value.clamp(0.0, 1.0);
-    let r = (130.0 + t * (204.0 - 130.0)) as u8;
-    let g = (55.0 + t * (153.0 - 55.0)) as u8;
-    let b = (185.0 + t * (255.0 - 185.0)) as u8;
-    (r, g, b)
+    (
+        channel(mix(130.0, 204.0, t)),
+        channel(mix(55.0, 153.0, t)),
+        channel(mix(185.0, 255.0, t)),
+    )
 }
 
 fn rose_rgb(t: f32) -> (u8, u8, u8) {
     let t = t.clamp(0.0, 1.0);
-    let r = (185.0 + t * (255.0 - 185.0)) as u8;
-    let g = (75.0 + t * (176.0 - 75.0)) as u8;
-    let b = (115.0 + t * (204.0 - 115.0)) as u8;
-    (r, g, b)
+    (
+        channel(mix(185.0, 255.0, t)),
+        channel(mix(75.0, 176.0, t)),
+        channel(mix(115.0, 204.0, t)),
+    )
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "value is clamped to [0, 1], so the rounded product is in [0, BAR_WIDTH]"
+)]
+fn bar_fill(value: f32) -> usize {
+    let width = BAR_WIDTH as f32;
+    (value.clamp(0.0, 1.0) * width).round() as usize
+}
+
+fn render_bar(value: f32) -> String {
+    let filled = bar_fill(value);
+    format!("{}{}", "█".repeat(filled), "░".repeat(BAR_WIDTH - filled))
 }
 
 #[cfg(test)]
@@ -277,6 +303,10 @@ mod tests {
     use super::{super::tests::*, *};
     use crate::cli::input::Source;
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "test helper; the flag is named at its call sites"
+    )]
     fn options(labelled: bool) -> SinkOptions {
         SinkOptions {
             labelled,

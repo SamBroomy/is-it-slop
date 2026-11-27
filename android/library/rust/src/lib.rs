@@ -8,6 +8,11 @@
 //! Row layout per text: `[ai_probability, confidence, num_chunks, chunk_dispersion]`.
 //! `chunk_dispersion` is `NaN` for single-chunk texts. A blank text yields a row of all `NaN`.
 
+#![expect(
+    clippy::missing_const_for_fn,
+    reason = "JNI entry points are called by the JVM, never const-evaluated"
+)]
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use is_it_slop::{CLASSIFICATION_THRESHOLD, MODEL_VERSION, Predictor};
@@ -31,7 +36,7 @@ pub fn predict_rows<T: AsRef<str>>(texts: &[T]) -> Vec<f32> {
                 [
                     p.ai_probability(),
                     p.confidence(),
-                    p.num_chunks() as f32,
+                    f32::from(u16::try_from(p.num_chunks()).expect("chunk count fits u16")),
                     p.chunk_dispersion().unwrap_or(f32::NAN),
                 ]
             })

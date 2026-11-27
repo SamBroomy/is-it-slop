@@ -140,6 +140,7 @@ pub enum TextCleaning {
 }
 
 /// Encodes documents into `[max_chunks, chunk_size]` grids of compact ids.
+#[derive(Debug)]
 pub struct DocumentEncoder {
     vocabulary: Vocabulary,
     chunk_size: usize,
@@ -173,6 +174,11 @@ impl DocumentEncoder {
     ///
     /// Refuses a bundle whose `preprocessing_version` is not semver-compatible with this crate,
     /// since a different encoder would load fine and be quietly worse.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncoderError`] if the config is invalid, the preprocessing version is
+    /// incompatible, or the vocabulary cannot be parsed.
     pub fn from_bundle(vocab_bytes: &[u8], config_json: &str) -> Result<Self, EncoderError> {
         let config: EncoderBundleConfig = serde_json::from_str(config_json)?;
         let current = env!("CARGO_PKG_VERSION");
@@ -298,6 +304,11 @@ impl DocumentEncoder {
     /// a document that tokenizes to nothing yields one empty chunk, matching the model's
     /// always-real first slot. Chunk boundaries fall between tokens, so they are snapped forward
     /// to the next character boundary when a token straddles one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a token boundary cannot be mapped to a character boundary; byte-level BPE
+    /// boundaries are always valid.
     #[must_use]
     pub fn chunk_texts(&self, text: &str) -> Vec<String> {
         let cleaned = self.cleaned(text);
@@ -311,7 +322,11 @@ impl DocumentEncoder {
             end += token_len(token);
             starts.push(end);
         }
-        debug_assert_eq!(end, cleaned.len());
+        debug_assert_eq!(
+            end,
+            cleaned.len(),
+            "token byte offsets must cover the cleaned text"
+        );
 
         let boundary = |byte: usize| -> usize {
             (byte..=cleaned.len())
@@ -334,7 +349,11 @@ impl DocumentEncoder {
     }
 
     fn encode_strs(&self, texts: &[&str], labels: &[f32]) -> Vec<EncodedDocument> {
-        assert_eq!(texts.len(), labels.len());
+        assert_eq!(
+            texts.len(),
+            labels.len(),
+            "every text needs exactly one label"
+        );
         self.token_lists(texts)
             .iter()
             .zip(labels)
@@ -364,7 +383,11 @@ impl DocumentEncoder {
     }
 
     fn encode_split_strs(&self, texts: &[&str], labels: &[f32]) -> Vec<EncodedDocument> {
-        assert_eq!(texts.len(), labels.len());
+        assert_eq!(
+            texts.len(),
+            labels.len(),
+            "every text needs exactly one label"
+        );
         self.token_lists(texts)
             .iter()
             .zip(labels)
@@ -444,7 +467,9 @@ impl DocumentEncoder {
         let span = self.max_chunks * self.chunk_size;
         let full = n_tokens / span;
         let tail = n_tokens % span;
-        let keep_tail = (tail as f64) >= self.min_fill * self.chunk_size as f64;
+        let tail = f64::from(u32::try_from(tail).expect("token count fits u32"));
+        let chunk_size = f64::from(u32::try_from(self.chunk_size).expect("chunk size fits u32"));
+        let keep_tail = tail >= self.min_fill * chunk_size;
         let windows = (full + usize::from(keep_tail)).max(1);
         (0..windows).map(move |w| w * span..((w + 1) * span).min(n_tokens))
     }
@@ -458,7 +483,9 @@ impl DocumentEncoder {
         let cs = self.chunk_size;
         let n_full = window.len() / cs;
         let remainder = window.len() % cs;
-        let keep_tail = (remainder as f64) >= self.min_fill * cs as f64;
+        let remainder = f64::from(u32::try_from(remainder).expect("token count fits u32"));
+        let chunk_size = f64::from(u32::try_from(cs).expect("chunk size fits u32"));
+        let keep_tail = remainder >= self.min_fill * chunk_size;
         let n_chunks = (n_full + usize::from(keep_tail)).clamp(1, self.max_chunks);
         (0..n_chunks)
             .map(move |k| window.start + k * cs..(window.start + (k + 1) * cs).min(window.end))
@@ -616,7 +643,8 @@ mod tests {
         let enc = encoder(4, 3);
         let pad = enc.vocabulary().pad_id();
         for n in [0usize, 1, 3, 4, 5, 12, 13, 24, 25, 30, 100] {
-            let tokens: Vec<u32> = (0..n as u32).map(|i| i % 6).collect();
+            let n32 = u32::try_from(n).expect("test sizes fit u32");
+            let tokens: Vec<u32> = (0..n32).map(|i| i % 6).collect();
             let from_windows: Vec<u16> = enc
                 .split_grids(&tokens)
                 .iter()

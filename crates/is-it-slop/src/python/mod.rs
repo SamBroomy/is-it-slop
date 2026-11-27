@@ -29,6 +29,11 @@
 //! - `confidence`: calibrated margin in [0.0, 1.0]
 //! - `num_chunks` / `chunk_dispersion`: per-chunk analysis
 
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 bindings take owned Vec<String> parameters"
+)]
+
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{Predictor, Threshold, UnifiedPrediction, pipeline::PipelineError};
@@ -121,7 +126,6 @@ fn is_this_slop(py: Python<'_>, text: &str, threshold: Option<f32>) -> PyResult<
 }
 
 /// All or nothing: any blank text raises `ValueError` for the whole batch.
-#[allow(clippy::needless_pass_by_value)]
 #[pyfunction]
 #[pyo3(signature = (texts, threshold=None))]
 fn is_this_slop_batch(
@@ -142,7 +146,6 @@ fn is_this_slop_batch(
 }
 
 /// One entry per input text, in order; blank texts yield `None` instead of failing the batch.
-#[allow(clippy::needless_pass_by_value)]
 #[pyfunction]
 #[pyo3(signature = (texts, threshold=None))]
 fn is_this_slop_each(

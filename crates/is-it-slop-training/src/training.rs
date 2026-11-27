@@ -110,7 +110,7 @@ impl LrScheduler for WarmupCosine {
 
     fn load_record(&mut self, record: LrSchedulerRecord) {
         if let Some(step) = record.scalar::<u64>("step") {
-            self.step = step as usize;
+            self.step = usize::try_from(step).expect("step count fits usize");
         }
     }
 }
@@ -125,6 +125,10 @@ impl LrScheduler for WarmupCosine {
 /// serves the whole module and fits `Learner::new`. Rank >= 2 (embedding and linear weights)
 /// decays; biases and `LayerNorm` parameters do not.
 #[derive(Clone)]
+#[expect(
+    missing_debug_implementations,
+    reason = "Burn's AdamW optimizer does not implement Debug"
+)]
 pub struct RankGatedAdamW {
     decay: AdamW,
     plain: AdamW,
@@ -273,6 +277,10 @@ impl InferenceStep for TrainableClassifier {
 ///
 /// Column 1 of the `[batch, 2]` output is the raw document logit (column 0 is its negation, which
 /// [`TrainableClassifier::forward_step`] adds for the metric contract).
+///
+/// # Panics
+///
+/// Panics if the tensor data cannot be read back as a contiguous `f32` vector.
 #[must_use]
 pub fn doc_scores(output: &ClassificationOutput) -> (Vec<f32>, Vec<f32>) {
     let [n, _] = output.output.dims();
@@ -286,8 +294,12 @@ pub fn doc_scores(output: &ClassificationOutput) -> (Vec<f32>, Vec<f32>) {
             .into_data()
             .convert::<f32>()
             .try_to_vec()
-            .unwrap(),
-        logits.into_data().convert::<f32>().try_to_vec().unwrap(),
+            .expect("tensor data is contiguous and readable as f32"),
+        logits
+            .into_data()
+            .convert::<f32>()
+            .try_to_vec()
+            .expect("tensor data is contiguous and readable as f32"),
     )
 }
 
@@ -300,6 +312,7 @@ pub fn doc_scores(output: &ClassificationOutput) -> (Vec<f32>, Vec<f32>) {
 /// Burn's fallback `CliMetricsRenderer` (chosen whenever stdout is not a terminal) reports every
 /// iteration; this prints one compact line per `INTERVAL` instead. Per-epoch metrics still land
 /// in the artifact dir's metric logs and the end-of-run summary.
+#[derive(Debug)]
 pub struct ThrottledRenderer {
     last_print: Option<std::time::Instant>,
     last_items: usize,
@@ -629,7 +642,7 @@ mod tests {
             .with_hidden(16)
             .with_dropout(0.0)
             .with_spatial_dropout(0.0);
-        let pad = model_cfg.pad_id() as u16;
+        let pad = u16::try_from(model_cfg.pad_id()).expect("toy vocabulary fits u16");
 
         // The trunk consumes tokens in groups (pairs at group=2), so the generator must draw
         // train and validation docs from the same finite pair set or the toy demands
@@ -640,17 +653,21 @@ mod tests {
         let make_docs = |n: usize, seed: i64| -> Vec<EncodedDocument> {
             (0..n)
                 .map(|i| {
-                    let label = (i % 2) as i64;
+                    let label = i64::from(u8::from(i % 2 == 1));
                     let base = if label == 1 { 32 } else { 0 };
-                    let k = (i as i64 / 2 + seed) % 32;
+                    let index = i64::try_from(i).expect("test document count fits i64");
+                    let k = (index / 2 + seed) % 32;
                     // Two chunk slots: one real, one padded, so masking is exercised end to end.
                     let mut ids: Vec<u16> = (0..8)
-                        .map(|t| (base + ((k + t * 17) % 32)) as u16)
+                        .map(|t| {
+                            u16::try_from(base + ((k + t * 17) % 32))
+                                .expect("toy token ids fit u16")
+                        })
                         .collect();
                     ids.extend([pad; 8]);
                     EncodedDocument {
                         ids,
-                        label: label as f32,
+                        label: f32::from(u8::from(label == 1)),
                     }
                 })
                 .collect()

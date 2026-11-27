@@ -115,7 +115,12 @@ impl HierarchicalModelConfig {
     }
 
     /// Check the shape constraints a configuration read from a bundle may violate.
-    pub fn validate(&self) -> Result<(), ModelConfigError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelConfigError::ChunkSizeNotGrouped`] if `group` or `chunk_size` is zero, or
+    /// if `chunk_size` is not a multiple of `group`.
+    pub const fn validate(&self) -> Result<(), ModelConfigError> {
         if self.group == 0 || self.chunk_size == 0 || !self.chunk_size.is_multiple_of(self.group) {
             return Err(ModelConfigError::ChunkSizeNotGrouped {
                 chunk_size: self.chunk_size,
@@ -223,6 +228,7 @@ pub struct HierarchicalSlopClassifier {
 }
 
 /// The model's raw outputs for one batch.
+#[derive(Debug)]
 pub struct ModelOutput {
     /// Document logits, `[batch]`.
     pub doc_logits: Tensor<1>,
@@ -230,6 +236,10 @@ pub struct ModelOutput {
     pub chunk_logits: Tensor<2>,
     /// Which chunk slots are real (slot 0 always counts), `[batch, chunks]`.
     pub chunk_mask: Tensor<2, Bool>,
+}
+
+fn i64_dim(value: usize) -> i64 {
+    i64::try_from(value).expect("model dimensions fit in i64")
 }
 
 impl HierarchicalSlopClassifier {
@@ -247,7 +257,7 @@ impl HierarchicalSlopClassifier {
         // region: interleaving these view/bool chains with the matmuls splits the fuser's
         // regions and keeps `token_real` alive across the whole block (Burn performance guide —
         // group view ops, don't hold tensors across compute ops).
-        let token_real = ids.clone().not_equal_elem(self.pad_id as i64);
+        let token_real = ids.clone().not_equal_elem(i64_dim(self.pad_id));
         // Burn's Embedding has no padding_idx; zeroing pad positions after lookup is equivalent —
         // the forward sees zeros and the pad row receives no gradient (its contribution is
         // multiplied by zero).
@@ -267,7 +277,7 @@ impl HierarchicalSlopClassifier {
             .expand([b * c, hidden]);
         // Slot 0 always counts as real: a document that tokenizes to nothing still needs one
         // finite slot, or the document pools reduce over an empty set and produce NaN.
-        let slot0 = Tensor::<1, Int>::arange(0..c as i64, &device)
+        let slot0 = Tensor::<1, Int>::arange(0..i64_dim(c), &device)
             .equal_elem(0)
             .reshape([1, c])
             .expand([b, c]);
@@ -348,12 +358,12 @@ mod tests {
         let device = Device::flex();
         let cfg = HierarchicalModelConfig::new();
         let model = cfg.init(&device);
-        let pad = cfg.pad_id() as i64;
+        let pad = i64_dim(cfg.pad_id());
 
         // Two documents: one with 1.5 real chunks, one fully padded (the NaN-guard case).
         let mut data = vec![pad; 2 * 3 * cfg.chunk_size];
         for (i, v) in data.iter_mut().enumerate().take(cfg.chunk_size * 3 / 2) {
-            *v = (i % 100) as i64;
+            *v = i64_dim(i % 100);
         }
         let ids =
             Tensor::<1, Int>::from_ints(data.as_slice(), &device).reshape([2, 3, cfg.chunk_size]);

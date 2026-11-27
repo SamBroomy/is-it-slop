@@ -62,7 +62,7 @@ pub use classification::Classification;
 use cpu as backend;
 pub use error::{PipelineError, Result};
 pub use prediction::{Prediction, UnifiedPrediction};
-pub use schedule::Strategy;
+pub use schedule::{Concurrency, Strategy};
 
 use crate::model::ENCODER;
 
@@ -84,6 +84,10 @@ pub const MAX_CHUNKS_PER_DOCUMENT: usize = 256;
 /// Predict classification for a single text.
 ///
 /// Runs the complete pipeline: encode → forward → calibrate.
+///
+/// # Errors
+///
+/// Returns [`PipelineError::EmptyInput`] if `input` is blank.
 ///
 /// # Example
 ///
@@ -168,6 +172,10 @@ fn each_valid(
 ///
 /// Fails with [`PipelineError::EmptyInput`] if the slice is empty or any text is blank; use
 /// [`predict_each`] for per-text results.
+///
+/// # Errors
+///
+/// Returns [`PipelineError::EmptyInput`] if the slice is empty or any text is blank.
 ///
 /// # Example
 ///
@@ -309,10 +317,10 @@ mod tests {
         let alone: Vec<_> = texts.iter().map(|t| predict(t).ok()).collect();
         for strategy in [
             Strategy::SEQUENTIAL,
-            Strategy::new(1, true),
-            Strategy::new(2, false),
-            Strategy::new(3, true),
-            Strategy::new(usize::MAX, false),
+            Strategy::new(1, Concurrency::Concurrent),
+            Strategy::new(2, Concurrency::Sequential),
+            Strategy::new(3, Concurrency::Concurrent),
+            Strategy::new(usize::MAX, Concurrency::Sequential),
         ] {
             let grouped = predict_each_with(&texts, strategy);
             for (i, (want, got)) in alone.iter().zip(&grouped).enumerate() {

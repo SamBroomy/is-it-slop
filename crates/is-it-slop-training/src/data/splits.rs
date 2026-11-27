@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow, ensure};
 use polars::prelude::*;
 
 /// One split's documents.
+#[derive(Debug)]
 pub struct SplitData {
     /// Raw document texts.
     pub texts: Vec<String>,
@@ -20,18 +21,23 @@ pub struct SplitData {
 impl SplitData {
     /// Number of documents.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.labels.len()
     }
 
     /// Whether the split is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.labels.is_empty()
     }
 }
 
 /// Read a split parquet (e.g. `data/3.0.0/train.parquet`).
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read or decoded as parquet, or if a required column is
+/// missing or has the wrong type.
 pub fn read_split(path: &Path) -> Result<SplitData> {
     let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     // polars' own `PolarsContext` also has `with_context`, so name anyhow's explicitly.

@@ -5,12 +5,12 @@ use std::io::{self, Write};
 use super::{Scored, Sink, SinkOptions, prefix, report_error};
 use crate::cli::input::DocumentId;
 
-pub struct Score {
+pub(crate) struct Score {
     labelled: bool,
 }
 
 impl Score {
-    pub fn new(options: SinkOptions) -> Self {
+    pub(crate) const fn new(options: SinkOptions) -> Self {
         Self {
             labelled: options.labelled,
         }

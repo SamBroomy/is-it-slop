@@ -13,7 +13,7 @@ use burn::tensor::Device;
 
 /// A backend this binary can train on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
+pub(crate) enum Backend {
     /// NVIDIA GPU through CUDA.
     #[cfg(feature = "cuda")]
     Cuda,
@@ -36,7 +36,7 @@ pub enum Backend {
 impl Backend {
     /// Every backend compiled into this binary, in default-priority order.
     #[must_use]
-    pub fn available() -> Vec<Self> {
+    pub(crate) fn available() -> Vec<Self> {
         vec![
             #[cfg(feature = "cuda")]
             Self::Cuda,
@@ -54,13 +54,13 @@ impl Backend {
 
     /// The highest-priority backend compiled in.
     #[must_use]
-    pub fn best() -> Self {
+    pub(crate) fn best() -> Self {
         Self::available()[0]
     }
 
     /// The name used on the command line and in logs.
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             #[cfg(feature = "cuda")]
             Self::Cuda => "cuda",
@@ -77,7 +77,7 @@ impl Backend {
     }
 
     /// Look a backend up by name among those compiled in.
-    pub fn from_name(name: &str) -> Result<Self, String> {
+    pub(crate) fn from_name(name: &str) -> Result<Self, String> {
         Self::available()
             .into_iter()
             .find(|b| b.name() == name)
@@ -92,7 +92,7 @@ impl Backend {
 
     /// The device to run on. The first device of the backend's kind.
     #[must_use]
-    pub fn device(self) -> Device {
+    pub(crate) fn device(self) -> Device {
         match self {
             #[cfg(feature = "cuda")]
             Self::Cuda => Device::cuda(0),

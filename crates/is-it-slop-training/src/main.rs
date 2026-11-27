@@ -180,26 +180,30 @@ fn predictions(
                 .into_data()
                 .convert::<f32>()
                 .try_to_vec::<f32>()
-                .unwrap(),
+                .expect("tensor data is contiguous and readable as f32"),
         );
         out.chunk_std.extend(
             std.into_data()
                 .convert::<f32>()
                 .try_to_vec::<f32>()
-                .unwrap(),
+                .expect("tensor data is contiguous and readable as f32"),
         );
         out.real_chunks.extend(
             count
                 .into_data()
                 .convert::<f32>()
                 .try_to_vec::<f32>()
-                .unwrap(),
+                .expect("tensor data is contiguous and readable as f32"),
         );
     }
     out
 }
 
 /// `sigmoid(logit / T)` — the calibrated AI probabilities the bundle's threshold applies to.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the fitted temperature is a small positive scalar"
+)]
 fn calibrate(logits: &[f32], temperature: f64) -> Vec<f32> {
     let t = temperature as f32;
     logits

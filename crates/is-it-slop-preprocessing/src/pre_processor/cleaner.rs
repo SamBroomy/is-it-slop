@@ -34,6 +34,11 @@
 //! let cleaned = cleaner.clean("WASHINGTON — News text [1]");
 //! ```
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "every regular expression is a string literal exercised by the tests below"
+)]
+
 use std::{borrow::Cow, sync::LazyLock};
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};

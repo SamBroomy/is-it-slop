@@ -1,0 +1,15 @@
+# Clippy options shared by every crate in the workspace.
+#
+# Paired with the `[workspace.lints]` block in Cargo.toml. The strategy there is
+# "every stable group on, noisy lints named off", plus a hand-picked allowlist of
+# nursery lints (the nursery group itself is never enabled).
+
+# No bool parameters anywhere: use a two-variant enum or two methods. A private
+# helper whose call site already names the flag can use `#[expect(..., reason = "...")]`.
+max-fn-params-bools = 0
+
+# Tests are allowed to panic: that is how an assertion works. Production code is not.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true

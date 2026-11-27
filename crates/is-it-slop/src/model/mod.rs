@@ -239,14 +239,12 @@ mod tests {
     #[test]
     fn test_encoder_matches_bundle() {
         let config: serde_json::Value = serde_json::from_str(ENCODER_CONFIG).unwrap();
-        assert_eq!(
-            ENCODER.chunk_size(),
-            config["chunk_size"].as_u64().unwrap() as usize
-        );
-        assert_eq!(
-            ENCODER.vocabulary().vocab_size(),
-            config["vocab_size"].as_u64().unwrap() as usize
-        );
+        let chunk_size =
+            usize::try_from(config["chunk_size"].as_u64().unwrap()).expect("chunk_size fits usize");
+        assert_eq!(ENCODER.chunk_size(), chunk_size);
+        let vocab_size =
+            usize::try_from(config["vocab_size"].as_u64().unwrap()).expect("vocab_size fits usize");
+        assert_eq!(ENCODER.vocabulary().vocab_size(), vocab_size);
     }
 
     #[test]

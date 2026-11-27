@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use super::{Scored, Sink, report_error};
 use crate::cli::input::DocumentId;
 
-pub struct Tsv;
+pub(crate) struct Tsv;
 
 impl Sink for Tsv {
     fn emit(&mut self, out: &mut dyn Write, id: &DocumentId, scored: &Scored) -> io::Result<()> {

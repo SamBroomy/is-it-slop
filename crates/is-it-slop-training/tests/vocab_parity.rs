@@ -28,7 +28,8 @@ fn vocabulary_build_is_deterministic_against_the_fixture() {
         .expect("bundle vocabulary");
 
     let mut diffs = 0usize;
-    for token in 0..O200K_CEILING as u32 {
+    let ceiling = u32::try_from(O200K_CEILING).expect("the o200k ceiling fits u32");
+    for token in 0..ceiling {
         if built.row(token) != shipped.row(token) {
             diffs += 1;
         }

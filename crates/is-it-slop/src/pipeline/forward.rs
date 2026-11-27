@@ -7,20 +7,20 @@ use super::UnifiedPrediction;
 use crate::model::{CALIBRATION_TEMPERATURE, ENCODER, MODEL, device};
 
 /// A function that scores one group of documents; see [`run`] for the contract.
-pub type Forward = fn(&[&[u16]]) -> Vec<UnifiedPrediction>;
+pub(crate) type Forward = fn(&[&[u16]]) -> Vec<UnifiedPrediction>;
 
 /// Score a group of documents in one forward pass on the primary backend.
 ///
 /// Each document is its chunk ids, row-major `[chunks, chunk_size]`, already capped. The group
 /// is padded to its longest member with pad-id chunks, which the model masks out of every
 /// pooling step, so a document's result does not depend on what it was grouped with.
-pub fn run(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
+pub(crate) fn run(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
     run_with(&MODEL, &device(), docs)
 }
 
 /// [`run`] on the CPU backend's copy of the model.
 #[cfg(accelerated)]
-pub fn run_on_cpu(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
+pub(crate) fn run_on_cpu(docs: &[&[u16]]) -> Vec<UnifiedPrediction> {
     run_with(&crate::model::CPU_MODEL, &crate::model::cpu_device(), docs)
 }
 

@@ -30,7 +30,6 @@
 //! `STEP_BENCH_BACKEND` names one of the backends compiled in (default: the best one).
 
 #[path = "../src/backend.rs"]
-#[allow(dead_code)]
 mod backend;
 
 use std::{hint::black_box, time::Instant};
@@ -68,7 +67,9 @@ fn synthetic_batch(
             ((state >> 33) % config.vocab_size as u64) as i32
         })
         .collect();
-    let labels: Vec<f32> = (0..batch_size).map(|i| (i % 2) as f32).collect();
+    let labels: Vec<f32> = (0..batch_size)
+        .map(|i| if i % 2 == 1 { 1.0 } else { 0.0 })
+        .collect();
     let batch = Batch {
         ids: Tensor::from_data(
             TensorData::new(ids.clone(), [batch_size, max_chunks, config.chunk_size]),
@@ -96,7 +97,8 @@ fn bench(label: &str, mut iter: impl FnMut()) {
     for _ in 0..iters {
         iter();
     }
-    let per_iter = t0.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+    let iters = f64::from(u32::try_from(iters).expect("iteration count fits u32"));
+    let per_iter = t0.elapsed().as_secs_f64() * 1000.0 / iters;
     // ms per iteration is numerically the same as seconds per 1000 iterations.
     println!("{label:<10} {per_iter:>8.2} ms/iter  ({per_iter:.1} s/1000)");
 }

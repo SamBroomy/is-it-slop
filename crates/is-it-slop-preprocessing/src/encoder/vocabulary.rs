@@ -13,10 +13,11 @@ pub const O200K_CEILING: usize = 201_000;
 
 /// Maps raw o200k token ids to compact rows: `0..vocab_size` for the ranked tokens, `vocab_size`
 /// (the OOV row) for everything else. Row `vocab_size + 1` is padding, written by the encoder.
+#[derive(Debug)]
 pub struct Vocabulary {
     /// Indexed by raw token id; values are compact rows (rank or OOV).
     lut: Vec<u16>,
-    vocab_size: usize,
+    vocab_size: u16,
 }
 
 impl Vocabulary {
@@ -29,6 +30,11 @@ impl Vocabulary {
 
     /// Rank pre-tokenized documents. Ties break by first occurrence in the corpus, matching
     /// Python's `Counter.most_common` (stable sort on count over insertion order).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `vocab_size + 2` does not fit in a `u16`, or if any token id is at or above
+    /// [`O200K_CEILING`].
     #[must_use]
     pub fn from_token_lists(documents: &[Vec<u32>], vocab_size: usize) -> Self {
         assert!(
@@ -50,7 +56,7 @@ impl Vocabulary {
         let mut ranked: Vec<(u32, (u64, usize))> = counts.into_iter().collect();
         ranked.sort_by_key(|&(_, (count, first_seen))| (std::cmp::Reverse(count), first_seen));
 
-        let oov = vocab_size as u16;
+        let oov = u16::try_from(vocab_size).expect("checked above: the vocabulary fits u16");
         let mut lut = vec![oov; O200K_CEILING];
         for (rank, (token, _)) in ranked.iter().take(vocab_size).enumerate() {
             let token = *token as usize;
@@ -58,30 +64,38 @@ impl Vocabulary {
                 token < O200K_CEILING,
                 "token id {token} above the o200k ceiling"
             );
-            lut[token] = rank as u16;
+            lut[token] =
+                u16::try_from(rank).expect("rank is below the vocabulary size, which fits u16");
         }
-        Self { lut, vocab_size }
+        Self {
+            lut,
+            vocab_size: oov,
+        }
     }
 
     /// Distinct ranked rows; also the OOV row index.
     #[must_use]
     pub const fn vocab_size(&self) -> usize {
-        self.vocab_size
+        self.vocab_size as usize
     }
 
     /// The row rare tokens collapse onto.
     #[must_use]
     pub const fn oov_id(&self) -> u16 {
-        self.vocab_size as u16
+        self.vocab_size
     }
 
     /// The padding row the encoder fills grids with. Never produced by [`Self::row`].
     #[must_use]
     pub const fn pad_id(&self) -> u16 {
-        self.vocab_size as u16 + 1
+        self.vocab_size + 1
     }
 
     /// The compact row for a raw token id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `token` is at or above [`O200K_CEILING`].
     #[must_use]
     pub fn row(&self, token: u32) -> u16 {
         let token = token as usize;
@@ -94,6 +108,10 @@ impl Vocabulary {
 
     /// Write the bundle's `token_vocabulary.safetensors`: one i32 tensor `token_to_row` of length
     /// [`O200K_CEILING`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncoderError`] if the tensor cannot be built or the file cannot be written.
     pub fn save(&self, path: &Path) -> Result<(), EncoderError> {
         let data: Vec<u8> = self
             .lut
@@ -110,12 +128,21 @@ impl Vocabulary {
     }
 
     /// Load a saved vocabulary from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncoderError`] if the file cannot be read or parsed.
     pub fn load(path: &Path) -> Result<Self, EncoderError> {
         Self::from_bytes(&std::fs::read(path)?)
     }
 
     /// Parse a saved vocabulary from `token_vocabulary.safetensors` bytes (e.g. embedded in a
     /// binary). `vocab_size` is recovered as the OOV row value, the largest in the table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncoderError`] if the bytes are not a valid vocabulary table or a row is out of
+    /// range.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, EncoderError> {
         let tensors = safetensors::SafeTensors::deserialize(bytes)?;
         let view = tensors.tensor("token_to_row")?;
@@ -133,14 +160,15 @@ impl Vocabulary {
                 return Err(EncoderError::RowOutOfRange(value));
             }
             max = max.max(value);
-            lut.push(value as u16);
+            lut.push(u16::try_from(value).expect("checked in range above"));
         }
-        let vocab_size = max as usize;
+        let vocab_size = usize::try_from(max).expect("max is non-negative");
         // Same invariant `from_token_lists` asserts: the pad row (vocab_size + 1) must fit u16,
         // or `pad_id()` overflows.
         if u16::try_from(vocab_size + 2).is_err() {
             return Err(EncoderError::VocabularyTooLarge(vocab_size));
         }
+        let vocab_size = u16::try_from(vocab_size).expect("checked above");
         Ok(Self { lut, vocab_size })
     }
 }

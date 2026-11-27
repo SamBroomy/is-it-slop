@@ -50,6 +50,9 @@
 //! # Ok::<(), PipelineError>(())
 //! ```
 
+// This is the public crate: document failure modes and panics on its API.
+#![warn(clippy::missing_errors_doc, clippy::missing_panics_doc)]
+
 #[cfg(feature = "python")]
 mod python;
 
@@ -127,6 +130,10 @@ impl Threshold {
     /// Create a `Threshold`, returning `Err` if `value` is outside `[0.0, 1.0]`.
     ///
     /// Use this when the value comes from user input or configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThresholdError::OutOfRange`] if `value` is outside `[0.0, 1.0]`.
     pub fn try_new(value: f32) -> Result<Self, ThresholdError> {
         if (0.0..=1.0).contains(&value) {
             Ok(Self(value))
@@ -144,6 +151,10 @@ impl Threshold {
 impl TryFrom<f64> for Threshold {
     type Error = ThresholdError;
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "thresholds are in [0, 1]; f64 to f32 is intentional"
+    )]
     fn try_from(value: f64) -> Result<Self, Self::Error> {
         Self::try_new(value as f32)
     }
@@ -230,20 +241,24 @@ impl Predictor {
     /// - If P(AI) >= threshold: classified as AI
     /// - If P(AI) < threshold: classified as Human
     #[must_use]
-    pub fn with_threshold(mut self, threshold: Threshold) -> Self {
+    pub const fn with_threshold(mut self, threshold: Threshold) -> Self {
         self.threshold = threshold;
         self
     }
 
     /// Get the current threshold value.
     #[must_use]
-    pub fn threshold(&self) -> Threshold {
+    pub const fn threshold(&self) -> Threshold {
         self.threshold
     }
 
     /// Predict probabilities for a single text.
     ///
     /// Returns a `Prediction` containing P(Human) and P(AI).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`pipeline::PipelineError::EmptyInput`] if `text` is blank.
     pub fn predict<T: AsRef<str>>(&self, text: T) -> pipeline::Result<UnifiedPrediction> {
         pipeline::predict(text.as_ref())
     }
@@ -252,6 +267,10 @@ impl Predictor {
     ///
     /// Fails if the slice is empty or any text is blank; see [`Predictor::predict_each`] for
     /// per-text results.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`pipeline::PipelineError::EmptyInput`] if `texts` is empty or any text is blank.
     pub fn predict_batch<T: AsRef<str>>(
         &self,
         texts: &[T],
@@ -288,6 +307,10 @@ impl Predictor {
     /// Classify a single text using the configured threshold.
     ///
     /// Returns `Classification::Human` or `Classification::AI`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`pipeline::PipelineError::EmptyInput`] if `text` is blank.
     pub fn classify<T: AsRef<str>>(&self, text: T) -> pipeline::Result<Classification> {
         pipeline::predict(text.as_ref()).map(|pred| pred.classification(self.threshold))
     }
@@ -308,6 +331,10 @@ impl Predictor {
     /// Classify multiple texts using the configured threshold, all or nothing.
     ///
     /// Returns a vector of classifications, one for each input text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`pipeline::PipelineError::EmptyInput`] if `texts` is empty or any text is blank.
     pub fn classify_batch<T: AsRef<str>>(
         &self,
         texts: &[T],

@@ -100,61 +100,123 @@ strip = true
 inherits = "minimal-size"
 
 
+# Curated lint set. Every stable Clippy group is on; noisy pedantic lints are turned
+# off by name. The `nursery` group is deliberately NOT enabled: instead, the nursery
+# lints that have proven useful here are listed individually at the bottom. Shared
+# options (bool parameters, unwrap-in-tests) live in `clippy.toml`. CI turns warnings
+# into errors with `cargo clippy -- -D warnings`; do not add `#![deny(warnings)]`.
+
 [workspace.lints.rust]
-# Standard Rust lints
-missing_docs = "warn"
-# unsafe_code = "forbid"
 deprecated = "warn"
 elided_lifetimes_in_paths = "warn"
 future_incompatible = { level = "warn", priority = -1 }
+missing_debug_implementations = "warn"
+missing_docs = "warn"
 nonstandard_style = { level = "warn", priority = -1 }
 rust_2018_idioms = { level = "warn", priority = -1 }
 rust_2021_prelude_collisions = "warn"
 trivial_casts = "warn"
 trivial_numeric_casts = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "warn"
 unused_import_braces = "warn"
 unused_qualifications = "warn"
 
+[workspace.lints.cargo]
+# `dirs` and `which` are used by `cli/install_source.rs`, which is compiled only
+# when the `self-update` feature is off. Cargo's unused-dependency lint cannot see
+# that `cfg`, so it false-positives for feature sets that enable `self-update`
+# (`all-testable`). `cargo-shear` in pre-commit still catches genuinely unused deps.
+unused_dependencies = "allow"
+
 [workspace.lints.clippy]
-multiple_crate_versions = "allow"
-# But allow some pedantic lints that might be too strict
-cast_possible_wrap = "allow"
+# --- Groups: everything stable except `nursery` and `restriction`. ---
+all = { level = "warn", priority = -2 }
+cargo = { level = "warn", priority = -2 }
+complexity = { level = "warn", priority = -2 }
+correctness = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -3 }
+perf = { level = "warn", priority = -2 }
+style = { level = "warn", priority = -2 }
+suspicious = { level = "warn", priority = -2 }
+
+# --- Allowed: pedantic lints that cost more noise than they return here. ---
+module_inception = "allow" # a leaf module named after its main item is fine
+similar_names = "allow"
+# f32/f64 precision loss is expected in numeric/ML code; the dangerous
+# float-to-int truncation and sign-loss lints stay on.
 cast_precision_loss = "allow"
-cast_sign_loss = "allow"
+too_many_lines = "allow"          # long model/training functions are intentional
+unreadable_literal = "allow"      # experiment constants and model dimensions
+multiple_crate_versions = "allow" # Burn's dependency graph has duplicates
+
+# --- Extra lints from outside the enabled groups (all `restriction`). ---
+allow_attributes = "warn"                # prefer [`expect`] over `allow`
+allow_attributes_without_reason = "warn" # every suppression must say why
+clone_on_ref_ptr = "warn"                # `Rc::clone(&x)` makes cheap clones visible
+dbg_macro = "deny"
+expect_used = "allow"                    # `expect("reason")` is the sanctioned panic
+fn_params_excessive_bools = "warn"       # use an enum or two methods instead
+map_err_ignore = "warn"                  # don't drop the upstream error in `map_err`
+missing_assert_message = "warn"          # assertions say what went wrong
+# Public API only: raised to `warn` at the `is-it-slop` crate root. The support
+# crates are implementation detail, so they do not need `# Errors` / `# Panics`.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-module_name_repetitions = "allow"
-similar_names = "allow"
-too_many_lines = "allow"
-unreadable_literal = "allow"
-
-#must_use_candidate = "allow" # --fix fixes this
-cast_possible_truncation = "allow"
-return_self_not_must_use = "allow" # --fix does not fix this
-
-# Specific lints to deny (treat as errors)
-dbg_macro = "deny"
-# todo = "deny"
+panic_in_result_fn = "warn"            # a `Result` function should not also panic
+print_stdout = "allow"                 # the CLI writes its output to stdout
+print_stderr = "allow"                 # the CLI writes diagnostics to stderr
+rc_buffer = "warn"                     # `Rc<Vec<T>>` -> `Rc<[T]>`
+string_add = "warn"                    # build strings with `format!` / `push_str`
+todo = "warn"
+undocumented_unsafe_blocks = "warn"    # every `unsafe` block needs `// SAFETY:`
+multiple_unsafe_ops_per_block = "warn" # one unsafe operation per block
 unimplemented = "deny"
-#unwrap_used = "deny"
+unwrap_used = "warn"                   # tests are exempt; see `clippy.toml`
+wildcard_imports = "warn"              # preludes and `use super::*` in tests are exempt
 
-#unreadable_literal = "warn"
-needless_pass_by_value = "warn"
-redundant_else = "warn"
-
-
-# Nursery lints (experimental but useful)
+# --- Nursery lints we opt into by name (the group is off). ---
+as_ptr_cast_mut = "warn"
+branches_sharing_code = "warn"
+clear_with_drain = "warn"
+coerce_container_to_any = "warn"
+collection_is_never_read = "warn"
+debug_assert_with_mut_call = "warn"
+derive_partial_eq_without_eq = "warn"
+empty_enums = "warn"
+equatable_if_let = "warn"
+fallible_impl_from = "warn"
+future_not_send = "warn"
+iter_on_empty_collections = "warn"
+iter_on_single_items = "warn"
+iter_with_drain = "warn"
+literal_string_with_formatting_args = "warn"
+missing_const_for_fn = "warn"
+needless_collect = "warn"
+needless_pass_by_ref_mut = "warn"
+needless_type_cast = "warn"
 option_if_let_else = "warn"
-redundant_pub_crate = "warn"
+or_fun_call = "warn"
+path_buf_push_overwrite = "warn"
+read_zero_byte_vec = "warn"
+redundant_clone = "warn"
+search_is_some = "warn"
+set_contains_or_insert = "warn"
+significant_drop_in_scrutinee = "warn"
+significant_drop_tightening = "warn"
+single_option_map = "warn"
+string_lit_as_bytes = "warn"
+suspicious_operation_groupings = "warn"
+trailing_empty_array = "warn"
+trait_duplication_in_bounds = "warn"
+transmute_undefined_repr = "warn"
+tuple_array_conversions = "warn"
+type_repetition_in_bounds = "warn"
+uninhabited_references = "warn"
+unnecessary_struct_initialization = "warn"
+unused_peekable = "warn"
+unused_rounding = "warn"
 use_self = "warn"
-
-
-# Enable Clippy lints for the entire workspace
-all = { level = "warn", priority = -1 }
-cargo = { level = "warn", priority = -1 }
-complexity = { level = "warn", priority = -1 }
-correctness = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -2 }
-perf = { level = "warn", priority = -1 }
-style = { level = "warn", priority = -1 }
-suspicious = { level = "warn", priority = -1 }
+useless_let_if_seq = "warn"
+volatile_composites = "warn"
+while_float = "warn"

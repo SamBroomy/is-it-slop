@@ -43,7 +43,9 @@ pub mod output;
 pub mod self_update;
 
 use input::{Document, DocumentId, Framing, Input, SourceError};
-use output::{ColorChoice, Detail, Item, OutputFormat, RunSummary, Scored, Sink, SinkOptions};
+use output::{
+    ColorChoice, Detail, ExitPolicy, Item, OutputFormat, RunSummary, Scored, Sink, SinkOptions,
+};
 
 use crate::{Predictor, Threshold, ThresholdError, pipeline};
 
@@ -74,7 +76,8 @@ const AFTER_LONG_HELP: &str = "\
   0 if any document is AI, 1 if none are, 2 if any document could not be scored.
 ";
 
-fn output_welcome(color: bool) {
+fn output_welcome(color: ColorChoice) {
+    let color = color.enabled();
     let version = env!("CARGO_PKG_VERSION");
     let bold = |text: &str| {
         if color {
@@ -102,7 +105,7 @@ fn output_welcome(color: bool) {
 }
 
 /// Top-level commands for is-it-slop
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Manage the is-it-slop executable
     #[command(name = "self")]
@@ -110,7 +113,7 @@ pub enum Commands {
 }
 
 /// Self management namespace
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct SelfNamespace {
     /// Self subcommand to execute
     #[command(subcommand)]
@@ -118,14 +121,14 @@ pub struct SelfNamespace {
 }
 
 /// Self subcommands
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 pub enum SelfCommand {
     /// Update to the latest version
     Update,
 }
 
 /// Command-line arguments for the is-it-slop text classifier.
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(
     name = env!("CARGO_PKG_NAME"),
     author = env!("CARGO_PKG_AUTHORS"),
@@ -232,8 +235,23 @@ pub struct PrettyOptions {
 }
 
 impl PrettyOptions {
-    fn any(self) -> bool {
+    const fn any(self) -> bool {
         self.verbose || self.quiet || self.chunks
+    }
+
+    /// Resolve the mutually exclusive `--verbose` and `--quiet` flags.
+    const fn detail(self) -> Detail {
+        assert!(
+            !(self.verbose && self.quiet),
+            "clap rejects --verbose with --quiet"
+        );
+        if self.verbose {
+            Detail::Verbose
+        } else if self.quiet {
+            Detail::Quiet
+        } else {
+            Detail::Normal
+        }
     }
 }
 
@@ -245,28 +263,37 @@ const HEADING_CLASSIFICATION: &str = "Classification";
 ///
 /// Results go to stdout. Documents that cannot be scored are reported by the sink; only setup
 /// failures come back as `Err`.
+///
+/// # Errors
+///
+/// Returns an error if the output options are inconsistent or setting up the run fails.
 pub fn run(cli: &Cli) -> Result<u8> {
     if cli.output != OutputFormat::Pretty && cli.pretty.any() {
         anyhow::bail!("--verbose, --quiet and --chunks only apply to --output pretty");
     }
 
-    let color = cli.color.enabled();
     let Some(input) = Input::from_cli(cli) else {
-        output_welcome(color);
+        output_welcome(cli.color);
         return Ok(0);
     };
+    let color = cli.color.enabled();
     let mut sink = cli.output.sink(SinkOptions {
         labelled: input.is_multi(),
         color,
-        detail: Detail::from_flags(cli.pretty.verbose, cli.pretty.quiet),
+        detail: cli.pretty.detail(),
         chunks: cli.pretty.chunks,
     });
     let predictor = Predictor::default().with_threshold(cli.threshold);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
+    let exit_policy = if cli.exit_status {
+        ExitPolicy::Classification
+    } else {
+        ExitPolicy::Standard
+    };
     match drive(&input, &predictor, sink.as_mut(), &mut out) {
-        Ok(summary) => Ok(summary.exit_code(cli.exit_status)),
+        Ok(summary) => Ok(summary.exit_code(exit_policy)),
         // A consumer such as `head` closed the pipe: it got what it asked for.
         Err(e) if is_broken_pipe(&e) => Ok(0),
         Err(e) => Err(e),

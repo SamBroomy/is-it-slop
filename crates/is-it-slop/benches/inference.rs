@@ -19,7 +19,11 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use is_it_slop::{Predictor, model::BACKEND, pipeline::Strategy};
+use is_it_slop::{
+    Predictor,
+    model::BACKEND,
+    pipeline::{Concurrency, Strategy},
+};
 
 const WINDOWS: [usize; 9] = [1, 4, 8, 16, 32, 64, 128, 256, 512];
 const DOCS_PER_FORWARD: [usize; 8] = [1, 4, 16, 32, 64, 128, 256, 512];
@@ -49,6 +53,10 @@ fn parse_corpus(jsonl: &str, what: &str) -> Vec<String> {
     docs
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "bench helper; full vs. sample corpus is named at both call sites"
+)]
 fn corpus(full: bool) -> Vec<String> {
     let mut docs = std::env::var("IS_IT_SLOP_BENCH_CORPUS").ok().map_or_else(
         || parse_corpus(include_str!("corpus.jsonl"), "benches/corpus.jsonl"),
@@ -75,7 +83,9 @@ fn warmed(corpus: &[String]) -> Predictor {
     // Small and large calls, so an accelerated build loads both its models.
     black_box(predictor.predict_each(&corpus[..1]));
     black_box(predictor.predict_each(corpus));
-    black_box(predictor.predict_each_with(corpus, Strategy::new(usize::MAX, false)));
+    black_box(
+        predictor.predict_each_with(corpus, Strategy::new(usize::MAX, Concurrency::Sequential)),
+    );
     predictor
 }
 
@@ -131,9 +141,16 @@ fn strategy(c: &mut Criterion) {
         .iter()
         .filter(|&&docs| docs <= corpus.len())
     {
-        for concurrent in [false, true] {
-            let strategy = Strategy::new(docs, concurrent);
-            let id = format!("{docs}x{}", if concurrent { "par" } else { "seq" });
+        for concurrency in [Concurrency::Sequential, Concurrency::Concurrent] {
+            let strategy = Strategy::new(docs, concurrency);
+            let id = format!(
+                "{docs}x{}",
+                if concurrency == Concurrency::Concurrent {
+                    "par"
+                } else {
+                    "seq"
+                }
+            );
             group.bench_with_input(
                 BenchmarkId::from_parameter(id),
                 &strategy,

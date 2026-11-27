@@ -1,5 +1,10 @@
 //! End-to-end tests of the `is-it-slop` binary: input handling, output formats, exit status.
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "integration tests fail through panicking assertions"
+)]
+
 use std::{
     fmt::Write as _,
     io::Write,
