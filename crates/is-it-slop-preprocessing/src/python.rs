@@ -18,11 +18,24 @@ fn texts(iterable: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
 
 /// Clean texts with the training-time cleaner (the one the shipped model's data went through).
 ///
-/// A text that cleans to nothing comes back as an empty string.
+/// Markdown markers are stripped (the words stay) unless `strip_markdown` is false, which exists
+/// only for comparison experiments. A text that cleans to nothing comes back as an empty string.
 #[pyfunction]
-fn clean_for_training(py: Python<'_>, iterable: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+#[pyo3(signature = (iterable, *, strip_markdown=true))]
+fn clean_for_training(
+    py: Python<'_>,
+    iterable: &Bound<'_, PyAny>,
+    strip_markdown: bool,
+) -> PyResult<Vec<String>> {
     let texts = texts(iterable)?;
-    Ok(py.detach(|| crate::pre_processor::text_cleaner_for_training().clean_batch(&texts)))
+    Ok(py.detach(|| {
+        let cleaner = if strip_markdown {
+            crate::pre_processor::text_cleaner_for_training()
+        } else {
+            crate::pre_processor::text_cleaner_for_training_keeping_markdown()
+        };
+        cleaner.clean_batch(&texts)
+    }))
 }
 
 /// Number of `o200k_base` tokens in each text.

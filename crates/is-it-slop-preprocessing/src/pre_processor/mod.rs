@@ -7,5 +7,8 @@
 //! model's dynamic chunk axis takes arbitrarily many chunks per document.
 mod cleaner;
 mod tokenizer;
-pub use cleaner::{TextCleaner, text_cleaner_for_inference, text_cleaner_for_training};
+pub use cleaner::{
+    TextCleaner, text_cleaner_for_inference, text_cleaner_for_training,
+    text_cleaner_for_training_keeping_markdown,
+};
 pub use tokenizer::{token_len, tokenize};

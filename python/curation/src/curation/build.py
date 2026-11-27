@@ -13,6 +13,8 @@ from loguru import logger
 
 from . import stats
 from .balance import balance
+from .features import COLUMNS as FEATURE_COLUMNS
+from .features import add_features
 from .guards import add_keys, apply_guards, clean
 from .loaders import load_source, missing_credentials
 from .select import PROPORTIONAL, SPLITS, assign_splits, key_rows
@@ -24,7 +26,7 @@ if TYPE_CHECKING:
 
 DISABLED = "disabled in sources.toml"
 
-OUTPUT_COLUMNS = ("text", "label", "dataset", "generator", "domain", "attack", "doc_id", "split")
+OUTPUT_COLUMNS = ("text", "label", "dataset", "generator", "domain", "attack", "doc_id", "split", *FEATURE_COLUMNS)
 
 
 def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFrame:
@@ -43,7 +45,8 @@ def pick_source(source: Source, config: Config, limit: int | None) -> pl.DataFra
         .unique(subset=["doc", "label"], keep="first", maintain_order=True)
         .drop("doc")
     )
-    return clean(picked, markdown=config.strip_markdown, trim=source.trim_fragments)
+    # Style features are measured on the text as collected, so the markdown the cleaner removes is still counted.
+    return clean(add_features(picked), strip_markdown=config.strip_markdown, trim=source.trim_fragments)
 
 
 def _balance(df: pl.DataFrame, config: Config) -> tuple[pl.DataFrame, dict[str, Any] | None]:

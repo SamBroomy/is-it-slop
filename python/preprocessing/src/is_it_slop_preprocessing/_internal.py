@@ -17,17 +17,19 @@ if TYPE_CHECKING:
 __all__ = ["__version__", "clean_for_training", "count_tokens"]
 
 
-def clean_for_training(texts: Iterable[str]) -> list[str]:
+def clean_for_training(texts: Iterable[str], *, strip_markdown: bool = True) -> list[str]:
     """Clean `texts` with the training-time cleaner, in parallel.
 
     Args:
         texts: Raw texts (any iterable of strings, e.g. a list or a polars Series).
+        strip_markdown: Remove markdown markers (the words stay), as the shipped cleaner does.
+            False exists only for comparison experiments.
 
     Returns:
         list[str]: One cleaned text per input, in order. A text that cleans to nothing is "".
 
     """
-    return _clean_for_training(texts)
+    return _clean_for_training(texts, strip_markdown=strip_markdown)
 
 
 def count_tokens(texts: Iterable[str]) -> list[int]:

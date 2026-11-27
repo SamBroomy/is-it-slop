@@ -51,6 +51,8 @@ enum Command {
     Train(TrainArgs),
     /// Re-score a trained bundle's shrunk weight forms (f16 roundtrip, Q8) on validation.
     Evaluate(EvaluateArgs),
+    /// Score parquet splits with a trained bundle and write one calibrated AI probability per row.
+    Score(ScoreArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -73,6 +75,11 @@ struct TrainArgs {
     /// Rows per split, for smoke runs.
     #[arg(long)]
     limit: Option<usize>,
+    /// Epoch budget (default: the frozen recipe's 30). The cosine schedule follows it, so a
+    /// different value is a different, shorter recipe: only for quick comparisons between
+    /// datasets.
+    #[arg(long)]
+    epochs: Option<usize>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -86,6 +93,22 @@ struct EvaluateArgs {
     /// Rows from the validation split, for smoke runs.
     #[arg(long)]
     limit: Option<usize>,
+}
+
+#[derive(clap::Args, Debug)]
+struct ScoreArgs {
+    /// The trained bundle to score with (weights, configs, vocabulary, temperature).
+    #[arg(long)]
+    artifact_dir: PathBuf,
+    /// Directory holding the split parquets.
+    #[arg(long)]
+    data_dir: PathBuf,
+    /// Splits to score, comma separated.
+    #[arg(long, value_delimiter = ',', default_value = "test,holdout")]
+    splits: Vec<String>,
+    /// Where `<split>.scores.txt` files land (one calibrated probability per row, in row order).
+    #[arg(long)]
+    out_dir: PathBuf,
 }
 
 mod backend;
@@ -112,6 +135,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Train(args) => launch(&args, backend.name(), &backend.device()),
         Command::Evaluate(args) => evaluate(&args, &backend.device()),
+        Command::Score(args) => run_score(&args, &backend.device()),
     }
 }
 
@@ -370,7 +394,10 @@ fn launch(args: &TrainArgs, backend: &str, device: &Device) -> Result<()> {
         "training examples after long-document splitting"
     );
 
-    let config = TrainingConfig::new().with_seed(args.seed);
+    let mut config = TrainingConfig::new().with_seed(args.seed);
+    if let Some(epochs) = args.epochs {
+        config = config.with_epochs(epochs);
+    }
     let model_config = HierarchicalModelConfig::new()
         .with_vocab_size(args.vocab_size)
         .with_embed_dim(args.embed_dim);
@@ -613,5 +640,62 @@ fn evaluate(args: &EvaluateArgs, device: &Device) -> Result<()> {
     std::fs::write(&results_path, serde_json::to_string_pretty(&doc)?)
         .with_context(|| format!("saving {}", results_path.display()))?;
     println!("artifact_checks written to {}", results_path.display());
+    Ok(())
+}
+
+// --------------------------------------------------------------------------------------------
+// The `score` subcommand
+// --------------------------------------------------------------------------------------------
+
+/// Score whole split parquets with a trained bundle: `sigmoid(logit / T)` per row, in row order,
+/// so any analysis (per source, per generator) can join the scores back onto the parquet.
+fn run_score(args: &ScoreArgs, device: &Device) -> Result<()> {
+    use std::fmt::Write as _;
+
+    use burn::store::{ModuleSnapshot, SafetensorsStore};
+
+    let dir = &args.artifact_dir;
+    let model_config = HierarchicalModelConfig::load(dir.join("model_config.json"))
+        .with_context(|| format!("loading model_config.json from {}", dir.display()))?;
+    model_config
+        .validate()
+        .context("model_config.json in the artifact dir")?;
+    let vocabulary = Vocabulary::load(&dir.join("token_vocabulary.safetensors"))
+        .context("loading the bundle vocabulary")?;
+    let encoder = DocumentEncoder::new(vocabulary);
+    let batcher = SlopBatcher {
+        max_chunks: encoder.max_chunks(),
+        chunk_size: encoder.chunk_size(),
+    };
+    let mut model = model_config.init(device);
+    let mut store = SafetensorsStore::from_file(dir.join("model.safetensors"));
+    model
+        .load_from(&mut store)
+        .context("loading model.safetensors")?;
+    let temperature: f64 = std::fs::read_to_string(dir.join("calibration_temperature.txt"))
+        .context("reading calibration_temperature.txt")?
+        .trim()
+        .parse()
+        .context("parsing the temperature")?;
+
+    std::fs::create_dir_all(&args.out_dir)?;
+    for name in &args.splits {
+        let split = load(&args.data_dir, None, name)?;
+        let encoded = encoder.encode_batch(&split.texts, &split.labels);
+        let p = predictions(&model, &batcher, &encoded, device);
+        let probs = calibrate(&p.logits, temperature);
+        let mut body = String::new();
+        for x in &probs {
+            writeln!(body, "{x}")?;
+        }
+        let path = args.out_dir.join(format!("{name}.scores.txt"));
+        std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+        println!(
+            "{name}: {} rows, AUC {:.4} -> {}",
+            probs.len(),
+            roc_auc(&p.labels, &p.logits),
+            path.display()
+        );
+    }
     Ok(())
 }

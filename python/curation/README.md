@@ -4,7 +4,7 @@ Builds the human/AI text dataset the model is trained and evaluated on, from the
 listed in [`src/curation/sources.toml`](src/curation/sources.toml).
 
 ```sh
-just curation::build 5.1.0       # data/5.1.0/{train,test,validation,holdout}.parquet + dataset_metadata.json
+just curation::build 5.3.0       # data/5.3.0/{train,test,validation,holdout}.parquet + dataset_metadata.json
 just curation::sources           # every source and whether it can be read (credentials)
 just curation::test              # offline tests
 ```
@@ -31,26 +31,45 @@ incomplete and which variable unlocks which source; `--strict` fails instead.
    (below) are applied here, before anything is hashed.
 2. Rows are picked *before* any text is held in memory: a first pass hashes each row and ranks
    rows within each label. `take` says how many rows of the source to use; `[settings]` cuts them into
-   train / test / validation (70 / 15 / 15) **in the same proportions for every source**, so each
-   split has the same mix of sources, domains and generators. Rows that share a `group` (variants of one
+   train / test / validation (70 / 15 / 15) **inside every (label, domain, generator) cell of every
+   source**, so each split has the same mix of sources, domains and generators. Rows that share a `group` (variants of one
    source document, the answers to one question) rank together and land in the same split.
-3. Only the picked rows are materialised and cleaned with the Rust training cleaner
-   (`is_it_slop_preprocessing`).
+3. Only the picked rows are materialised. Their style features are measured (see "Style features"), then
+   they are cleaned with the Rust training cleaner (`is_it_slop_preprocessing`), which also strips markdown.
 4. Exact duplicates, label conflicts and normalised or shared-prefix overlap between splits are
    removed with joins; `dataset_metadata.json` records what each guard removed.
 
 ### Splits and holdout
 
 Every output file has a `split` column, so the four files can be concatenated into one table and cut again.
-`train`, `test` and `validation` are 70/15/15 of every source and label. The `holdout` is never trained on or
-tuned against, and comes from two places:
+`train`, `test` and `validation` are 70/15/15 of every source, stratified by label, domain and generator.
 
-- a source with `holdout = true` goes there whole (small benchmark sets with named current models);
-- a source with `holdout_each = n` reserves `n` rows of each label (at most 10% of the source) before the
-  rest is split, so the holdout has a small, varied slice of every domain and generator.
+The `holdout` is what the model has never seen, in any form. It is therefore **not** a slice of the training
+sources (that would only be a second test set); it is made of things withheld whole:
+
+- `holdout = true`: the whole source goes to the holdout (an unseen source or domain). `take` can limit it.
+- `holdout_generators = ["model", ...]`: every row written by these models is withheld from training. Up to
+  `holdout_cap` rows of each go to the holdout, with as many human rows of the same source so the block has
+  both classes; the other rows of those models are dropped, never trained on.
 
 The overlap guards treat the holdout as the last split, so a holdout row that repeats or closely resembles
-any training row is dropped.
+any training row is dropped. `dataset` and `generator` in `holdout.parquet` say which block a row belongs to.
+
+### Markdown
+
+The Rust cleaner removes markdown markers (headings, `**bold**`, list bullets, code fences, table bars,
+block quotes) and keeps the words. Markdown is a habit of chat interfaces and prompts, not a property of the
+words, so a model that learned it would flag any formatted human text and miss any plain AI text. The same
+cleaner runs at inference, so train and inference agree. `--keep-markdown` builds the comparison dataset
+without stripping (an experiment only: a model trained on it must be run without the stripping).
+
+### Style features
+
+Every row carries about 35 `f_*` columns (Float32): length, sentence and word shape, vocabulary variety
+(type-token ratio), punctuation habits, markdown counts, voice (first/second person, contractions), and the
+first and last character classes (`curation.features`). They are measured on the text as collected, after the
+source's repairs and before the cleaner, so markdown is still counted. Nothing trains on them (the Rust
+trainer reads `text` and `label`); they are there for analysis, stylometry models and deciding what to keep.
 
 ### Balancing formatting
 
@@ -83,8 +102,8 @@ quotes, non-ASCII, spaced punctuation, a lowercase start, the final punctuation)
 build: `format_leaks` in `dataset_metadata.json` gives each feature's rate per class and its AUC as a
 one-feature classifier, and lists every source in which human and AI text differ by 35 points or more.
 Inside one source the writing should be the only difference, so a flagged feature is a collection
-artefact the model could learn instead. The cleaner (`is_it_slop_preprocessing`) already removes some
-formatting; what it leaves is what this report shows.
+artefact the model could learn instead. The report is computed on the cleaned text, so it shows what is
+left after the cleaner (including its markdown stripping).
 
 ## Adding a source
 

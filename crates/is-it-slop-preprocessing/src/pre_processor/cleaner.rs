@@ -69,6 +69,8 @@ struct UniversalCleaner {
     // HTML tags
     br_tag: Regex,
     common_tags: Regex,
+    // Markdown: markers go, the words stay (`None` keeps markdown, for comparison experiments)
+    markdown: Option<[(Regex, &'static str); 12]>,
     // Whitespace normalization
     multiple_spaces: Regex,
     multiple_newlines: Regex,
@@ -76,9 +78,42 @@ struct UniversalCleaner {
     newline_space: Regex,
 }
 
+/// What markdown leaves behind once its markers are removed: each step deletes the markers and
+/// keeps the words. Order matters (fences before inline code, bold before italics).
+const MARKDOWN_STEPS: [(&str, &str); 12] = [
+    (r"(?m)^[ \t]*```[A-Za-z0-9_+-]*[ \t]*$\n?", ""), // code fences
+    (r"`([^`\n]+)`", "${1}"),                         // inline code
+    (r"(?m)^[ \t]*#{1,6}[ \t]+", ""),                 // headings
+    (r"(?m)^[ \t]*>[ \t]?", ""),                      // block quotes
+    (
+        r"(?m)^[ \t]*\|?(?:[ \t]*:?-{3,}:?[ \t]*\|)+[ \t]*:?-*:?[ \t]*$\n?",
+        "",
+    ), // table rules
+    (r"(?m)^([ \t]*)\|[ \t]*", "${1}"),               // table row starts
+    (r"[ \t]*\|[ \t]*", " "),                         // table cell bars
+    (r"(?m)^[ \t]*(?:[-*\u{2022}+]|\d+[.)])[ \t]+", ""), // list markers
+    (r"\*\*\*([^*\n]+)\*\*\*", "${1}"),               // bold italic
+    (r"\*\*([^*\n]+)\*\*", "${1}"),                   // bold
+    (r"__([^_\n]+)__", "${1}"),                       // bold (underscores)
+    (r"(?:^|[ \t(])\*([^*\s][^*\n]*?)\*", " ${1}"),   // italics
+];
+
 impl UniversalCleaner {
+    /// The cleaner that ships: markdown is stripped.
     fn new() -> Self {
+        let steps = MARKDOWN_STEPS
+            .map(|(pattern, replacement)| (Regex::new(pattern).unwrap(), replacement));
+        Self::build(Some(steps))
+    }
+
+    /// The same cleaner without markdown stripping, for comparison experiments.
+    fn keeping_markdown() -> Self {
+        Self::build(None)
+    }
+
+    fn build(markdown: Option<[(Regex, &'static str); 12]>) -> Self {
         Self {
+            markdown,
             // Encoding artifacts
             zero_width_spaces: Regex::new(r"[\u{200B}-\u{200D}\u{FEFF}]").unwrap(),
             non_breaking_space: Regex::new(r"\u{00A0}").unwrap(),
@@ -140,6 +175,11 @@ impl UniversalCleaner {
         apply!(self.partial_quote, "\"");
         apply!(self.br_tag, " ");
         apply!(self.common_tags, "");
+        if let Some(steps) = &self.markdown {
+            for (regex, replacement) in steps {
+                apply!(regex, *replacement);
+            }
+        }
         apply!(self.multiple_spaces, " ");
         apply!(self.multiple_newlines, "\n\n");
         apply!(self.space_newline, "\n");
@@ -409,6 +449,11 @@ static INFERENCE_CLEANER: LazyLock<TextCleaner> = LazyLock::new(|| TextCleaner {
     dataset_artifacts: None,
 });
 
+static TRAINING_CLEANER_KEEPING_MARKDOWN: LazyLock<TextCleaner> = LazyLock::new(|| TextCleaner {
+    universal: UniversalCleaner::keeping_markdown(),
+    dataset_artifacts: Some(DATASET_ARTIFACT_CLEANER.clone()),
+});
+
 /// Create a `TextCleaner` for inference
 #[must_use]
 pub fn text_cleaner_for_inference() -> &'static TextCleaner {
@@ -420,6 +465,16 @@ pub fn text_cleaner_for_inference() -> &'static TextCleaner {
 pub fn text_cleaner_for_training() -> &'static TextCleaner {
     &TRAINING_CLEANER
 }
+
+/// The training cleaner without markdown stripping.
+///
+/// Only for comparison experiments: a model trained on text cleaned this way must be run on text
+/// cleaned this way, and the shipped inference cleaner strips markdown.
+#[must_use]
+pub fn text_cleaner_for_training_keeping_markdown() -> &'static TextCleaner {
+    &TRAINING_CLEANER_KEEPING_MARKDOWN
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +485,38 @@ mod tests {
 
     mod universal_cleaner {
         use super::*;
+
+        fn strip(text: &str) -> String {
+            UniversalCleaner::new().clean(text.into()).into_owned()
+        }
+
+        #[test]
+        fn markdown_markers_go_and_words_stay() {
+            assert_eq!(
+                strip("## Heading\n\nSome **bold** and *italic* text."),
+                "Heading\n\nSome bold and italic text."
+            );
+            assert_eq!(
+                strip("- one\n- two\n1. three\n2) four"),
+                "one\ntwo\nthree\nfour"
+            );
+            assert_eq!(strip("Use `cargo build` now"), "Use cargo build now");
+            assert_eq!(strip("```rust\nlet x = 1;\n```\nDone"), "let x = 1;\nDone");
+            assert_eq!(strip("> quoted\n> more"), "quoted\nmore");
+            assert_eq!(strip("| a | b |\n|---|---|\n| 1 | 2 |"), "a b\n1 2 ");
+        }
+
+        #[test]
+        fn markdown_can_be_kept_for_experiments() {
+            let keep = UniversalCleaner::keeping_markdown();
+            assert_eq!(keep.clean("**bold**".into()), "**bold**");
+        }
+
+        #[test]
+        fn plain_text_is_untouched_by_markdown_steps() {
+            let text = "2 * 3 = 6, and a - b is fine. Cost: 5-10 dollars.";
+            assert_eq!(strip(text), text);
+        }
 
         #[test]
         fn test_zero_width_spaces() {
@@ -891,26 +978,22 @@ mod tests {
         }
 
         #[test]
-        fn test_preserves_legitimate_content() {
+        fn test_strips_markdown_but_keeps_the_words() {
             let cleaner = text_cleaner_for_inference();
 
-            // Should preserve markdown-like formatting (legitimate AI signals)
-            let input = "## Introduction\n\nThis is **important** text.";
+            // Markdown is a formatting habit, not a property of the words, so the markers go
+            // (the model must not learn "uses bold" as "is AI"); the words stay.
             assert_eq!(
-                cleaner.clean(input),
-                "## Introduction\n\nThis is **important** text."
+                cleaner.clean("## Introduction\n\nThis is **important** text."),
+                "Introduction\n\nThis is important text."
             );
-
-            // Should preserve bullet points
-            let input = "- First point\n- Second point";
-            assert_eq!(cleaner.clean(input), "- First point\n- Second point");
-
-            // Should preserve legitimate numbered lists in content
-            let input = "Here are 3 steps:\n1. Do this\n2. Then this";
-            // Note: Training mode would strip the numbers at line start
             assert_eq!(
-                cleaner.clean(input),
-                "Here are 3 steps:\n1. Do this\n2. Then this"
+                cleaner.clean("- First point\n- Second point"),
+                "First point\nSecond point"
+            );
+            assert_eq!(
+                cleaner.clean("Here are 3 steps:\n1. Do this\n2. Then this"),
+                "Here are 3 steps:\nDo this\nThen this"
             );
         }
 

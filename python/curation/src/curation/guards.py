@@ -8,22 +8,22 @@ from __future__ import annotations
 import polars as pl
 from is_it_slop_preprocessing import clean_for_training
 
-from curation.loaders import has_whole_ends, strip_markdown, trim_fragments
+from curation.loaders import has_whole_ends, trim_fragments
 from curation.select import SPLITS
 
 # Lower-cased with whitespace collapsed: "Same  text" and "same text" are one document.
 NORMALISED = pl.col("text").str.to_lowercase().str.replace_all(r"\s+", " ").str.strip_chars()
 
 
-def clean(df: pl.DataFrame, *, markdown: bool = False, trim: str | None = None) -> pl.DataFrame:
-    """Run the Rust training cleaner over `text`; with `markdown`, also strip the markdown it leaves.
+def clean(df: pl.DataFrame, *, strip_markdown: bool = True, trim: str | None = None) -> pl.DataFrame:
+    """Run the Rust training cleaner over `text`; it removes markdown markers unless `strip_markdown` is false.
 
     The cleaner can itself leave a fragment (it removes some leading phrases), so `trim`, a
     source's `trim_fragments`, is applied again here. Rows that clean to nothing are dropped.
     """
-    df = df.with_columns(pl.Series("text", clean_for_training(df["text"]), dtype=pl.Utf8))
-    if markdown:
-        df = df.with_columns(strip_markdown(pl.col("text")))
+    df = df.with_columns(
+        pl.Series("text", clean_for_training(df["text"], strip_markdown=strip_markdown), dtype=pl.Utf8)
+    )
     if trim:
         df = df.with_columns(trim_fragments(pl.col("text"), trim).str.strip_chars()).filter(has_whole_ends(trim))
     return df.filter(pl.col("text").str.len_chars() > 0)

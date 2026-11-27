@@ -195,6 +195,56 @@ def pairs(source: Source) -> pl.LazyFrame:
     )
 
 
+# Human text that a released benchmark withholds, recovered from the public original it was drawn from.
+SCRUPLES = "tasksource/scruples"  # r/AmItheAsshole posts up to 2018
+ELI5 = "vincentmin/eli5_rlhf"  # r/explainlikeimfive questions and answers up to 2019
+
+
+@loader("recovered_human")
+def recovered_human(source: Source) -> pl.LazyFrame:
+    """Read the human half of a benchmark that lists its human rows but withholds their text.
+
+    Params: `repo` and `files` (the benchmark: rows with `label`, `q_id`, `words` and, for ELI5, `score`),
+    `recover` (`scruples` or `eli5`, the public original to take the text from).
+
+    A row is only recovered when the original agrees with the benchmark's metadata: for AITA the post
+    with that id must have the recorded word count, for ELI5 the answer to that question must have the
+    recorded word count and score. Anything that does not match exactly is left out.
+    """
+    repo = source.params["repo"]
+    paths = [download(repo, name) for name in expand(repo, source.params["files"])]
+    eli5 = source.params["recover"] == "eli5"
+    meta = (
+        scan_files(paths, ["q_id", "label", "words", *(["score"] if eli5 else [])])
+        .filter(pl.col("label") == "human")
+        .select("q_id", pl.col("words").cast(pl.Int64), *([pl.col("score").cast(pl.Int64)] if eli5 else []))
+    )
+    words = pl.col("text").str.count_matches(r"\S+")
+    if not eli5:
+        splits = ("train", "dev", "test")
+        posts = scan_files(
+            [download(SCRUPLES, f"{name}.scruples-anecdotes.jsonl") for name in splits], ["post_id", "text"]
+        )
+        found = posts.rename({"post_id": "q_id"}).with_columns(words=words).join(meta, on=["q_id", "words"])
+    else:
+        ids = meta.select("q_id").collect()["q_id"].to_list()
+        shards = [download(ELI5, name) for name in repo_files(ELI5) if name.endswith(".parquet")]
+        answers = (
+            scan_files(shards)
+            .select("q_id", "answers")
+            .filter(pl.col("q_id").is_in(ids))
+            .unique(subset="q_id", keep="first", maintain_order=False)
+            .select(
+                "q_id",
+                text=pl.col("answers").struct.field("text"),
+                score=pl.col("answers").struct.field("score").cast(pl.List(pl.Int64)),
+            )
+            .explode("text", "score")
+        )
+        found = answers.with_columns(words=words).join(meta, on=["q_id", "words", "score"])
+    return found.select("text", "q_id")
+
+
 # --------------------------------------------------------------------------------------------
 # Chat arena datasets: the assistant turns are the AI text
 # --------------------------------------------------------------------------------------------
@@ -457,28 +507,6 @@ def has_whole_ends(where: str) -> pl.Expr:
     if where in {"end", "both"}:
         keep &= pl.col("text").str.contains(r"[.!?\"')\]]$")
     return keep
-
-
-def strip_markdown(text: pl.Expr) -> pl.Expr:
-    """Remove the markdown that the Rust cleaner leaves behind: markers go, the words stay."""
-    steps = (
-        (r"(?m)^[ \t]*```[A-Za-z0-9_+-]*[ \t]*$\n?", ""),  # code fences
-        (r"`([^`\n]+)`", "${1}"),  # inline code
-        (r"(?m)^[ \t]*#{1,6}[ \t]+", ""),  # headings
-        (r"(?m)^[ \t]*>[ \t]?", ""),  # block quotes
-        (r"(?m)^[ \t]*\|?(?:[ \t]*:?-{3,}:?[ \t]*\|)+[ \t]*:?-*:?[ \t]*$\n?", ""),  # table separator rows
-        (r"(?m)^([ \t]*)\|[ \t]*", "${1}"),  # table row starts
-        (r"[ \t]*\|[ \t]*", " "),  # table cell bars
-        (r"(?m)^[ \t]*(?:[-*\u2022+]|\d+[.)])[ \t]+", ""),  # list markers
-        (r"\*\*\*([^*\n]+)\*\*\*", "${1}"),
-        (r"\*\*([^*\n]+)\*\*", "${1}"),  # bold
-        (r"__([^_\n]+)__", "${1}"),
-        (r"(?:^|[ \t(])\*([^*\s][^*\n]*?)\*", " ${1}"),  # italics
-        (r"\n{3,}", "\n\n"),
-    )
-    for pattern, replacement in steps:
-        text = text.str.replace_all(pattern, replacement)
-    return text.str.strip_chars()
 
 
 def flatten_paragraphs(text: pl.Expr) -> pl.Expr:

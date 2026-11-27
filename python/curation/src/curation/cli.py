@@ -34,9 +34,9 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--only", help="comma-separated source names to build")
     run.add_argument("--limit-per-source", type=int, help="read only the first N rows of every source (quick runs)")
     run.add_argument(
-        "--strip-markdown",
+        "--keep-markdown",
         action="store_true",
-        help="also strip the markdown the cleaner leaves behind (an experiment: the shipped cleaner does not)",
+        help="do not strip markdown (comparison experiments only: the shipped cleaner strips it)",
     )
     run.add_argument(
         "--balance",
@@ -62,8 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config or DEFAULT_CONFIG)
     if args.command == "build" and args.balance:
         config = replace(config, balance=args.balance)
-    if args.command == "build" and args.strip_markdown:
-        config = replace(config, strip_markdown=True)
+    if args.command == "build" and args.keep_markdown:
+        config = replace(config, strip_markdown=False)
     if args.command == "sources":
         for source in config.sources:
             status = "disabled" if not source.enabled else missing_credentials(source.requires) or "ok"

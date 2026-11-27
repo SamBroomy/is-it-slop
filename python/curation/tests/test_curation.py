@@ -10,6 +10,8 @@ import pytest
 from curation.balance import balance
 from curation.build import build
 from curation.config import Config, Quota, Source
+from curation.features import COLUMNS as FEATURE_COLUMNS
+from curation.features import add_features
 from curation.guards import add_keys, apply_guards, clean
 from curation.loaders import (
     ascii_quotes,
@@ -19,7 +21,6 @@ from curation.loaders import (
     parse_conversation,
     scan_files,
     standardise,
-    strip_markdown,
     trim_fragments,
     unwrap_lines,
 )
@@ -553,15 +554,29 @@ def test_ascii_quotes() -> None:
     assert pl.select(ascii_quotes(pl.lit("\u201cIt\u2019s fine,\u201d she said."))).item() == '"It\'s fine," she said.'
 
 
-def test_strip_markdown_removes_markers_and_keeps_the_words() -> None:
+def test_the_rust_cleaner_strips_markdown_and_keeps_the_words() -> None:
     text = "# Title\n\n**Bold** and *italic* and `code`.\n\n- first\n- second\n1. numbered\n\n| a | b |\n|---|---|\n| 1 | 2 |"
-    out = pl.select(strip_markdown(pl.lit(text))).item()
+    df = pl.DataFrame({"text": [text, "math: 5 * 3 = 15"], "label": [1, 0]})
+    out = clean(df)["text"].to_list()
     for marker in ("#", "**", "`", "|", "---"):
-        assert marker not in out
+        assert marker not in out[0]
     for word in ("Title", "Bold", "italic", "code", "first", "second", "numbered"):
-        assert word in out
-    assert "- first" not in out
-    assert "5 * 3 = 15" in pl.select(strip_markdown(pl.lit("math: 5 * 3 = 15"))).item()
+        assert word in out[0]
+    assert out[1] == "math: 5 * 3 = 15"
+    assert "**Bold**" in clean(df, strip_markdown=False)["text"][0]
+
+
+def test_features_count_markdown_before_the_cleaner_removes_it() -> None:
+    df = pl.DataFrame({
+        "text": ["# Title\n\nSome **bold** words here, and more.", "Plain words only."],
+        "label": [1, 0],
+    })
+    out = add_features(df)
+    assert out.columns[2:] == list(FEATURE_COLUMNS)
+    assert out["f_md_bold"][0] > 0
+    assert out["f_md_heading"][0] > 0
+    assert out["f_md_bold"][1] == 0
+    assert all(dtype == pl.Float32 for dtype in out.schema.values() if dtype not in {pl.Utf8, pl.Int64})
 
 
 def test_clean_trims_a_fragment_the_cleaner_leaves_behind() -> None:
@@ -582,17 +597,48 @@ def test_normalise_breaks_and_ascii_punctuation() -> None:
     assert out["text"].to_list() == ['One-two "quoted"...\n\nNext paragraph.\n\nLast.']
 
 
-def test_holdout_each_reserves_rows_per_label() -> None:
-    keys = pl.DataFrame({"doc": list(range(200)), "label": [0, 1] * 100, "h": list(range(200))}).cast({
-        "doc": pl.UInt64,
-        "h": pl.UInt64,
-        "label": pl.Int8,
-    })
-    out = assign_splits(keys, source(holdout_each=5, take="all"), (0.7, 0.15, 0.15))
-    counts = out.group_by("split", "label").len()
-    held = counts.filter(pl.col("split") == "holdout")
-    assert sorted(held["len"].to_list()) == [5, 5]
-    assert out.height == 200
+def _keys(n: int, *, generators: list, domains: list | None = None) -> pl.DataFrame:
+    return pl.DataFrame({
+        "doc": list(range(n)),
+        "label": [0 if g is None else 1 for g in generators],
+        "h": list(range(n)),
+        "domain": domains or ["d"] * n,
+        "generator": generators,
+    }).cast({"doc": pl.UInt64, "h": pl.UInt64, "label": pl.Int8})
+
+
+def test_held_out_generators_go_to_the_holdout_with_matching_human_rows() -> None:
+    keys = _keys(400, generators=[None, "old", "new", "old"] * 100)
+    out = assign_splits(keys, source(holdout_generators=("new",), holdout_cap=30, take="all"), (0.7, 0.15, 0.15))
+    held = out.filter(pl.col("split") == "holdout")
+    assert held.group_by("label").len().sort("label")["len"].to_list() == [30, 30]
+    docs_of_new = set(keys.filter(pl.col("generator") == "new")["doc"].to_list())
+    assert set(held.filter(pl.col("label") == 1)["doc"].to_list()) <= docs_of_new
+    assert not docs_of_new & set(out.filter(pl.col("split") != "holdout")["doc"].to_list())  # no row of it trains
+
+
+def test_splits_are_stratified_by_domain_and_generator() -> None:
+    n = 1000
+    generators = [None, "a"] * (n // 2)
+    domains = ["x" if (i // 2) % 5 else "y" for i in range(n)]  # one domain in five is rare
+    out = assign_splits(_keys(n, generators=generators, domains=domains), source(take="all"), (0.7, 0.15, 0.15))
+    shares = (
+        out
+        .join(_keys(n, generators=generators, domains=domains).select("doc", "domain"), on="doc")
+        .group_by("domain", "split")
+        .len()
+        .with_columns(share=pl.col("len") / pl.col("len").sum().over("domain"))
+    )
+    for share in shares.filter(pl.col("split") == "train")["share"]:
+        assert abs(share - 0.7) < 0.02
+
+
+def test_a_holdout_source_can_limit_what_it_takes() -> None:
+    out = assign_splits(
+        _keys(200, generators=[None, "a"] * 100), source(holdout=True, take={"each": 10}), (0.7, 0.15, 0.15)
+    )
+    assert out.height == 20
+    assert set(out["split"].unique()) == {"holdout"}
 
 
 def test_balance_limits_the_majority_class_in_a_cell_and_keeps_small_cells() -> None:

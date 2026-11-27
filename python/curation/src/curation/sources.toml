@@ -8,8 +8,11 @@
 # test and validation in the same proportions for every source, so each split has the same mix:
 #   "all"                    every row            { each = n }       up to n rows of each label
 #   n                        n rows in total      { 0 = n, 1 = "all" }  explicit per label
-# `holdout = true` keeps a source out of training entirely: all its rows go to `holdout.parquet`
-# (for small benchmark sets), and any row that resembles training data is dropped.
+# The holdout is what the model has never seen, in any form, so it is NOT a slice of the training sources:
+#   `holdout = true`            the whole source goes to `holdout.parquet` (an unseen source or domain)
+#   `holdout_generators = [..]` rows written by these models are withheld from training and go to the holdout
+#                               with as many human rows of the same source (`holdout_cap` limits each model)
+# Any holdout row that resembles training data is dropped, so the holdout stays unseen.
 #
 # `generator` is the model that wrote the AI text (constant, column, or a regex on a column); it is
 # only kept on AI rows. `group_column` keeps rows that are variants of one document in the same split.
@@ -49,7 +52,6 @@ files = ["*_data_clean.json"]
 text_column = "cleaned_article"
 label = 0
 take = 50000
-holdout_each = 150
 
 [[source]]
 name = "rotten_tomatoes"
@@ -75,7 +77,6 @@ repo = "stanfordnlp/imdb"
 files = ["plain_text/*.parquet"]
 label = 0
 take = 10000
-holdout_each = 100
 
 [[source]]
 name = "human-essays"
@@ -129,7 +130,6 @@ domain_column = "site"
 min_score = 1
 min_chars = 200
 take = 60000
-holdout_each = 300
 
 [[source]]
 name = "arxiv-abstracts"
@@ -142,7 +142,6 @@ domain = "scientific_abstract"
 unwrap_lines = true                    # the abstracts are hard-wrapped at about 80 characters
 min_chars = 200
 take = 30000
-holdout_each = 300
 
 [[source]]
 name = "oasst2-prompter"
@@ -160,7 +159,6 @@ label = 0
 domain = "chat_prompt"
 min_chars = 30
 take = "all"
-holdout_each = 200
 
 # OFF (2026-11 analysis, ~/handoff/audit/oasst-*.txt): written by volunteers in an assistant register. A classifier trained
 # without any oasst2 data scores it P(AI)=0.74 (77% of rows above 0.5; real human sources 0.06-0.50), a language model finds
@@ -178,7 +176,6 @@ drop_pattern = "(?i)\\b(as an ai|as a language model|language model|i'?m sorry,?
 min_chars = 100
 enabled = false
 take = 20000
-holdout_each = 200
 
 # ---------------------------------------------------------------------------------------------
 # AI text only
@@ -193,7 +190,6 @@ label = 1
 generator_column = "model"
 domain = "essay"
 take = "all"
-holdout_each = 150
 
 [[source]]
 name = "General-Knowledge"
@@ -212,7 +208,6 @@ files = ["data/search-arena-chat-24k.parquet"]
 sides = [["messages_a", "model_a"], ["messages_b", "model_b"]]
 domain = "chat"
 take = 38000
-holdout_each = 150
 
 [[source]]
 name = "arena-expert-5k"
@@ -240,7 +235,6 @@ files = ["data/train-*.parquet"]
 sides = [["conversation_a", "model_a"], ["conversation_b", "model_b"]]
 domain = "chat"
 take = 62000
-holdout_each = 200
 
 [[source]]
 name = "WildChat-1M"
@@ -253,7 +247,6 @@ where = { language = ["English"], toxic = [false] }
 domain = "chat"
 min_chars = 100
 take = 50000
-holdout_each = 300
 
 # Newest generation. The uploaders' claims about the model are not verified (see ~/handoff/dataset-candidates.md);
 # what matters here is that all of this text is AI.
@@ -271,7 +264,6 @@ generator = "claude-opus-5.5"
 domain = "medical_dialogue"
 min_chars = 100
 take = 20000
-holdout_each = 200
 
 [[source]]
 name = "opus5.5-doctor-summaries"
@@ -295,7 +287,6 @@ generator = "claude-sonnet-4.6"
 domain = "fiction"
 min_chars = 500
 take = "all"
-holdout_each = 40
 
 [[source]]
 name = "creative-writing-kimi-k2.5"
@@ -308,7 +299,6 @@ generator = "kimi-k2.5"
 domain = "fiction"
 min_chars = 500
 take = "all"
-holdout_each = 40
 
 [[source]]
 name = "creative-writing-qwen3.5-plus"
@@ -317,11 +307,10 @@ repo = "Crownelius/Creative-Writing-Qwen3.5Plus-2000x"
 files = ["dataset.jsonl"]
 text_column = "response"
 label = 1
-generator = "qwen3.5-plus (unverified: row metadata says glm5_farmer)"
+generator = "unverified-qwen"                          # the card says Qwen 2.5 72B, the repo name says Qwen3.5-Plus and the row metadata says glm5_farmer: AI either way
 domain = "fiction"
 min_chars = 500
 take = "all"
-holdout_each = 100
 
 [[source]]
 name = "creative-writing-gemini-3-pro"
@@ -330,11 +319,10 @@ repo = "Crownelius/Creative-Writing-Gemini3Pro-2700x"
 files = ["dataset.jsonl"]
 text_column = "response"
 label = 1
-generator = "gemini-3-pro (unverified: row metadata says glm5_farmer)"
+generator = "unverified-gemini"                       # the card says Gemini 1.5 Pro, the repo name says Gemini 3 Pro and the row metadata says glm5_farmer: AI either way
 domain = "fiction"
 min_chars = 500
 take = "all"
-holdout_each = 100
 
 # ---------------------------------------------------------------------------------------------
 # Mixed human/AI sources
@@ -362,10 +350,14 @@ domain_column = "domain"
 attack_column = "attack"
 group_column = "source_id" # every model/attack variant of one source document stays in one split
 take = { each = 50000 }
-holdout_each = 300
 flatten_paragraphs = true # human text has no paragraph breaks, the AI text does
 
 # Two files, each with its own documented generator (see the dataset card).
+holdout_generators = [
+    "cohere-chat",
+] # never trained on: these rows and as many human rows go to the holdout
+holdout_cap = 1000
+
 [[source]]
 name = "human_vs_machine-wiki"
 loader = "files"
@@ -376,7 +368,6 @@ generator = "text-curie-001"
 domain = "wiki"
 requires = "hf_token"                     # gated dataset
 take = { each = 13500 }
-holdout_each = 150
 flatten_paragraphs = true
 
 [[source]]
@@ -389,7 +380,6 @@ generator = "gpt-3.5-turbo-0301"
 domain = "abstracts"
 requires = "hf_token"
 take = { each = 13500 }
-holdout_each = 150
 flatten_paragraphs = true
 
 [[source]]
@@ -402,7 +392,6 @@ generator_column = "source"                # the model for AI rows (human rows a
 domain = "student_essay"
 requires = "kaggle"
 take = { 0 = 25000, 1 = "all" }
-holdout_each = 200
 
 [[source]]
 name = "AI-and-Human-Generated-Text"
@@ -414,7 +403,6 @@ label_column = "label"
 generator = "gpt-3"
 trim_fragments = "start"                    # 44% of the AI text starts mid-sentence, 1% of the human text
 take = "all"
-holdout_each = 150
 
 [[source]]
 name = "AI_Human_generated_movie_reviews"
@@ -437,17 +425,20 @@ take = { each = 7500 }
 [[source]]
 name = "MAGE"
 loader = "files"
-repo = "yaful/MAGE"                                                   # human and 27 older models over 10 domains; the text is normalised (ASCII)
+repo = "yaful/MAGE" # human and 27 older models over 10 domains; the text is normalised (ASCII)
 files = ["train.csv", "valid.csv", "test.csv"]
 label_column = "label"
-human_value = 1                                                       # MAGE labels human text 1 and machine text 0
+human_value = 1 # MAGE labels human text 1 and machine text 0
 generator_column = "src"
 generator_regex = "_machine_(?:continuation|topical|specified)_(.+)$"
 domain_column = "src"
 domain_regex = "^(.+?)_(?:human|machine)"
 min_chars = 100
 take = { each = 40000 }
-holdout_each = 300
+holdout_generators = [
+    "gpt-3.5-trubo",
+] # never trained on: these rows and as many human rows go to the holdout
+holdout_cap = 800
 
 [[source]]
 name = "HC3"
@@ -462,7 +453,6 @@ flatten_paragraphs = true                                                       
 trim_fragments = "end"                                                                                                                                          # half of the human medicine answers end without punctuation
 min_chars = 100
 take = { each = 25000 }
-holdout_each = 100
 
 [[source]]
 name = "detection-pile"
@@ -475,7 +465,6 @@ detokenise = true                       # some of the human stories use PTB quot
 trim_fragments = "end"                  # 30% of the human text ends mid-sentence (cut at a length limit), 4% of the AI text
 min_chars = 200
 take = { each = 60000 }
-holdout_each = 300
 
 # ---------------------------------------------------------------------------------------------
 # AI-vs-human continuation pairs (one human and one AI text per row)
@@ -493,7 +482,6 @@ ascii_quotes = true               # one side uses curly quotes, the other does n
 detokenise = true                 # the human side keeps the Daily Mail "By . Name ." byline spacing
 remove_pattern = "[\u00bb\u2022]" # Daily Mail "read more" and bullet characters on the human side
 take = "all"
-holdout_each = 150
 flatten_paragraphs = true
 
 [[source]]
@@ -607,10 +595,15 @@ trim_fragments = "both"                                                         
 min_chars = 200
 detokenise = true                                                                # PMC citation numbers are spaced ("world, 1 , 2") on the human side only
 take = "all"
-holdout_each = 300
 
 # M4GT (inside the COLING 2025 shared-task English set): human vs GPT-4/4o, Llama 3, Gemma 2, Mixtral and older models.
 # The set also repackages MAGE and HC3, which are used directly above, so only the M4GT rows are read.
+holdout_generators = [
+    "moonshotai/kimi-k3",
+    "sol-medium",
+] # never trained on: these rows and as many human rows go to the holdout
+holdout_cap = 800
+
 [[source]]
 name = "m4gt"
 loader = "files"
@@ -625,9 +618,14 @@ min_chars = 200
 detokenise = true
 trim_fragments = "end"              # a quarter of the human text ends mid-sentence
 take = { each = 40000 }
-holdout_each = 300
 
 # Ghostbuster (2023): human essays, Reuters news and WritingPrompts stories vs ChatGPT and Claude.
+holdout_generators = [
+    "gpt4o",
+    "gemma2-9b-it",
+] # never trained on: these rows and as many human rows go to the holdout
+holdout_cap = 800
+
 [[source]]
 name = "ghostbuster-essay"
 loader = "files"
@@ -640,8 +638,8 @@ min_chars = 200
 detokenise = true
 normalise_breaks = true         # the human text marks paragraphs with one newline, the AI text with two
 ascii_punctuation = true        # the human essays keep curly quotes and dashes the AI side lost
-take = "all"
-holdout_each = 100
+take = { 0 = "all", 1 = 1200 }
+holdout = true
 
 [[source]]
 name = "ghostbuster-reuter"
@@ -655,8 +653,8 @@ min_chars = 200
 detokenise = true
 normalise_breaks = true
 ascii_punctuation = true
-take = "all"
-holdout_each = 100
+take = { 0 = "all", 1 = 1200 }
+holdout = true
 
 [[source]]
 name = "ghostbuster-wp"
@@ -670,8 +668,8 @@ min_chars = 200
 detokenise = true
 normalise_breaks = true
 ascii_punctuation = true
-take = "all"
-holdout_each = 100
+take = { 0 = "all", 1 = 1200 }
+holdout = true
 
 # AI half only (the human half is withheld, text is null): replies to r/ELI5 questions and r/AITA posts written by
 # gpt-5.6, gemini-3.7, glm-5.3, grok-4.6, qwen3.8, deepseek-v4 and nemotron-3.5, with the usual tells post-processed away.
@@ -682,11 +680,11 @@ repo = "mild-rgb/eli5-human-vs-ai"
 files = ["dataset.jsonl"]
 keep = { label = ["ai"] }
 label = 1
+group_column = "q_id"
 generator_column = "model"
 domain = "reddit_eli5"
 min_chars = 200
 take = "all"
-holdout_each = 150
 
 [[source]]
 name = "aita-modern-models"
@@ -695,11 +693,41 @@ repo = "mild-rgb/aita-human-vs-ai"
 files = ["dataset.jsonl"]
 keep = { label = ["ai"] }
 label = 1
+group_column = "q_id"
 generator_column = "generator"
 domain = "reddit_aita"
 min_chars = 200
 take = "all"
-holdout_each = 150
+holdout = true
+
+# The human halves of the two sets above, recovered from the public originals the benchmark was drawn from
+# (the benchmark withholds their text). A row is kept only when the original matches its recorded word count
+# (and, for ELI5, score) exactly: ELI5 answers are r/explainlikeimfive up to 2019, AITA posts are r/AmItheAsshole
+# up to 2018 (scruples), so both are certainly human.
+[[source]]
+name = "eli5-human"
+loader = "recovered_human"
+repo = "mild-rgb/eli5-human-vs-ai"
+files = ["dataset.jsonl"]
+recover = "eli5"
+label = 0
+group_column = "q_id"
+domain = "reddit_eli5"
+min_chars = 200
+take = "all"
+
+[[source]]
+name = "aita-human"
+loader = "recovered_human"
+repo = "mild-rgb/aita-human-vs-ai"
+files = ["dataset.jsonl"]
+recover = "scruples"
+label = 0
+group_column = "q_id"
+domain = "reddit_aita"
+min_chars = 200
+take = "all"
+holdout = true
 
 # Human short stories from r/WritingPrompts (2018 and earlier): the human counterpart of the AI fiction (creative-writing, ghostbuster-wp).
 [[source]]
@@ -715,7 +743,6 @@ normalise_breaks = true          # paragraphs are marked with a single newline
 trim_fragments = "end"
 min_chars = 500
 take = 25000
-holdout_each = 200
 
 # ---------------------------------------------------------------------------------------------
 # Holdout: small benchmark sets with named, current models. Never trained on or tuned against.

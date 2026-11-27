@@ -56,6 +56,11 @@ class Quota:
         msg = f"invalid quota {value!r}"
         raise TypeError(msg)
 
+    @property
+    def is_set(self) -> bool:
+        """Whether the source states a quota at all."""
+        return self != Quota()
+
     def resolve(self, available: dict[int, int]) -> dict[int, int]:
         """Rows to take per label given how many rows each label has; never more than available."""
         if self.everything:
@@ -87,7 +92,10 @@ class Source:
     loader: str
     take: Quota = field(default_factory=Quota)
     holdout: bool = False
-    holdout_each: int = 0  # reserve this many rows per label (at most 10%) for the holdout; the rest is split as usual
+    holdout_generators: tuple[
+        str, ...
+    ] = ()  # generators withheld from training: they go to the holdout, with as many human rows
+    holdout_cap: int = 0  # at most this many rows of each held-out generator are used (0 = all); the rest are dropped
     label: int | None = None
     label_column: str | None = None
     human_value: str | int | None = None
@@ -143,7 +151,7 @@ class Source:
         if not has_label:
             msg = f"source {self.name!r} needs `label` or `label_column`"
             raise ValueError(msg)
-        if not self.holdout and self.take == Quota():
+        if not self.holdout and not self.take.is_set:
             msg = f"source {self.name!r} needs `take` (or `holdout = true`)"
             raise ValueError(msg)
 
@@ -160,7 +168,7 @@ class Config:
     balance: float = (
         0.0  # keep at most this many majority-class rows per minority-class row in each formatting cell (0 = off)
     )
-    strip_markdown: bool = False  # remove what markdown leaves behind in every source (an experiment)
+    strip_markdown: bool = True  # the Rust cleaner removes markdown markers (False only for comparison experiments)
 
 
 _SOURCE_KEYS = {f.name for f in fields(Source) if f.name != "params"} | {"notes"}  # keys that are not `params`  # fmt: skip
@@ -186,6 +194,7 @@ def load_config(path: Path | Traversable) -> Config:
             raise ValueError(msg)
         known = {k: v for k, v in entry.items() if k in _SOURCE_KEYS and k != "notes"}
         known["take"] = Quota.parse(entry.get("take"))
+        known["holdout_generators"] = tuple(entry.get("holdout_generators", ()))
         known["params"] = {k: v for k, v in entry.items() if k not in _SOURCE_KEYS}
         source = Source(**known)
         source.validate()
@@ -198,7 +207,7 @@ def load_config(path: Path | Traversable) -> Config:
         seed=int(settings.get("seed", 42)),
         fractions=(train, test, validation),
         prefix_chars=int(settings.get("prefix_chars", 200)),
-        strip_markdown=bool(settings.get("strip_markdown", False)),
+        strip_markdown=bool(settings.get("strip_markdown", True)),
         balance=float(settings.get("balance", 0.0)),
         sources=tuple(sources),
         digest=hashlib.sha256(raw_bytes).hexdigest(),
