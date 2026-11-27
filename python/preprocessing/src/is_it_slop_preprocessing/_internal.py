@@ -29,7 +29,7 @@ def clean_for_training(texts: Iterable[str], *, strip_markdown: bool = True) -> 
         list[str]: One cleaned text per input, in order. A text that cleans to nothing is "".
 
     """
-    return _clean_for_training(texts, strip_markdown=strip_markdown)
+    return _clean_for_training(list(texts), strip_markdown=strip_markdown)
 
 
 def count_tokens(texts: Iterable[str]) -> list[int]:
@@ -42,4 +42,4 @@ def count_tokens(texts: Iterable[str]) -> list[int]:
         list[int]: Token count per input, in order.
 
     """
-    return _count_tokens(texts)
+    return _count_tokens(list(texts))
