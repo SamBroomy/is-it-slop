@@ -41,7 +41,8 @@ burn = { workspace = true, features = [
 clap = { workspace = true }
 is-it-slop-model = { workspace = true }
 is-it-slop-preprocessing = { workspace = true }
-polars = { workspace = true }
+arrow-array = { workspace = true }
+parquet = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

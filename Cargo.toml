@@ -41,6 +41,7 @@ is-it-slop-preprocessing = { path = "crates/is-it-slop-preprocessing", version =
 
 
 anyhow = "1.0.100"
+arrow-array = "60"
 burn = { version = "0.22", default-features = false }
 safetensors = "0.8"
 bpe-openai = "0.3.1"
@@ -48,11 +49,7 @@ jni = "0.22"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 owo-colors = "4.3"
 supports-color = "3"
-polars = { version = "0.55", default-features = false, features = [
-    "parquet",
-    # The released splits store `label` as Int8.
-    "dtype-i8",
-] }
+parquet = "60"
 pyo3 = { version = "0.30", default-features = false, features = [
     "extension-module",
     "macros",
