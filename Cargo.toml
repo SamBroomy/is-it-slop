@@ -167,6 +167,7 @@ panic_in_result_fn = "warn"            # a `Result` function should not also pan
 print_stdout = "allow"                 # the CLI writes its output to stdout
 print_stderr = "allow"                 # the CLI writes diagnostics to stderr
 rc_buffer = "warn"                     # `Rc<Vec<T>>` -> `Rc<[T]>`
+self_named_module_files = "warn"       # folder modules use `mod.rs`; leaves use `foo.rs`; no hybrid
 string_add = "warn"                    # build strings with `format!` / `push_str`
 todo = "warn"
 undocumented_unsafe_blocks = "warn"    # every `unsafe` block needs `// SAFETY:`
