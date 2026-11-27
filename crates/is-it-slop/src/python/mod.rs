@@ -116,7 +116,7 @@ fn pipeline_error(error: &PipelineError) -> PyErr {
 }
 
 #[pyfunction]
-#[pyo3(signature = (text, threshold=None))]
+#[pyo3(signature = (text, *, threshold=None))]
 fn is_this_slop(py: Python<'_>, text: &str, threshold: Option<f32>) -> PyResult<PredictionResult> {
     let predictor = predictor(threshold)?;
     py.detach(|| {
@@ -127,7 +127,7 @@ fn is_this_slop(py: Python<'_>, text: &str, threshold: Option<f32>) -> PyResult<
 
 /// All or nothing: any blank text raises `ValueError` for the whole batch.
 #[pyfunction]
-#[pyo3(signature = (texts, threshold=None))]
+#[pyo3(signature = (texts, *, threshold=None))]
 fn is_this_slop_batch(
     py: Python<'_>,
     texts: Vec<String>,
@@ -147,7 +147,7 @@ fn is_this_slop_batch(
 
 /// One entry per input text, in order; blank texts yield `None` instead of failing the batch.
 #[pyfunction]
-#[pyo3(signature = (texts, threshold=None))]
+#[pyo3(signature = (texts, *, threshold=None))]
 fn is_this_slop_each(
     py: Python<'_>,
     texts: Vec<String>,

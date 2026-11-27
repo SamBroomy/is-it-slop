@@ -118,7 +118,7 @@ def _to_prediction(inner: _PredictionResult) -> Prediction:
     )
 
 
-def is_this_slop(text: str, threshold: float | None = None) -> Prediction:
+def is_this_slop(text: str, *, threshold: float | None = None) -> Prediction:
     """Predict whether text is AI-generated (slop) or human-written.
 
     Args:
@@ -145,10 +145,10 @@ def is_this_slop(text: str, threshold: float | None = None) -> Prediction:
     if not text or not text.strip():
         msg = "Input text must be non-empty"
         raise ValueError(msg)
-    return _to_prediction(_is_this_slop(text, threshold))
+    return _to_prediction(_is_this_slop(text, threshold=threshold))
 
 
-def is_this_slop_batch(texts: Iterable[str], threshold: float | None = None) -> list[Prediction]:
+def is_this_slop_batch(texts: Iterable[str], *, threshold: float | None = None) -> list[Prediction]:
     """Predict many texts at once; all or nothing.
 
     Faster than calling `is_this_slop` in a loop. If any text is blank the whole
@@ -174,10 +174,10 @@ def is_this_slop_batch(texts: Iterable[str], threshold: float | None = None) -> 
     if not items:
         msg = "Input texts must be a non-empty list"
         raise ValueError(msg)
-    return [_to_prediction(r) for r in _is_this_slop_batch(items, threshold)]
+    return [_to_prediction(r) for r in _is_this_slop_batch(items, threshold=threshold)]
 
 
-def is_this_slop_each(texts: Iterable[str], threshold: float | None = None) -> list[Prediction | None]:
+def is_this_slop_each(texts: Iterable[str], *, threshold: float | None = None) -> list[Prediction | None]:
     """Predict many texts at once, with a result per text.
 
     Like `is_this_slop_batch`, but a blank text yields `None` at its position
@@ -199,4 +199,4 @@ def is_this_slop_each(texts: Iterable[str], threshold: float | None = None) -> l
     items = list(texts)
     if not items:
         return []
-    return [None if r is None else _to_prediction(r) for r in _is_this_slop_each(items, threshold)]
+    return [None if r is None else _to_prediction(r) for r in _is_this_slop_each(items, threshold=threshold)]
